@@ -1,87 +1,100 @@
-"""DEMEX read-only signal scanner. Never places trades."""
-import json
-import logging
-import os
-import time
-import subprocess
-from pathlib import Path
+"""DEMEX automatic signal trader — PRACTICE/DEMO only."""
+import json, logging, subprocess, time
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
+from trade_manager import DemoTrader
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
 
 def load_settings():
-    with open("settings.json", encoding="utf-8") as f:
-        return json.load(f)
+    with open("settings.json",encoding="utf-8") as f: return json.load(f)
 
-def alert(message, enabled=True):
-    print("\\a" + message, flush=True)
+def alert(message,enabled=True):
+    print("\\a"+message,flush=True)
     if enabled:
-        # Optional Termux:API speech; scanner still works if unavailable.
-        try:
-            subprocess.Popen(["termux-tts-speak", message])
-        except (FileNotFoundError, OSError):
-            pass
+        try: subprocess.Popen(["termux-tts-speak",message])
+        except (FileNotFoundError,OSError): pass
 
-def market_matches(symbol, mode):
-    is_otc = "OTC" in symbol.upper()
-    return is_otc if mode.upper() == "OTC" else not is_otc
+def market_matches(symbol,mode):
+    otc="OTC" in symbol.upper()
+    return otc if mode.upper()=="OTC" else not otc
 
-def scan_once(connector, settings):
-    tf = settings.get("timeframe", "M1").upper()
-    seconds = 60 if tf == "M1" else 300 if tf == "M5" else None
-    if seconds is None:
-        raise ValueError("timeframe deve ser M1 ou M5")
-    expiry = int(settings.get("expiry_minutes", 1 if tf == "M1" else 5))
-    minimum_payout = float(settings.get("minimum_payout_percent", 80))
-    minimum_confidence = float(settings.get("minimum_confidence", 70))
-    settings["minimum_confidence"] = minimum_confidence
-    assets = connector.get_open_assets(minimum_payout)
-    assets = [a for a in assets if market_matches(a["symbol"], settings.get("market_mode", "OTC"))]
-    logging.info("Ativos com payout >= %.1f%% no filtro %s: %d", minimum_payout, settings.get("market_mode"), len(assets))
-    best = None
+def scan_once(connector,settings):
+    tf=settings.get("timeframe","M1").upper()
+    seconds=60 if tf=="M1" else 300 if tf=="M5" else None
+    if seconds is None: raise ValueError("timeframe deve ser M1 ou M5")
+    expiry=int(settings.get("expiry_minutes",1 if tf=="M1" else 5))
+    if expiry not in (1,5): raise ValueError("Expiração deve ser 1 ou 5 minutos.")
+    min_payout=float(settings.get("minimum_payout_percent",80))
+    settings["minimum_confidence"]=float(settings.get("minimum_confidence",70))
+    assets=connector.get_open_assets(min_payout)
+    assets=[a for a in assets if market_matches(a["symbol"],settings.get("market_mode","OTC"))]
+    logging.info("Ativos com payout >= %.1f%% no filtro %s: %d",min_payout,settings.get("market_mode"),len(assets))
+    best=None
     for asset in assets:
         try:
-            candles = connector.get_candles(asset["symbol"], seconds, int(settings.get("candles_count", 120)))
-            result = analyze(candles, settings)
-            if not result or result["confidence"] < minimum_confidence:
-                continue
-            candidate = {**result, **asset, "timeframe": tf, "expiry_minutes": expiry}
-            if best is None or (candidate["confidence"], candidate["payout_percent"]) > (best["confidence"], best["payout_percent"]):
-                best = candidate
-        except Exception as exc:
-            logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
+            candles=connector.get_candles(asset["symbol"],seconds,int(settings.get("candles_count",120)))
+            result=analyze(candles,settings)
+            if not result or result["confidence"] < settings["minimum_confidence"]: continue
+            # Estratégia ignora a última vela (em formação); identificar a vela fechada que gerou o sinal.
+            signal_ts=candles[-2].get("timestamp") if len(candles)>=2 else None
+            candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
+            if best is None or (candidate["confidence"],candidate["payout_percent"])>(best["confidence"],best["payout_percent"]): best=candidate
+        except Exception as exc: logging.warning("Falha ao analisar %s: %s",asset["symbol"],exc)
     return best
 
 def main():
     load_dotenv()
-    settings = load_settings()
-    connector = BullexReadOnlyConnector(BullexConfig.from_env())
+    settings=load_settings()
+    trading=settings.get("trading",{})
+    if not trading.get("automatic_execution_enabled",False):
+        raise RuntimeError("Execução automática desabilitada em settings.json.")
+    if trading.get("mode")!="DEMO":
+        raise RuntimeError("Este robô foi configurado exclusivamente para DEMO.")
+    cfg=BullexConfig.from_env()
+    if cfg.account_type!="PRACTICE":
+        raise RuntimeError("BULLEX_ACCOUNT_TYPE deve ser PRACTICE. REAL é bloqueado.")
+    connector=BullexReadOnlyConnector(cfg)
     try:
-        status = connector.connect()
-        print(json.dumps(status, ensure_ascii=False, indent=2))
+        status=connector.connect()
+        print(json.dumps(status,ensure_ascii=False,indent=2))
         if not status.get("connected"):
-            print("Conexão não estabelecida. Verifique credenciais, 2FA e compatibilidade do pacote.")
+            print("Conexão não estabelecida. Verifique credenciais, 2FA e compatibilidade.")
             return
-        print("DEMEX SIGNAL SCANNER iniciado. Somente leitura; nenhuma ordem será enviada.")
-        while True:
-            signal = scan_once(connector, settings)
+        if connector.client.get_balance_mode()!="PRACTICE":
+            raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
+        trader=DemoTrader(connector,settings)
+        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO. Estratégia configurada pelo script personalizado.")
+        print("Entrada inicial R$ %.2f | Soros 1 | Stop R$ %.2f | Take R$ %.2f" %
+              (trader.base,trader.stop,trader.take))
+        while not trader.stopped:
+            signal=scan_once(connector,settings)
             if signal:
-                message = (f"SINAL {signal['symbol']} | {signal['direction']} | {signal['timeframe']} | "
-                           f"expiração {signal['expiry_minutes']} min | confiança técnica {signal['confidence']}% | "
-                           f"payout {signal['payout_percent']:.1f}%")
-                alert(message, bool(settings.get("sound_alert", True)))
-                print("Confirmações: " + ", ".join(signal["reasons"]))
-                print("Aguardando o ciclo de expiração antes de procurar outro sinal.")
-                time.sleep(max(1, signal["expiry_minutes"] * 60))
+                msg=(f"SINAL {signal['symbol']} | {signal['direction']} | {signal['timeframe']} | "
+                     f"expiração {signal['expiry_minutes']} min | confiança técnica {signal['confidence']}% | "
+                     f"payout {signal['payout_percent']:.1f}%")
+                alert(msg,bool(settings.get("sound_alert",True)))
+                print("Confirmações: "+", ".join(signal["reasons"]))
+                try:
+                    summary=trader.execute_and_settle(signal)
+                    if summary:
+                        print("OPERAÇÃO {result} | Entrada R$ {entry:.2f} | Resultado R$ {pnl:+.2f} | "
+                              "Acumulado R$ {session_net:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
+                        if summary["stopped"]: print("ROBÔ ENCERRADO: "+str(summary["stop_reason"]))
+                    else:
+                        time.sleep(max(3,int(settings.get("scan_interval_seconds",8))))
+                except Exception:
+                    logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
+                    break
             else:
                 print("Nenhum sinal qualificado. Aguardando...")
-                time.sleep(max(3, int(settings.get("scan_interval_seconds", 8))))
+                time.sleep(max(3,int(settings.get("scan_interval_seconds",8))))
+        if trader.stopped:
+            print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
     except KeyboardInterrupt:
-        print("\\nScanner encerrado pelo usuário.")
+        print("\\nRobô encerrado pelo usuário.")
     finally:
         connector.close()
 
-if __name__ == "__main__":
-    main()
+if __name__=="__main__": main()
