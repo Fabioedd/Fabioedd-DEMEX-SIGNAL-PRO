@@ -43,3 +43,15 @@ Configure `BULLEX_ACTIVE` com um símbolo que realmente exista na lista retornad
 ## Próxima etapa
 
 Executar o teste local em conta de prática, confirmar conexão, validar a estrutura real dos candles e só então construir o serviço de streaming e o motor de análise.
+
+
+## Scanner de sinais configurável
+
+Edite `settings.json` para escolher M1/M5, mercado, expiração, payout mínimo (>80% por padrão), confiança técnica (>70 por padrão), indicadores e padrões. Execute `python main.py` para iniciar o scanner. Ele percorre os ativos com payout retornado acima do limite, analisa candles e anuncia apenas a melhor oportunidade por ciclo. O alerta usa o beep do terminal e tenta chamar `termux-tts-speak` se Termux:API estiver instalado. Não há execução de ordens.
+
+A confiança exibida é uma pontuação de confluência das regras selecionadas, não uma probabilidade calibrada de vitória. O payout é o valor reportado pela biblioteca e pode mudar. A classificação OTC é inferida pelo nome do ativo conter `OTC`; confirme essa convenção na lista de símbolos retornada pela sua corretora.
+
+### Escolha de estratégia
+
+- `strategy_mode: indicators`: use os indicadores e padrões marcados em `settings.json`.
+- `strategy_mode: custom_script`: use `strategies/my_strategy.py`. A função `get_signal(candles, config)` deve devolver `{"direction":"CALL"|"PUT","confidence": número}` ou `None`. Só execute scripts próprios e confiáveis.
