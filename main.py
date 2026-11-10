@@ -7,6 +7,11 @@ from trade_manager import DemoTrader
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
 
+
+def scan_delay(settings):
+    """Intervalo de varredura limitado a 1–3 segundos."""
+    return max(1, min(3, int(settings.get("scan_interval_seconds", 2))))
+
 def load_settings():
     with open("settings.json",encoding="utf-8") as f: return json.load(f)
 
@@ -83,13 +88,13 @@ def main():
                               "Acumulado R$ {session_net:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
                         if summary["stopped"]: print("ROBÔ ENCERRADO: "+str(summary["stop_reason"]))
                     else:
-                        time.sleep(max(3,int(settings.get("scan_interval_seconds",8))))
+                        time.sleep(scan_delay(settings))
                 except Exception:
                     logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
                     break
             else:
                 print("Nenhum sinal qualificado. Aguardando...")
-                time.sleep(max(3,int(settings.get("scan_interval_seconds",8))))
+                time.sleep(scan_delay(settings))
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
     except KeyboardInterrupt:
