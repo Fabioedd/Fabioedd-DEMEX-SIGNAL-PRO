@@ -84,6 +84,11 @@ def main():
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
             signal=scan_once(connector,settings)
+            # Se o pedido chegou durante a varredura, descarta o sinal e não envia ordem.
+            if STOP_FILE.exists():
+                trader.stopped=True
+                print("PARADA SOLICITADA: sinal descartado; nenhuma nova operação será iniciada.")
+                break
             if signal:
                 msg=(f"SINAL {signal['symbol']} | {signal['direction']} | {signal['timeframe']} | "
                      f"expiração {signal['expiry_minutes']} min | confiança técnica {signal['confidence']}% | "
