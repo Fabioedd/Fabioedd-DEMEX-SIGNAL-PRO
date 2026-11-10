@@ -50,6 +50,8 @@ def scan_once(connector,settings):
             signal_ts=candles[-2].get("timestamp") if len(candles)>=2 else None
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
             if best is None or (candidate["confidence"],candidate["payout_percent"])>(best["confidence"],best["payout_percent"]): best=candidate
+        except ConnectionError:
+            raise
         except Exception as exc: logging.warning("Falha ao analisar %s: %s",asset["symbol"],exc)
     return best
 
@@ -67,10 +69,10 @@ def main():
     connector=BullexReadOnlyConnector(cfg)
     try:
         status=connector.connect()
-        print(json.dumps(status,ensure_ascii=False,indent=2))
         if not status.get("connected"):
-            print("Conexão não estabelecida. Verifique credenciais, 2FA e compatibilidade.")
-            return
+            print("Conexão inicial indisponível. O DEMEX ficará tentando reconectar...")
+            connector.reconnect_forever(stop_check=STOP_FILE.exists)
+        print(json.dumps({"connected":True,"account_type":"PRACTICE"},ensure_ascii=False,indent=2))
         if connector.client.get_balance_mode()!="PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
         trader=DemoTrader(connector,settings)
@@ -83,7 +85,12 @@ def main():
                 trader.stopped=True
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
-            signal=scan_once(connector,settings)
+            try:
+                signal=scan_once(connector,settings)
+            except ConnectionError as exc:
+                logging.warning("Conexão perdida durante a análise: %s",exc)
+                connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                continue
             # Se o pedido chegou durante a varredura, descarta o sinal e não envia ordem.
             if STOP_FILE.exists():
                 trader.stopped=True
