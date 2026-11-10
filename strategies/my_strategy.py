@@ -1,14 +1,16 @@
-"""DEMEX PRO V4 ADX — tradução Python do indicador Lua enviado.
+"""DEMEX PRO V5 PULLBACK — tradução Python do indicador Lua enviado.
 
-Regras preservadas:
+Regras:
 - EMA rápida 7 e EMA lenta 25.
 - MACD = EMA(7) - EMA(25); sinal = WMA(5) do MACD.
 - Filtro de tendência EMA 200.
-- ADX 14 com suavização EMA(27), mínimo 25.
-- CALL: cruzamento MACD para cima, MACD acima de zero, preço acima
-  da EMA 200, candle fechado de alta, ADX acima do mínimo e +DI > -DI.
-- PUT: condições inversas.
-- O último candle recebido é ignorado por segurança (pode estar aberto).
+- ADX 14 com suavização EMA(27), mínimo estritamente maior que 25.
+- +DI / -DI definem a direção.
+- Pullback: distância absoluta entre o preço de fechamento e EMA 25
+  deve ser menor que ATR suavizado * Dist_ATR_x10 / 10 (padrão = 1 ATR).
+- CALL/PUT exigem cruzamento MACD, posição relativa ao zero, tendência,
+  candle fechado na direção do sinal, ADX, DI e filtro de pullback.
+- O último candle recebido é ignorado porque pode estar em formação.
 
 Integração: get_signal(candles, config).
 """
@@ -20,6 +22,7 @@ TREND_PERIOD = 200
 ADX_PERIOD = 14
 ADX_MIN = 25
 ADX_SMOOTH_PERIOD = 2 * ADX_PERIOD - 1
+DIST_ATR_X10 = 10
 
 
 def _ema_series(values, period):
@@ -43,7 +46,7 @@ def _wma(values, period):
 
 
 def _adx_components(candles):
-    """Calcula +DI, -DI e ADX com suavização EMA(2n-1), como no Lua."""
+    """Calcula ATR/TR suavizado, +DI, -DI e ADX conforme o indicador Lua."""
     if len(candles) < ADX_SMOOTH_PERIOD + 2:
         return None
 
@@ -98,11 +101,11 @@ def _adx_components(candles):
         return None
     if latest_plus_di is None or latest_minus_di is None:
         return None
-    return adx_series[-1], latest_plus_di, latest_minus_di
+    return adx_series[-1], latest_plus_di, latest_minus_di, tr_s[-1]
 
 
 def get_signal(candles, config):
-    # O feed pode trazer a vela atual ainda aberta; a estratégia usa só velas fechadas.
+    # O feed pode trazer a vela atual ainda aberta; usamos somente velas fechadas.
     if not candles or len(candles) < TREND_PERIOD + 2:
         return None
 
@@ -118,11 +121,11 @@ def get_signal(candles, config):
     if not ema_fast_series or not ema_slow_series or not ema_trend_series:
         return None
 
-    macd_values = []
-    for fast, slow in zip(ema_fast_series, ema_slow_series):
-        if fast is not None and slow is not None:
-            macd_values.append(fast - slow)
-
+    macd_values = [
+        fast - slow
+        for fast, slow in zip(ema_fast_series, ema_slow_series)
+        if fast is not None and slow is not None
+    ]
     if len(macd_values) < SIGNAL_PERIOD + 1:
         return None
 
@@ -130,14 +133,22 @@ def get_signal(candles, config):
     previous_macd = macd_values[-2]
     current_signal = _wma(macd_values, SIGNAL_PERIOD)
     previous_signal = _wma(macd_values[:-1], SIGNAL_PERIOD)
+    ema_slow = ema_slow_series[-1]
     ema_trend = ema_trend_series[-1]
     adx_data = _adx_components(closed)
 
     if (current_signal is None or previous_signal is None
-            or ema_trend is None or adx_data is None):
+            or ema_slow is None or ema_trend is None or adx_data is None):
         return None
 
-    adx_value, plus_di, minus_di = adx_data
+    adx_value, plus_di, minus_di, tr_s = adx_data
+    if tr_s is None or tr_s <= 0:
+        return None
+
+    # Dist_ATR_x10 = 10 por padrão: distância máxima de 1.0 ATR até EMA 25.
+    distance_limit = tr_s * DIST_ATR_X10 / 10.0
+    distance_ok = abs(last_close - ema_slow) < distance_limit
+
     adx_ok = adx_value > ADX_MIN
     di_up = plus_di > minus_di
     di_down = minus_di > plus_di
@@ -153,32 +164,34 @@ def get_signal(candles, config):
     sell_cross = current_macd < current_signal and previous_macd > previous_signal
 
     if (buy_cross and macd_above_zero and trend_up and bull_candle
-            and adx_ok and di_up):
+            and adx_ok and di_up and distance_ok):
         return {
             "direction": "CALL",
             "confidence": 100,
             "reasons": [
-                "DEMEX PRO V4 ADX: cruzamento MACD de alta (EMA 7/25 + WMA 5)",
+                "DEMEX PRO V5 PULLBACK: cruzamento MACD de alta (EMA 7/25 + WMA 5)",
                 "MACD acima de zero",
                 "Preço acima da EMA 200",
                 "Candle fechado de alta",
                 f"ADX {adx_value:.1f} acima de {ADX_MIN}",
                 "+DI acima de -DI",
+                f"Preço a {abs(last_close - ema_slow):.6f} da EMA 25; limite de pullback {distance_limit:.6f}",
             ],
         }
 
     if (sell_cross and macd_below_zero and trend_down and bear_candle
-            and adx_ok and di_down):
+            and adx_ok and di_down and distance_ok):
         return {
             "direction": "PUT",
             "confidence": 100,
             "reasons": [
-                "DEMEX PRO V4 ADX: cruzamento MACD de baixa (EMA 7/25 + WMA 5)",
+                "DEMEX PRO V5 PULLBACK: cruzamento MACD de baixa (EMA 7/25 + WMA 5)",
                 "MACD abaixo de zero",
                 "Preço abaixo da EMA 200",
                 "Candle fechado de baixa",
                 f"ADX {adx_value:.1f} acima de {ADX_MIN}",
                 "-DI acima de +DI",
+                f"Preço a {abs(last_close - ema_slow):.6f} da EMA 25; limite de pullback {distance_limit:.6f}",
             ],
         }
 
