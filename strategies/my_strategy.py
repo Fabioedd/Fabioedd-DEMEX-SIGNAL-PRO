@@ -1,9 +1,11 @@
 """Harami_GO / CONF_TRIPLA — tradução fiel da lógica Lua para Python.
 
 Confluência obrigatória no ÚLTIMO candle FECHADO:
-1) Harami de alta/baixa formado pelos dois últimos candles fechados.
-2) Cruzamento GO original: SMA(1) - SMA(34), suavizado por WMA(5).
-3) Fechamento acima/abaixo da EMA(200), na direção do sinal.
+1) Harami nos candles fechados [2] e [1], como no Lua original.
+2) Cruzamento GO original no candle fechado atual: SMA(1) - SMA(34), WMA(5).
+3) Fechamento atual acima/abaixo da EMA(200), na direção do sinal.
+O offset visual -1 do Lua posiciona a seta sobre o candle [1]; ele não
+altera o candle em que o cruzamento GO é confirmado.
 
 A última vela recebida pelo conector é descartada por estar em formação.
 Integração com o DEMEX: get_signal(candles, config).
@@ -97,9 +99,10 @@ def get_signal(candles, config):
     if len(closed) < TREND_PERIOD + 2:
         return None
 
-    # Harami é formado pelos dois últimos candles já encerrados.
-    parent = closed[-2]
-    child = closed[-1]
+    # Reproduz os índices Lua: Harami em [2]/[1]; GO e EMA no candle atual [0].
+    # A seta do indicador Lua usa offset -1 e aparece sobre o candle [1].
+    parent = closed[-3]
+    child = closed[-2]
     pattern = _harami_direction(parent, child)
     if pattern is None:
         return None
@@ -149,7 +152,7 @@ def get_signal(candles, config):
             "direction": "CALL",
             "confidence": 100,
             "reasons": [
-                "Harami de alta confirmado nos dois últimos candles fechados",
+                "Harami de alta confirmado nos candles anteriores [2]/[1]",
                 "GO 2024: cruzamento de alta da SMA(1)-SMA(34) com WMA(5)",
                 "Filtro de tendência: fechamento acima da EMA 200",
             ],
@@ -160,7 +163,7 @@ def get_signal(candles, config):
             "direction": "PUT",
             "confidence": 100,
             "reasons": [
-                "Harami de baixa confirmado nos dois últimos candles fechados",
+                "Harami de baixa confirmado nos candles anteriores [2]/[1]",
                 "GO 2024: cruzamento de baixa da SMA(1)-SMA(34) com WMA(5)",
                 "Filtro de tendência: fechamento abaixo da EMA 200",
             ],
