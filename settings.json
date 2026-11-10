@@ -6,7 +6,7 @@
   "minimum_confidence": 70,
   "scan_interval_seconds": 8,
   "candles_count": 120,
-  "strategy_mode": "indicators",
+  "strategy_mode": "custom_script",
   "enabled_patterns": ["engulfing", "doji", "hammer", "command_candle"],
   "indicators": {
     "ema_fast": {"enabled": true, "period": 9},
