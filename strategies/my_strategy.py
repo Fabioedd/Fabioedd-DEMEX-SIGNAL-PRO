@@ -1,16 +1,24 @@
-"""DEMEX PRO — estratégia personalizada convertida do script Lua enviado.
+"""DEMEX PRO V2 — lógica Python para o robô DEMEX.
 
-Regras preservadas:
+Parâmetros do indicador original:
 - EMA rápida: 7 períodos.
 - EMA lenta: 25 períodos.
 - Linha MACD: EMA(7) - EMA(25).
 - Linha de sinal: WMA(5) da linha MACD.
-- CALL: cruzamento de alta + fechamento acima da EMA 200 + candle de alta.
-- PUT: cruzamento de baixa + fechamento abaixo da EMA 200 + candle de baixa.
+- Tendência: EMA(200).
+- CALL: cruzamento de alta, MACD acima de zero, preço acima da EMA 200
+  e candle fechado de alta.
+- PUT: cruzamento de baixa, MACD abaixo de zero, preço abaixo da EMA 200
+  e candle fechado de baixa.
 
-Para evitar sinais intrabar, o último candle recebido (potencialmente em formação)
-é ignorado. O sinal é calculado somente com candles fechados.
+Integração preservada: get_signal(candles, config).
+O último candle recebido é ignorado por segurança, pois pode estar em formação.
 """
+
+MA_FAST_PERIOD = 7
+MA_SLOW_PERIOD = 25
+SIGNAL_PERIOD = 5
+TREND_PERIOD = 200
 
 
 def _ema_series(values, period):
@@ -34,9 +42,8 @@ def _wma(values, period):
 
 
 def get_signal(candles, config):
-    # São necessários pelo menos 200 candles fechados para calcular a EMA 200.
-    # O último candle do feed é ignorado porque pode estar em formação.
-    if len(candles) < 201:
+    # O feed pode trazer o candle atual ainda aberto; usamos apenas os fechados.
+    if not candles or len(candles) < TREND_PERIOD + 1:
         return None
 
     closed = candles[:-1]
@@ -45,27 +52,25 @@ def get_signal(candles, config):
     last_close = float(last_candle["close"])
     last_open = float(last_candle["open"])
 
-    ema_fast_series = _ema_series(closes, 7)
-    ema_slow_series = _ema_series(closes, 25)
-    ema_trend_series = _ema_series(closes, 200)
+    ema_fast_series = _ema_series(closes, MA_FAST_PERIOD)
+    ema_slow_series = _ema_series(closes, MA_SLOW_PERIOD)
+    ema_trend_series = _ema_series(closes, TREND_PERIOD)
 
     if not ema_fast_series or not ema_slow_series or not ema_trend_series:
         return None
 
-    # Monta a linha MACD apenas nos índices em que as duas EMAs existem.
     macd_values = []
     for fast, slow in zip(ema_fast_series, ema_slow_series):
         if fast is not None and slow is not None:
             macd_values.append(fast - slow)
 
-    # Precisamos do valor atual e do anterior da WMA(5).
-    if len(macd_values) < 6:
+    if len(macd_values) < SIGNAL_PERIOD + 1:
         return None
 
     current_macd = macd_values[-1]
     previous_macd = macd_values[-2]
-    current_signal = _wma(macd_values, 5)
-    previous_signal = _wma(macd_values[:-1], 5)
+    current_signal = _wma(macd_values, SIGNAL_PERIOD)
+    previous_signal = _wma(macd_values[:-1], SIGNAL_PERIOD)
     ema_trend = ema_trend_series[-1]
 
     if current_signal is None or previous_signal is None or ema_trend is None:
@@ -73,29 +78,33 @@ def get_signal(candles, config):
 
     trend_up = last_close > ema_trend
     trend_down = last_close < ema_trend
+    macd_above_zero = current_macd > 0
+    macd_below_zero = current_macd < 0
     bull_candle = last_close > last_open
     bear_candle = last_close < last_open
 
     buy_cross = current_macd > current_signal and previous_macd < previous_signal
     sell_cross = current_macd < current_signal and previous_macd > previous_signal
 
-    if buy_cross and trend_up and bull_candle:
+    if buy_cross and macd_above_zero and trend_up and bull_candle:
         return {
             "direction": "CALL",
             "confidence": 100,
             "reasons": [
-                "DEMEX PRO: cruzamento MACD de alta (7/25)",
+                "DEMEX PRO V2: cruzamento MACD de alta (EMA 7/25)",
+                "MACD acima de zero",
                 "Preço acima da EMA 200",
                 "Candle fechado de alta",
             ],
         }
 
-    if sell_cross and trend_down and bear_candle:
+    if sell_cross and macd_below_zero and trend_down and bear_candle:
         return {
             "direction": "PUT",
             "confidence": 100,
             "reasons": [
-                "DEMEX PRO: cruzamento MACD de baixa (7/25)",
+                "DEMEX PRO V2: cruzamento MACD de baixa (EMA 7/25)",
+                "MACD abaixo de zero",
                 "Preço abaixo da EMA 200",
                 "Candle fechado de baixa",
             ],
