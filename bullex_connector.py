@@ -1,133 +1,90 @@
-"""Read-only adapter for the third-party bullexapi Python package.
-
-This adapter intentionally exposes market data only. It does not place,
-modify, or close trades. The upstream package is unofficial and may change.
-"""
+"""Bullex adapter with market-data reads and guarded PRACTICE-only orders."""
 from __future__ import annotations
-
-import logging
-import os
+import logging, os
 from dataclasses import dataclass
 from typing import Any
-
 from bullexapi.stable_api import Bullex
-
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class BullexConfig:
     email: str
     password: str
     account_type: str = "PRACTICE"
-
     @classmethod
-    def from_env(cls) -> "BullexConfig":
-        email = os.getenv("BULLEX_EMAIL", "").strip()
-        password = os.getenv("BULLEX_PASSWORD", "")
-        if not email or not password:
-            raise RuntimeError("Configure BULLEX_EMAIL e BULLEX_PASSWORD no ambiente local (.env).")
-        account_type = os.getenv("BULLEX_ACCOUNT_TYPE", "PRACTICE").upper()
-        if account_type not in {"PRACTICE", "REAL", "TOURNAMENT"}:
-            raise ValueError("BULLEX_ACCOUNT_TYPE deve ser PRACTICE, REAL ou TOURNAMENT.")
-        return cls(email=email, password=password, account_type=account_type)
-
+    def from_env(cls):
+        email=os.getenv("BULLEX_EMAIL","").strip()
+        password=os.getenv("BULLEX_PASSWORD","")
+        if not email or not password: raise RuntimeError("Configure BULLEX_EMAIL e BULLEX_PASSWORD no .env local.")
+        mode=os.getenv("BULLEX_ACCOUNT_TYPE","PRACTICE").upper()
+        if mode not in {"PRACTICE","REAL","TOURNAMENT"}: raise ValueError("BULLEX_ACCOUNT_TYPE inválido.")
+        return cls(email,password,mode)
 
 class BullexReadOnlyConnector:
-    """Small read-only wrapper around the documented third-party client."""
-
-    def __init__(self, config: BullexConfig):
-        self.config = config
-        self.client = Bullex(config.email, config.password,
-                             active_account_type=config.account_type)
-        self.connected = False
-
-    def connect(self) -> dict[str, Any]:
-        status, detail = self.client.connect()
-        if not status:
-            # The upstream library may return the literal marker '2FA'.
-            return {"connected": False, "reason": str(detail or "connection_failed"),
-                    "requires_2fa": detail == "2FA"}
-        self.connected = bool(self.client.check_connect())
-        return {"connected": self.connected, "account_type": self.config.account_type}
-
-    def get_assets(self) -> list[dict[str, Any]]:
+    """Leitura de mercado e ordens estritamente bloqueadas fora de PRACTICE."""
+    def __init__(self, config):
+        self.config=config
+        self.client=Bullex(config.email,config.password,active_account_type=config.account_type)
+        self.connected=False
+        self.account_mode=None
+    def connect(self):
+        status,detail=self.client.connect()
+        if not status: return {"connected":False,"reason":str(detail or "connection_failed"),"requires_2fa":detail=="2FA"}
+        self.connected=bool(self.client.check_connect())
+        if self.connected:
+            try: self.account_mode=self.client.get_balance_mode()
+            except Exception as exc: logger.warning("Falha ao confirmar conta: %s",exc)
+        return {"connected":self.connected,"account_type":self.account_mode or self.config.account_type}
+    def get_assets(self):
         self._require_connection()
-        assets = self.client.get_all_ACTIVES_OPCODE()
-        return [{"symbol": str(symbol), "active_id": int(active_id)}
-                for symbol, active_id in assets.items()]
-
-    def get_candles(self, symbol: str, timeframe_seconds: int, count: int = 100) -> list[dict[str, Any]]:
+        return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
+    def get_candles(self,symbol,timeframe_seconds,count=100):
         self._require_connection()
-        if timeframe_seconds not in (60, 300):
-            raise ValueError("Somente M1 (60s) e M5 (300s) são permitidos.")
-        if not 10 <= count <= 1000:
-            raise ValueError("count deve ficar entre 10 e 1000.")
-        known = self.client.get_all_ACTIVES_OPCODE()
-        if symbol not in known:
-            raise ValueError(f"Ativo não encontrado na lista recebida da Bullex: {symbol}")
-        endtime = int(self.client.get_server_timestamp())
-        raw = self.client.get_candles(symbol, timeframe_seconds, count, endtime)
-        if not raw:
-            return []
-        # Preserve upstream candle fields; normalize common names without fabricating values.
-        normalized = []
-        for candle in raw:
-            if not isinstance(candle, dict):
-                continue
-            normalized.append({
-                "timestamp": candle.get("from", candle.get("timestamp")),
-                "open": candle.get("open"),
-                "high": candle.get("max", candle.get("high")),
-                "low": candle.get("min", candle.get("low")),
-                "close": candle.get("close"),
-                "volume": candle.get("volume"),
-                "raw": candle,
-            })
-        return normalized
-
-    def get_payouts(self) -> dict[str, dict[str, float]]:
-        """Return payout percentages reported by the upstream feed, not estimates."""
+        if timeframe_seconds not in (60,300): raise ValueError("Somente M1 e M5.")
+        if not 10<=count<=1000: raise ValueError("count deve ficar entre 10 e 1000.")
+        if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo não encontrado: {symbol}")
+        raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.client.get_server_timestamp()))
+        return [{"timestamp":c.get("from",c.get("timestamp")),"open":c.get("open"),"high":c.get("max",c.get("high")),"low":c.get("min",c.get("low")),"close":c.get("close"),"volume":c.get("volume"),"raw":c} for c in (raw or []) if isinstance(c,dict)]
+    def get_payouts(self):
         self._require_connection()
-        raw = self.client.get_all_profit()
-        result: dict[str, dict[str, float]] = {}
-        if not isinstance(raw, dict):
-            return result
-        for symbol, types in raw.items():
-            if not isinstance(types, dict):
-                continue
-            result[str(symbol)] = {}
-            for option_type, value in types.items():
+        raw=self.client.get_all_profit()
+        result={}
+        for symbol,types in (raw.items() if isinstance(raw,dict) else []):
+            if not isinstance(types,dict): continue
+            result[str(symbol)]={}
+            for typ,value in types.items():
                 try:
-                    numeric = float(value)
-                    # bullexapi documents payout as a fraction (e.g. 0.85).
-                    percent = numeric * 100 if numeric <= 1 else numeric
-                    if 0 <= percent <= 100:
-                        result[str(symbol)][str(option_type)] = percent
-                except (TypeError, ValueError):
-                    continue
+                    n=float(value); result[str(symbol)][str(typ)]=n*100 if n<=1 else n
+                except (TypeError,ValueError): pass
         return result
-
-    def get_open_assets(self, minimum_payout_percent: float = 80.0) -> list[dict[str, Any]]:
-        """Filter listed assets by a currently reported payout; missing payout is excluded."""
-        assets = self.get_assets()
-        payouts = self.get_payouts()
-        available = []
-        for asset in assets:
-            symbol = asset["symbol"]
-            rates = payouts.get(symbol, {})
-            best = max(rates.values(), default=0.0)
-            if best > minimum_payout_percent:
-                available.append({**asset, "payout_percent": round(best, 2), "payout_types": rates})
+    def get_open_assets(self,minimum_payout_percent=80.0):
+        payouts=self.get_payouts(); available=[]
+        for asset in self.get_assets():
+            rates=payouts.get(asset["symbol"],{}); best=max(rates.values(),default=0.0)
+            if best>minimum_payout_percent: available.append({**asset,"payout_percent":round(best,2),"payout_types":rates})
         return available
-
-    def _require_connection(self) -> None:
+    def place_practice_order(self,symbol,direction,amount,expiry_minutes):
+        self._require_connection()
+        if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
+            raise PermissionError("ORDEM BLOQUEADA: a corretora não confirmou conta PRACTICE/DEMO.")
+        if direction not in {"CALL","PUT"}: raise ValueError("Direção inválida.")
+        if expiry_minutes not in {1,5}: raise ValueError("Expiração permitida: 1 ou 5 minutos.")
+        if float(amount)<=0: raise ValueError("Valor de entrada inválido.")
+        if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo indisponível: {symbol}")
+        ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
+        if not ok or not order_id: raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
+        return int(order_id)
+    def wait_practice_result(self,order_id):
+        self._require_connection()
+        if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
+            raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
+        state,pnl=self.client.check_win_v4(int(order_id))
+        state=str(state).lower()
+        return ("WIN" if state=="win" else "LOSS" if state=="loose" else "TIE",round(float(pnl),2))
+    def _require_connection(self):
         if not self.connected or not self.client.check_connect():
-            self.connected = False
-            raise ConnectionError("Bullex desconectada. Nenhum dado deve ser usado para gerar sinais.")
-
-    def close(self) -> None:
-        try:
-            self.client.logout()
-        finally:
-            self.connected = False
+            self.connected=False
+            raise ConnectionError("Bullex desconectada; processamento de sinais/ordens interrompido.")
+    def close(self):
+        try: self.client.logout()
+        finally: self.connected=False
