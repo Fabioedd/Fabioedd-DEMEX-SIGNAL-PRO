@@ -69,7 +69,17 @@ def analyze(candles, config):
     if config.get("strategy_mode")=="custom_script":
         direction=custom_script_signal(config.get("custom_script_path","strategies/my_strategy.py"),candles,config)
         if not direction: return None
-        votes.append(direction); reasons.append("SCRIPT PERSONALIZADO")
+        if isinstance(direction, dict):
+            custom_direction = direction.get("direction")
+            custom_score = float(direction.get("confidence", 0))
+            if custom_direction not in ("CALL", "PUT") or not 0 <= custom_score <= 100:
+                return None
+            if custom_score <= int(config.get("minimum_confidence", 70)):
+                return None
+            return {"direction": custom_direction, "confidence": round(custom_score),
+                    "reasons": ["SCRIPT PERSONALIZADO"], "votes": 1}
+        # String-only scripts have no score; require a scored result object.
+        return None
     else:
         inds=config.get("indicators",{})
         fast_cfg=inds.get("ema_fast",{})
@@ -99,5 +109,5 @@ def analyze(candles, config):
     agreeing=max(calls,puts); total=len(votes)
     confidence=round(100*agreeing/total)
     # Require at least 70% agreement; do not label this as probability of winning.
-    if confidence < int(config.get("minimum_confidence",70)): return None
+    if confidence <= int(config.get("minimum_confidence",70)): return None
     return {"direction":direction,"confidence":confidence,"reasons":sorted(set(reasons)),"votes":total}
