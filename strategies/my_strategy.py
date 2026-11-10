@@ -1,26 +1,16 @@
-"""DUBAI 2023 PRO — estratégia personalizada do usuário.
+"""DEMEX PRO — estratégia personalizada convertida do script Lua enviado.
 
-Lógica original preservada:
-- SMA rápida: 1 período (equivale à série de preço selecionada; aqui usamos CLOSE).
-- SMA lenta: 34 períodos.
-- buffer1 = SMA(1) - SMA(34).
-- buffer2 = WMA(buffer1, 5).
-- CALL no cruzamento de buffer1 para cima de buffer2.
-- PUT no cruzamento de buffer1 para baixo de buffer2.
+Regras preservadas:
+- EMA rápida: 7 períodos.
+- EMA lenta: 25 períodos.
+- Linha MACD: EMA(7) - EMA(25).
+- Linha de sinal: WMA(5) da linha MACD.
+- CALL: cruzamento de alta + fechamento acima da EMA 200 + candle de alta.
+- PUT: cruzamento de baixa + fechamento abaixo da EMA 200 + candle de baixa.
 
-Únicos filtros adicionais autorizados:
-- CALL somente se o fechamento estiver acima das EMA 9 e EMA 21.
-- PUT somente se o fechamento estiver abaixo das EMA 9 e EMA 21.
-- Se estiver entre as EMAs, não sinaliza.
-
-Para evitar repintura, o cálculo usa somente candles fechados (ignora o último candle,
-que pode estar em formação, conforme o feed da corretora).
+Para evitar sinais intrabar, o último candle recebido (potencialmente em formação)
+é ignorado. O sinal é calculado somente com candles fechados.
 """
-
-def _sma(values, period):
-    if len(values) < period:
-        return None
-    return sum(values[-period:]) / period
 
 
 def _ema_series(values, period):
@@ -44,61 +34,71 @@ def _wma(values, period):
 
 
 def get_signal(candles, config):
-    # O último candle pode ainda estar aberto. Trabalhamos com os fechados.
-    if len(candles) < 36:
+    # São necessários pelo menos 200 candles fechados para calcular a EMA 200.
+    # O último candle do feed é ignorado porque pode estar em formação.
+    if len(candles) < 201:
         return None
 
     closed = candles[:-1]
     closes = [float(candle["close"]) for candle in closed]
+    last_candle = closed[-1]
+    last_close = float(last_candle["close"])
+    last_open = float(last_candle["open"])
 
-    # Filtros: EMAs 9 e 21, calculadas até o último candle fechado.
-    ema9_series = _ema_series(closes, 9)
-    ema21_series = _ema_series(closes, 21)
-    if not ema9_series or not ema21_series:
+    ema_fast_series = _ema_series(closes, 7)
+    ema_slow_series = _ema_series(closes, 25)
+    ema_trend_series = _ema_series(closes, 200)
+
+    if not ema_fast_series or not ema_slow_series or not ema_trend_series:
         return None
 
-    last_close = closes[-1]
-    ema9 = ema9_series[-1]
-    ema21 = ema21_series[-1]
-    if ema9 is None or ema21 is None:
+    # Monta a linha MACD apenas nos índices em que as duas EMAs existem.
+    macd_values = []
+    for fast, slow in zip(ema_fast_series, ema_slow_series):
+        if fast is not None and slow is not None:
+            macd_values.append(fast - slow)
+
+    # Precisamos do valor atual e do anterior da WMA(5).
+    if len(macd_values) < 6:
         return None
 
-    # Script original: SMA(1) - SMA(34), seguido de WMA(5).
-    buffer1 = []
-    for index in range(len(closes)):
-        history = closes[:index + 1]
-        slow = _sma(history, 34)
-        if slow is not None:
-            fast = _sma(history, 1)
-            buffer1.append(fast - slow)
+    current_macd = macd_values[-1]
+    previous_macd = macd_values[-2]
+    current_signal = _wma(macd_values, 5)
+    previous_signal = _wma(macd_values[:-1], 5)
+    ema_trend = ema_trend_series[-1]
 
-    if len(buffer1) < 6:
+    if current_signal is None or previous_signal is None or ema_trend is None:
         return None
 
-    # Valores atual e anterior, ambos em candles fechados.
-    current_buffer1 = buffer1[-1]
-    previous_buffer1 = buffer1[-2]
-    current_buffer2 = _wma(buffer1, 5)
-    previous_buffer2 = _wma(buffer1[:-1], 5)
-    if current_buffer2 is None or previous_buffer2 is None:
-        return None
+    trend_up = last_close > ema_trend
+    trend_down = last_close < ema_trend
+    bull_candle = last_close > last_open
+    bear_candle = last_close < last_open
 
-    # Cruzamentos exatamente na direção definida pelo script original.
-    buy_cross = current_buffer1 > current_buffer2 and previous_buffer1 < previous_buffer2
-    sell_cross = current_buffer1 < current_buffer2 and previous_buffer1 > previous_buffer2
+    buy_cross = current_macd > current_signal and previous_macd < previous_signal
+    sell_cross = current_macd < current_signal and previous_macd > previous_signal
 
-    if buy_cross and last_close > ema9 and last_close > ema21:
+    if buy_cross and trend_up and bull_candle:
         return {
             "direction": "CALL",
             "confidence": 100,
-            "reasons": ["DUBAI 2023: cruzamento de compra", "Preço acima da EMA 9 e EMA 21"],
+            "reasons": [
+                "DEMEX PRO: cruzamento MACD de alta (7/25)",
+                "Preço acima da EMA 200",
+                "Candle fechado de alta",
+            ],
         }
 
-    if sell_cross and last_close < ema9 and last_close < ema21:
+    if sell_cross and trend_down and bear_candle:
         return {
             "direction": "PUT",
             "confidence": 100,
-            "reasons": ["DUBAI 2023: cruzamento de venda", "Preço abaixo da EMA 9 e EMA 21"],
+            "reasons": [
+                "DEMEX PRO: cruzamento MACD de baixa (7/25)",
+                "Preço abaixo da EMA 200",
+                "Candle fechado de baixa",
+            ],
         }
 
     return None
