@@ -1,6 +1,6 @@
 """Bullex adapter with market-data reads and guarded PRACTICE-only orders."""
 from __future__ import annotations
-import logging, os
+import logging, os, time
 from dataclasses import dataclass
 from typing import Any
 from bullexapi.stable_api import Bullex
@@ -35,6 +35,39 @@ class BullexReadOnlyConnector:
             try: self.account_mode=self.client.get_balance_mode()
             except Exception as exc: logger.warning("Falha ao confirmar conta: %s",exc)
         return {"connected":self.connected,"account_type":self.account_mode or self.config.account_type}
+    def reconnect_forever(self, stop_check=None):
+        """Reconecta continuamente e só retorna após confirmar a conta PRACTICE."""
+        delay=2
+        while True:
+            if stop_check and stop_check():
+                raise InterruptedError("Parada solicitada durante a reconexão.")
+            try:
+                logger.warning("Conexão perdida. Nova tentativa em %s segundos...",delay)
+                time.sleep(delay)
+                try:
+                    self.client.logout()
+                except Exception:
+                    pass
+                self.client=Bullex(self.config.email,self.config.password,
+                                   active_account_type=self.config.account_type)
+                status,detail=self.client.connect()
+                if status and self.client.check_connect():
+                    mode=self.client.get_balance_mode()
+                    if self.config.account_type!="PRACTICE" or mode!="PRACTICE":
+                        raise PermissionError("Reconexão recusada: conta PRACTICE não confirmada.")
+                    self.connected=True
+                    self.account_mode=mode
+                    logger.info("Conexão Bullex restabelecida em PRACTICE.")
+                    return True
+                self.connected=False
+                logger.warning("Ainda sem conexão: %s",detail or "sem resposta")
+            except PermissionError:
+                raise
+            except Exception as exc:
+                self.connected=False
+                logger.warning("Falha na reconexão: %s",exc)
+            delay=min(delay*2,30)
+
     def get_assets(self):
         self._require_connection()
         return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
