@@ -86,6 +86,41 @@ class BullexReadOnlyConnector:
             })
         return normalized
 
+    def get_payouts(self) -> dict[str, dict[str, float]]:
+        """Return payout percentages reported by the upstream feed, not estimates."""
+        self._require_connection()
+        raw = self.client.get_all_profit()
+        result: dict[str, dict[str, float]] = {}
+        if not isinstance(raw, dict):
+            return result
+        for symbol, types in raw.items():
+            if not isinstance(types, dict):
+                continue
+            result[str(symbol)] = {}
+            for option_type, value in types.items():
+                try:
+                    numeric = float(value)
+                    # bullexapi documents payout as a fraction (e.g. 0.85).
+                    percent = numeric * 100 if numeric <= 1 else numeric
+                    if 0 <= percent <= 100:
+                        result[str(symbol)][str(option_type)] = percent
+                except (TypeError, ValueError):
+                    continue
+        return result
+
+    def get_open_assets(self, minimum_payout_percent: float = 80.0) -> list[dict[str, Any]]:
+        """Filter listed assets by a currently reported payout; missing payout is excluded."""
+        assets = self.get_assets()
+        payouts = self.get_payouts()
+        available = []
+        for asset in assets:
+            symbol = asset["symbol"]
+            rates = payouts.get(symbol, {})
+            best = max(rates.values(), default=0.0)
+            if best >= minimum_payout_percent:
+                available.append({**asset, "payout_percent": round(best, 2), "payout_types": rates})
+        return available
+
     def _require_connection(self) -> None:
         if not self.connected or not self.client.check_connect():
             self.connected = False
