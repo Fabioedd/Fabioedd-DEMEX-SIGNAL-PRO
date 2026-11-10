@@ -1,11 +1,15 @@
 """DEMEX automatic signal trader — PRACTICE/DEMO only."""
 import json, logging, subprocess, time
+from pathlib import Path
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
 from trade_manager import DemoTrader
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
+
+# Sinal de parada solicitado pelo comando demex.sh parar.
+STOP_FILE = Path(".demex_stop")
 
 
 def scan_delay(settings):
@@ -74,6 +78,11 @@ def main():
         print("Entrada inicial R$ %.2f | Soros 1 | Stop R$ %.2f | Take R$ %.2f" %
               (trader.base,trader.stop,trader.take))
         while not trader.stopped:
+            # A parada é cooperativa: nunca interrompe à força uma ordem já enviada.
+            if STOP_FILE.exists():
+                trader.stopped=True
+                print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
+                break
             signal=scan_once(connector,settings)
             if signal:
                 msg=(f"SINAL {signal['symbol']} | {signal['direction']} | {signal['timeframe']} | "
