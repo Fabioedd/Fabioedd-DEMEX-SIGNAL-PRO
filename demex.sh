@@ -6,19 +6,24 @@ cd "$(dirname "$0")" || exit 1
 PID_FILE=".demex.pid"
 STOP_FILE=".demex_stop"
 LOG_FILE="demex.log"
+PYTHON=".venv/bin/python"
 
 case "${1:-}" in
   iniciar)
+    if [ ! -x "$PYTHON" ]; then
+      echo "Ambiente .venv não encontrado. Crie/instale o ambiente antes de iniciar."
+      exit 1
+    fi
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       echo "DEMEX já está em execução. Use: ./demex.sh status"
       exit 0
     fi
     rm -f "$STOP_FILE" "$PID_FILE"
-    nohup python main.py >> "$LOG_FILE" 2>&1 &
+    nohup "$PYTHON" main.py >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 1
     if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-      echo "DEMEX iniciado. Log: $LOG_FILE"
+      echo "DEMEX iniciado usando .venv. Log: $LOG_FILE"
     else
       rm -f "$PID_FILE"
       echo "O DEMEX não iniciou. Confira: tail -n 40 $LOG_FILE"
