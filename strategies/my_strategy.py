@@ -1,197 +1,168 @@
-"""DEMEX PRO V5 PULLBACK — tradução Python do indicador Lua enviado.
+"""Harami_GO / CONF_TRIPLA — tradução fiel da lógica Lua para Python.
 
-Regras:
-- EMA rápida 7 e EMA lenta 25.
-- MACD = EMA(7) - EMA(25); sinal = WMA(5) do MACD.
-- Filtro de tendência EMA 200.
-- ADX 14 com suavização EMA(27), mínimo estritamente maior que 25.
-- +DI / -DI definem a direção.
-- Pullback: distância absoluta entre o preço de fechamento e EMA 25
-  deve ser menor que ATR suavizado * Dist_ATR_x10 / 10 (padrão = 1 ATR).
-- CALL/PUT exigem cruzamento MACD, posição relativa ao zero, tendência,
-  candle fechado na direção do sinal, ADX, DI e filtro de pullback.
-- O último candle recebido é ignorado porque pode estar em formação.
+Confluência obrigatória no ÚLTIMO candle FECHADO:
+1) Harami de alta/baixa formado pelos dois últimos candles fechados.
+2) Cruzamento GO original: SMA(1) - SMA(34), suavizado por WMA(5).
+3) Fechamento acima/abaixo da EMA(200), na direção do sinal.
 
-Integração: get_signal(candles, config).
+A última vela recebida pelo conector é descartada por estar em formação.
+Integração com o DEMEX: get_signal(candles, config).
 """
 
-MA_FAST_PERIOD = 7
-MA_SLOW_PERIOD = 25
-SIGNAL_PERIOD = 5
+SMA_FAST_PERIOD = 1
+SMA_SLOW_PERIOD = 34
+GO_SIGNAL_PERIOD = 5
 TREND_PERIOD = 200
-ADX_PERIOD = 14
-ADX_MIN = 25
-ADX_SMOOTH_PERIOD = 2 * ADX_PERIOD - 1
-DIST_ATR_X10 = 10
 
 
-def _ema_series(values, period):
+def _sma_series(values, period):
+    """SMA alinhada ao índice original; None durante o aquecimento."""
+    result = [None] * len(values)
     if len(values) < period:
-        return []
-    alpha = 2.0 / (period + 1.0)
-    current = sum(values[:period]) / period
-    result = [None] * (period - 1) + [current]
-    for value in values[period:]:
-        current = alpha * value + (1.0 - alpha) * current
-        result.append(current)
+        return result
+    running = sum(values[:period])
+    result[period - 1] = running / period
+    for index in range(period, len(values)):
+        running += values[index] - values[index - period]
+        result[index] = running / period
     return result
 
 
-def _wma(values, period):
+def _ema_series(values, period):
+    """EMA inicializada pela média simples dos primeiros valores."""
+    result = [None] * len(values)
     if len(values) < period:
-        return None
-    window = values[-period:]
-    denominator = period * (period + 1) / 2
-    return sum(value * weight for weight, value in enumerate(window, start=1)) / denominator
+        return result
+    current = sum(values[:period]) / period
+    result[period - 1] = current
+    alpha = 2.0 / (period + 1.0)
+    for index in range(period, len(values)):
+        current = alpha * values[index] + (1.0 - alpha) * current
+        result[index] = current
+    return result
 
 
-def _adx_components(candles):
-    """Calcula ATR/TR suavizado, +DI, -DI e ADX conforme o indicador Lua."""
-    if len(candles) < ADX_SMOOTH_PERIOD + 2:
-        return None
-
-    true_ranges = []
-    plus_dm = []
-    minus_dm = []
-
-    for previous, current in zip(candles[:-1], candles[1:]):
-        prev_close = float(previous["close"])
-        high = float(current["high"])
-        low = float(current["low"])
-        prev_high = float(previous["high"])
-        prev_low = float(previous["low"])
-
-        up_move = high - prev_high
-        down_move = prev_low - low
-
-        true_ranges.append(max(
-            high - low,
-            abs(high - prev_close),
-            abs(low - prev_close),
-        ))
-        plus_dm.append(max(up_move, 0.0) if up_move > down_move else 0.0)
-        minus_dm.append(max(down_move, 0.0) if down_move > up_move else 0.0)
-
-    tr_s = _ema_series(true_ranges, ADX_SMOOTH_PERIOD)
-    plus_s = _ema_series(plus_dm, ADX_SMOOTH_PERIOD)
-    minus_s = _ema_series(minus_dm, ADX_SMOOTH_PERIOD)
-    if not tr_s or not plus_s or not minus_s:
-        return None
-
-    dx_values = []
-    latest_plus_di = latest_minus_di = None
-    for tr_value, plus_value, minus_value in zip(tr_s, plus_s, minus_s):
-        if tr_value is None or plus_value is None or minus_value is None:
-            dx_values.append(None)
+def _wma_series(values, period):
+    """WMA com pesos crescentes, igual à suavização do GO."""
+    result = [None] * len(values)
+    if len(values) < period:
+        return result
+    denominator = period * (period + 1) / 2.0
+    for index in range(period - 1, len(values)):
+        window = values[index - period + 1:index + 1]
+        if any(value is None for value in window):
             continue
-        if tr_value <= 0:
-            plus_di = minus_di = 0.0
-        else:
-            plus_di = 100.0 * plus_value / tr_value
-            minus_di = 100.0 * minus_value / tr_value
-        total_di = plus_di + minus_di
-        dx = 100.0 * abs(plus_di - minus_di) / total_di if total_di > 0 else 0.0
-        dx_values.append(dx)
-        latest_plus_di = plus_di
-        latest_minus_di = minus_di
+        result[index] = sum(
+            value * weight
+            for weight, value in enumerate(window, start=1)
+        ) / denominator
+    return result
 
-    valid_dx = [value for value in dx_values if value is not None]
-    adx_series = _ema_series(valid_dx, ADX_SMOOTH_PERIOD)
-    if not adx_series or adx_series[-1] is None:
-        return None
-    if latest_plus_di is None or latest_minus_di is None:
-        return None
-    return adx_series[-1], latest_plus_di, latest_minus_di, tr_s[-1]
+
+def _harami_direction(parent, child):
+    """Retorna CALL/PUT somente quando o corpo do candle filho fica dentro do pai."""
+    parent_open = float(parent["open"])
+    parent_close = float(parent["close"])
+    child_open = float(child["open"])
+    child_close = float(child["close"])
+
+    bullish_harami = (
+        parent_open > parent_close
+        and child_open < child_close
+        and child_open > parent_close
+        and child_close < parent_open
+    )
+    bearish_harami = (
+        parent_open < parent_close
+        and child_open > child_close
+        and child_open < parent_close
+        and child_close > parent_open
+    )
+
+    if bullish_harami:
+        return "CALL"
+    if bearish_harami:
+        return "PUT"
+    return None
 
 
 def get_signal(candles, config):
-    # O feed pode trazer a vela atual ainda aberta; usamos somente velas fechadas.
-    if not candles or len(candles) < TREND_PERIOD + 2:
+    """Analisa candles fechados e devolve sinal no formato esperado pelo DEMEX."""
+    # O conector inclui a vela atual, ainda em formação: nunca a usamos.
+    if not candles or len(candles) < TREND_PERIOD + 3:
         return None
 
     closed = candles[:-1]
     closes = [float(candle["close"]) for candle in closed]
-    last_candle = closed[-1]
-    last_close = float(last_candle["close"])
-    last_open = float(last_candle["open"])
-
-    ema_fast_series = _ema_series(closes, MA_FAST_PERIOD)
-    ema_slow_series = _ema_series(closes, MA_SLOW_PERIOD)
-    ema_trend_series = _ema_series(closes, TREND_PERIOD)
-    if not ema_fast_series or not ema_slow_series or not ema_trend_series:
+    if len(closed) < TREND_PERIOD + 2:
         return None
 
-    macd_values = [
-        fast - slow
-        for fast, slow in zip(ema_fast_series, ema_slow_series)
-        if fast is not None and slow is not None
+    # Harami é formado pelos dois últimos candles já encerrados.
+    parent = closed[-2]
+    child = closed[-1]
+    pattern = _harami_direction(parent, child)
+    if pattern is None:
+        return None
+
+    # GO 2024 original: SMA rápida 1, SMA lenta 34 e WMA do buffer 5.
+    sma_fast = _sma_series(closes, SMA_FAST_PERIOD)
+    sma_slow = _sma_series(closes, SMA_SLOW_PERIOD)
+    buffer1 = [
+        (fast - slow) if fast is not None and slow is not None else None
+        for fast, slow in zip(sma_fast, sma_slow)
     ]
-    if len(macd_values) < SIGNAL_PERIOD + 1:
+    buffer2 = _wma_series(buffer1, GO_SIGNAL_PERIOD)
+
+    current_index = len(closed) - 1
+    previous_index = current_index - 1
+    current_buffer1 = buffer1[current_index]
+    previous_buffer1 = buffer1[previous_index]
+    current_buffer2 = buffer2[current_index]
+    previous_buffer2 = buffer2[previous_index]
+
+    if any(value is None for value in (
+        current_buffer1, previous_buffer1,
+        current_buffer2, previous_buffer2,
+    )):
         return None
 
-    current_macd = macd_values[-1]
-    previous_macd = macd_values[-2]
-    current_signal = _wma(macd_values, SIGNAL_PERIOD)
-    previous_signal = _wma(macd_values[:-1], SIGNAL_PERIOD)
-    ema_slow = ema_slow_series[-1]
-    ema_trend = ema_trend_series[-1]
-    adx_data = _adx_components(closed)
+    buy_cross = (
+        current_buffer1 > current_buffer2
+        and previous_buffer1 <= previous_buffer2
+    )
+    sell_cross = (
+        current_buffer1 < current_buffer2
+        and previous_buffer1 >= previous_buffer2
+    )
 
-    if (current_signal is None or previous_signal is None
-            or ema_slow is None or ema_trend is None or adx_data is None):
+    # Filtro de tendência EMA 200 no fechamento do candle do padrão.
+    ema200 = _ema_series(closes, TREND_PERIOD)[current_index]
+    if ema200 is None:
         return None
 
-    adx_value, plus_di, minus_di, tr_s = adx_data
-    if tr_s is None or tr_s <= 0:
-        return None
+    last_close = closes[current_index]
+    trend_up = last_close > ema200
+    trend_down = last_close < ema200
 
-    # Dist_ATR_x10 = 10 por padrão: distância máxima de 1.0 ATR até EMA 25.
-    distance_limit = tr_s * DIST_ATR_X10 / 10.0
-    distance_ok = abs(last_close - ema_slow) < distance_limit
-
-    adx_ok = adx_value > ADX_MIN
-    di_up = plus_di > minus_di
-    di_down = minus_di > plus_di
-
-    trend_up = last_close > ema_trend
-    trend_down = last_close < ema_trend
-    macd_above_zero = current_macd > 0
-    macd_below_zero = current_macd < 0
-    bull_candle = last_close > last_open
-    bear_candle = last_close < last_open
-
-    buy_cross = current_macd > current_signal and previous_macd < previous_signal
-    sell_cross = current_macd < current_signal and previous_macd > previous_signal
-
-    if (buy_cross and macd_above_zero and trend_up and bull_candle
-            and adx_ok and di_up and distance_ok):
+    if pattern == "CALL" and buy_cross and trend_up:
         return {
             "direction": "CALL",
             "confidence": 100,
             "reasons": [
-                "DEMEX PRO V5 PULLBACK: cruzamento MACD de alta (EMA 7/25 + WMA 5)",
-                "MACD acima de zero",
-                "Preço acima da EMA 200",
-                "Candle fechado de alta",
-                f"ADX {adx_value:.1f} acima de {ADX_MIN}",
-                "+DI acima de -DI",
-                f"Preço a {abs(last_close - ema_slow):.6f} da EMA 25; limite de pullback {distance_limit:.6f}",
+                "Harami de alta confirmado nos dois últimos candles fechados",
+                "GO 2024: cruzamento de alta da SMA(1)-SMA(34) com WMA(5)",
+                "Filtro de tendência: fechamento acima da EMA 200",
             ],
         }
 
-    if (sell_cross and macd_below_zero and trend_down and bear_candle
-            and adx_ok and di_down and distance_ok):
+    if pattern == "PUT" and sell_cross and trend_down:
         return {
             "direction": "PUT",
             "confidence": 100,
             "reasons": [
-                "DEMEX PRO V5 PULLBACK: cruzamento MACD de baixa (EMA 7/25 + WMA 5)",
-                "MACD abaixo de zero",
-                "Preço abaixo da EMA 200",
-                "Candle fechado de baixa",
-                f"ADX {adx_value:.1f} acima de {ADX_MIN}",
-                "-DI acima de +DI",
-                f"Preço a {abs(last_close - ema_slow):.6f} da EMA 25; limite de pullback {distance_limit:.6f}",
+                "Harami de baixa confirmado nos dois últimos candles fechados",
+                "GO 2024: cruzamento de baixa da SMA(1)-SMA(34) com WMA(5)",
+                "Filtro de tendência: fechamento abaixo da EMA 200",
             ],
         }
 
