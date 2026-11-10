@@ -1,24 +1,22 @@
-# DEMEX SIGNAL PRO — Integração Python Bullex (somente leitura)
+# DEMEX SIGNAL PRO — Python / Bullex (PRACTICE)
 
-Este repositório inicia uma camada Python para testar conexão e leitura de ativos/candles usando a biblioteca de terceiros [`CassDs/bullexapi`](https://github.com/CassDs/bullexapi). **Não é uma API oficial confirmada da Bullex.** A compatibilidade, disponibilidade e autorização do acesso devem ser verificadas antes de qualquer uso.
+Projeto Python para leitura de ativos/candles e execução automática de operações **somente em conta PRACTICE/DEMO**, usando a biblioteca não oficial [CassDs/bullexapi](https://github.com/CassDs/bullexapi). Não é uma API oficial confirmada da corretora; compatibilidade e autorização podem mudar.
 
-## Escopo desta primeira integração
+## Estratégia e operação
 
-- Conectar usando credenciais fornecidas por variáveis de ambiente.
-- Informar quando a conexão falhar ou exigir 2FA.
-- Consultar a lista de ativos.
-- Consultar candles M1 (60 segundos) e M5 (300 segundos).
-- Não contém chamadas para abrir, modificar ou fechar operações.
+- Estratégia personalizada: `strategies/my_strategy.py` (`get_signal(candles, config)`).
+- Timeframe configurado: M1; expiração: 1 minuto.
+- Entrada inicial: R$ 5,00.
+- Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
+- Stop da sessão: -R$ 15,00; take da sessão: +R$ 30,00.
+- Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
+- Uma ordem por sinal/vela, uma operação em andamento por vez.
 
-## Segurança
+## Trava de segurança
 
-1. Nunca coloque e-mail, senha, cookies, tokens ou códigos 2FA no código ou em commits.
-2. Copie `.env.example` para `.env` no seu computador e preencha localmente.
-3. O `.env` não deve ser enviado ao GitHub.
-4. Comece somente com conta PRACTICE/DEMO, se disponível.
-5. Revise os termos da corretora e da biblioteca antes de conectar uma conta.
+O envio de ordens só passa se **ambas** as verificações confirmarem PRACTICE: `BULLEX_ACCOUNT_TYPE=PRACTICE` no ambiente e `get_balance_mode() == "PRACTICE"` na sessão conectada. Se qualquer verificação falhar, o robô interrompe sem enviar ordem. Não configure conta REAL.
 
-## Instalação local
+## Instalação
 
 ```bash
 python -m venv .venv
@@ -26,32 +24,20 @@ python -m venv .venv
 # Linux/macOS/Termux: source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edite .env localmente; não compartilhe suas credenciais.
-python main.py
 ```
 
-Configure `BULLEX_ACTIVE` com um símbolo que realmente exista na lista retornada pelo método de ativos. O exemplo usa `EURUSD` apenas como valor inicial e pode precisar ser alterado.
+Preencha `.env` localmente e mantenha-o fora do GitHub:
+```env
+BULLEX_EMAIL=seu_email
+BULLEX_PASSWORD=sua_senha
+BULLEX_ACCOUNT_TYPE=PRACTICE
+```
 
-## Limitações conhecidas
+Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia ordens após conexão e confirmação da conta PRACTICE.
 
-- O pacote é de terceiros e pode quebrar se a corretora alterar seus protocolos.
-- O método de conexão pode exigir um fluxo 2FA adicional; este primeiro teste apenas identifica essa necessidade e não armazena códigos.
-- A lista de ativos retornada pelo pacote não garante que todos estejam abertos ou disponíveis para OTC.
-- Não foi validada equivalência entre cotações de candles e preços executáveis exibidos na interface da corretora.
-- Nenhum sinal de trading deve ser gerado enquanto a conexão e a atualidade dos candles não forem verificadas.
+## Testes e limitações
 
-## Próxima etapa
-
-Executar o teste local em conta de prática, confirmar conexão, validar a estrutura real dos candles e só então construir o serviço de streaming e o motor de análise.
-
-
-## Scanner de sinais configurável
-
-Edite `settings.json` para escolher M1/M5, mercado, expiração, payout mínimo (>80% por padrão), confiança técnica (>70 por padrão), indicadores e padrões. Execute `python main.py` para iniciar o scanner. Ele percorre os ativos com payout retornado acima do limite, analisa candles e anuncia apenas a melhor oportunidade por ciclo. O alerta usa o beep do terminal e tenta chamar `termux-tts-speak` se Termux:API estiver instalado. Não há execução de ordens.
-
-A confiança exibida é uma pontuação de confluência das regras selecionadas, não uma probabilidade calibrada de vitória. O payout é o valor reportado pela biblioteca e pode mudar. A classificação OTC é inferida pelo nome do ativo conter `OTC`; confirme essa convenção na lista de símbolos retornada pela sua corretora.
-
-### Escolha de estratégia
-
-- `strategy_mode: indicators`: use os indicadores e padrões marcados em `settings.json`.
-- `strategy_mode: custom_script`: use `strategies/my_strategy.py`. A função `get_signal(candles, config)` deve devolver `{"direction":"CALL"|"PUT","confidence": número}` ou `None`. Só execute scripts próprios e confiáveis.
+- Testes unitários do gerenciamento Soros/stop/take: `python -m unittest discover -s tests`.
+- Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
+- A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
+- A estratégia personalizada deve usar apenas candles fechados para evitar sinais intrabar.
