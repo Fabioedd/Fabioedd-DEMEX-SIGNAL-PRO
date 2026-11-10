@@ -16,5 +16,14 @@
   },
   "custom_script_path": "strategies/my_strategy.py",
   "one_signal_at_a_time": true,
-  "sound_alert": true
+  "sound_alert": true,
+  "trading": {
+    "mode": "DEMO",
+    "initial_entry_brl": 5.00,
+    "soros_level": 1,
+    "stop_loss_brl": 15.00,
+    "take_profit_brl": 30.00,
+    "automatic_execution_enabled": false,
+    "note": "Configuração de gerenciamento para validação em DEMO. Execução de ordens permanece desabilitada até integração e teste de API de ordens da corretora."
+  }
 }
