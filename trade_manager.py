@@ -33,7 +33,21 @@ class DemoTrader:
                 self.stopped=True; return None
             order_id=self.connector.place_practice_order(signal["symbol"],signal["direction"],float(amount),self.expiry)
             log.info("ORDEM DEMO | %s | %s | R$ %.2f | ID %s",signal["symbol"],signal["direction"],amount,order_id)
-            result,pnl_raw=self.connector.wait_practice_result(order_id)
+            # A ordem já foi enviada: em caso de queda, reconectar e consultar
+            # o MESMO order_id. Nunca enviar uma segunda ordem para substituir esta.
+            while True:
+                try:
+                    result,pnl_raw=self.connector.wait_practice_result(order_id)
+                    break
+                except Exception:
+                    try:
+                        connected=(self.connector.connected and self.connector.client.check_connect())
+                    except Exception:
+                        connected=False
+                    if connected:
+                        raise
+                    log.warning("Conexão caiu aguardando resultado da ordem %s; reconectando para consultar a mesma ordem.",order_id)
+                    self.connector.reconnect_forever()
             pnl=money(pnl_raw); self.net=money(self.net+pnl)
             # Soros nível 1: apenas uma recuperação após WIN; depois reinicia.
             if result=="WIN" and self.soros_step==0:
