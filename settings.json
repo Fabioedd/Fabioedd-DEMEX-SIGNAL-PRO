@@ -4,25 +4,45 @@
   "expiry_minutes": 1,
   "minimum_payout_percent": 80,
   "minimum_confidence": 70,
-  "scan_interval_seconds": 8,
-  "candles_count": 120,
+  "scan_interval_seconds": 2,
+  "candles_count": 250,
   "strategy_mode": "custom_script",
-  "enabled_patterns": ["engulfing", "doji", "hammer", "command_candle"],
+  "enabled_patterns": [
+    "engulfing",
+    "doji",
+    "hammer",
+    "command_candle"
+  ],
   "indicators": {
-    "ema_fast": {"enabled": true, "period": 9},
-    "ema_slow": {"enabled": true, "period": 21},
-    "rsi": {"enabled": true, "oversold": 30, "overbought": 70},
-    "macd": {"enabled": true, "fast": 5, "slow": 25, "signal": 5}
+    "ema_fast": {
+      "enabled": true,
+      "period": 9
+    },
+    "ema_slow": {
+      "enabled": true,
+      "period": 21
+    },
+    "rsi": {
+      "enabled": true,
+      "oversold": 30,
+      "overbought": 70
+    },
+    "macd": {
+      "enabled": true,
+      "fast": 5,
+      "slow": 25,
+      "signal": 5
+    }
   },
   "custom_script_path": "strategies/my_strategy.py",
   "one_signal_at_a_time": true,
   "sound_alert": true,
   "trading": {
     "mode": "DEMO",
-    "initial_entry_brl": 5.00,
+    "initial_entry_brl": 5,
     "soros_level": 1,
-    "stop_loss_brl": 15.00,
-    "take_profit_brl": 30.00,
+    "stop_loss_brl": 15,
+    "take_profit_brl": 30,
     "automatic_execution_enabled": true,
     "note": "Ordens automáticas permitidas somente com conta PRACTICE confirmada pela corretora."
   }
