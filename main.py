@@ -31,10 +31,11 @@ def market_matches(symbol,mode):
 
 def scan_once(connector,settings):
     tf=settings.get("timeframe","M1").upper()
-    seconds=60 if tf=="M1" else 300 if tf=="M5" else None
-    if seconds is None: raise ValueError("timeframe deve ser M1 ou M5")
-    expiry=int(settings.get("expiry_minutes",1 if tf=="M1" else 5))
-    if expiry not in (1,5): raise ValueError("Expiração deve ser 1 ou 5 minutos.")
+    if tf != "M1": raise ValueError("Este teste do DEMEX está limitado ao timeframe M1.")
+    seconds=60
+    expiry=1
+    settings["timeframe"]="M1"
+    settings["expiry_minutes"]=1
     min_payout=float(settings.get("minimum_payout_percent",80))
     settings["minimum_confidence"]=float(settings.get("minimum_confidence",70))
     assets=connector.get_open_assets(min_payout)
@@ -76,7 +77,7 @@ def main():
         if connector.client.get_balance_mode()!="PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
         trader=DemoTrader(connector,settings)
-        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO. Estratégia configurada pelo script personalizado.")
+        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | M1 | expiração 1 minuto | DEMEX PRO V4 ADX.")
         print("Entrada inicial R$ %.2f | Soros 1 | Stop R$ %.2f | Take R$ %.2f" %
               (trader.base,trader.stop,trader.take))
         while not trader.stopped:
