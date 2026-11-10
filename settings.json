@@ -11,7 +11,7 @@
   "indicators": {
     "ema_fast": {"enabled": true, "period": 9},
     "ema_slow": {"enabled": true, "period": 21},
-    "rsi": {"enabled": true, "period": 9, "oversold": 30, "overbought": 70},
+    "rsi": {"enabled": true, "oversold": 30, "overbought": 70},
     "macd": {"enabled": true, "fast": 5, "slow": 25, "signal": 5}
   },
   "custom_script_path": "strategies/my_strategy.py",
@@ -23,7 +23,7 @@
     "soros_level": 1,
     "stop_loss_brl": 15.00,
     "take_profit_brl": 30.00,
-    "automatic_execution_enabled": false,
-    "note": "Configuração de gerenciamento para validação em DEMO. Execução de ordens permanece desabilitada até integração e teste de API de ordens da corretora."
+    "automatic_execution_enabled": true,
+    "note": "Ordens automáticas permitidas somente com conta PRACTICE confirmada pela corretora."
   }
 }
