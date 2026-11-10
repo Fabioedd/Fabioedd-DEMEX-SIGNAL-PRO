@@ -117,7 +117,7 @@ class BullexReadOnlyConnector:
             symbol = asset["symbol"]
             rates = payouts.get(symbol, {})
             best = max(rates.values(), default=0.0)
-            if best >= minimum_payout_percent:
+            if best > minimum_payout_percent:
                 available.append({**asset, "payout_percent": round(best, 2), "payout_types": rates})
         return available
 
