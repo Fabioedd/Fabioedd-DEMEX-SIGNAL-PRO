@@ -1,0 +1,20 @@
+{
+  "market_mode": "OTC",
+  "timeframe": "M1",
+  "expiry_minutes": 1,
+  "minimum_payout_percent": 80,
+  "minimum_confidence": 70,
+  "scan_interval_seconds": 8,
+  "candles_count": 120,
+  "strategy_mode": "indicators",
+  "enabled_patterns": ["engulfing", "doji", "hammer", "command_candle"],
+  "indicators": {
+    "ema_fast": {"enabled": true, "period": 9},
+    "ema_slow": {"enabled": true, "period": 21},
+    "rsi": {"enabled": true, "period": 9, "oversold": 30, "overbought": 70},
+    "macd": {"enabled": true, "fast": 5, "slow": 25, "signal": 5}
+  },
+  "custom_script_path": "strategies/my_strategy.py",
+  "one_signal_at_a_time": true,
+  "sound_alert": true
+}
