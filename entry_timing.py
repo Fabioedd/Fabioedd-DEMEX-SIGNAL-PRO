@@ -23,14 +23,14 @@ def filter_market_assets(assets, mode="OTC"):
 
 
 def closed_signal_entry_mode(seconds_after_close):
-    """Choose close entry, 3-second next-candle entry, or reject a late signal."""
+    """Choose close entry, up-to-5-second next-candle window, or reject late signal."""
     try:
         elapsed = float(seconds_after_close)
     except (TypeError, ValueError):
         return None
     if 0.0 <= elapsed <= 0.75:
         return "CLOSE"
-    if 0.75 < elapsed <= 3.0:
+    if 0.75 < elapsed <= 5.0:
         return "NEXT_CANDLE_DELAY"
     return None
 
