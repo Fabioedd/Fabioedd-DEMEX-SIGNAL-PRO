@@ -262,8 +262,13 @@ def main():
 
             try:
                 server_now = normalize_timestamp(connector.get_server_timestamp())
-            except ConnectionError:
-                raise
+            except ConnectionError as exc:
+                logging.warning("Conexão perdida ao consultar o relógio da corretora: %s", exc)
+                connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                pending.clear()
+                next_asset_refresh = 0.0
+                continue
             except Exception as exc:
                 logging.warning("Não foi possível ler o relógio da corretora: %s", exc)
                 time.sleep(scan_delay(settings))
@@ -300,7 +305,17 @@ def main():
 
                 # A confirmação da API pode consumir tempo; confira novamente
                 # imediatamente antes de autorizar a ordem.
-                final_now = normalize_timestamp(connector.get_server_timestamp())
+                try:
+                    final_now = normalize_timestamp(connector.get_server_timestamp())
+                except ConnectionError as exc:
+                    logging.warning(
+                        "Conexão perdida na confirmação final do sinal: %s", exc
+                    )
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    pending.clear()
+                    next_asset_refresh = 0.0
+                    break
                 final_elapsed = final_now - close_ts if final_now is not None else None
                 if final_elapsed is None or not is_close_confirmation_window(
                     final_elapsed, ENTRY_CONFIRMATION_SECONDS
