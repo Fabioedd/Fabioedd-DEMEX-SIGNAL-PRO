@@ -110,6 +110,7 @@ def custom_script_signal(path, candles, config):
             "direction": direction,
             "confidence": round(confidence),
             "reasons": result.get("reasons", ["SCRIPT PERSONALIZADO"]),
+            "rsi": result.get("rsi"),
         }
     return None
 
@@ -132,6 +133,7 @@ def analyze(candles, config):
             "direction": result["direction"],
             "confidence": result["confidence"],
             "reasons": result.get("reasons", ["SCRIPT PERSONALIZADO"]),
+            "rsi": result.get("rsi"),
             "votes": 1,
         }
 
