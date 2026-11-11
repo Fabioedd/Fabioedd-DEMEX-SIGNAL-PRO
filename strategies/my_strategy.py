@@ -143,3 +143,46 @@ def get_intrabar_signal(candles, config=None):
 
 def get_pre_signal(candles, config=None):
     return None
+
+def backtest_strategy(candles, config=None):
+    """Backtest sem look-ahead: cada sinal fechado é avaliado pela vela M1 seguinte.
+
+    Usa apenas candles concluídos (a última vela recebida é tratada como em formação).
+    Empates são contabilizados separadamente e não entram no denominador da assertividade.
+    """
+    config = config or {}
+    if not candles or len(candles) < 18:
+        return {"signals": 0, "wins": 0, "losses": 0, "ties": 0, "accuracy": 0.0}
+
+    completed = list(candles[:-1])
+    wins = losses = ties = 0
+    for signal_index in range(15, len(completed) - 1):
+        # get_signal ignora a última vela do recorte; assim avalia signal_index
+        # e deixa signal_index + 1 exclusivamente como resultado da operação.
+        signal = get_signal(completed[:signal_index + 2], config)
+        if not signal:
+            continue
+        try:
+            next_open = float(completed[signal_index + 1]["open"])
+            next_close = float(completed[signal_index + 1]["close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        if next_close == next_open:
+            ties += 1
+        elif signal["direction"] == "CALL":
+            wins += int(next_close > next_open)
+            losses += int(next_close < next_open)
+        elif signal["direction"] == "PUT":
+            wins += int(next_close < next_open)
+            losses += int(next_close > next_open)
+
+    decisive = wins + losses
+    accuracy = (100.0 * wins / decisive) if decisive else 0.0
+    return {
+        "signals": wins + losses + ties,
+        "wins": wins,
+        "losses": losses,
+        "ties": ties,
+        "accuracy": round(accuracy, 2),
+    }
