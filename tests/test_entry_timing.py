@@ -61,6 +61,13 @@ class AssetAvailabilityTests(unittest.TestCase):
         self.assertFalse(is_binary_active_open(active, 150))
 
 
+class SyntaxTests(unittest.TestCase):
+    def test_main_and_connector_compile_without_connecting_to_broker(self):
+        for filename in ("main.py", "bullex_connector.py"):
+            source = Path(filename).read_text(encoding="utf-8")
+            compile(source, filename, "exec")
+
+
 class AssetDiscoveryTests(unittest.TestCase):
     def test_market_selection_filters_only_otc_and_never_payout(self):
         assets = [
