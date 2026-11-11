@@ -10,7 +10,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
   - **CALL/COMPRA:** candle vermelho toca ou atravessa a mínima C2 da vela M15 anterior.
   - O toque preserva a condição Lua original: `high >= nível and low <= nível`.
   - Não adiciona EMA, RSI, filtro de corpo ou outros filtros.
-- O DEMEX recebe candles M1. C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os três candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
+- O DEMEX recebe candles M1. C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os quinze candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
 - Sinais que autorizam ordens usam somente o último candle fechado; o método intrabar é apenas diagnóstico e não é chamado pelo fluxo normal de execução.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
