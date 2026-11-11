@@ -58,6 +58,59 @@ def signal_is_in_next_candle(connector, signal):
         return False
     return True
 
+def normalize_timestamp(value):
+    """Converte timestamp Unix em segundos, aceitando também milissegundos."""
+    if value is None:
+        return None
+    ts=float(value)
+    return ts / 1000.0 if ts > 10_000_000_000 else ts
+
+
+def signal_still_present(connector, settings, candidate):
+    """Reconsulta o ativo e exige o mesmo sinal na mesma vela fechada."""
+    symbol=candidate["symbol"]
+    try:
+        candles=connector.get_candles(
+            symbol,60,int(settings.get("candles_count",120))
+        )
+        if len(candles) < 2:
+            logging.info("Sinal %s descartado: candles insuficientes na rechecagem.",symbol)
+            return False
+
+        latest_closed_ts=normalize_timestamp(candles[-2].get("timestamp"))
+        original_ts=normalize_timestamp(candidate.get("signal_timestamp"))
+        if latest_closed_ts is None or original_ts is None or latest_closed_ts != original_ts:
+            logging.info(
+                "Sinal %s descartado: a vela fechada mudou desde a detecção "
+                "(original=%s, atual=%s).",
+                symbol,original_ts,latest_closed_ts
+            )
+            return False
+
+        current=analyze(candles,settings)
+        if (not current
+                or current.get("direction") != candidate.get("direction")
+                or current.get("confidence",0) < settings["minimum_confidence"]):
+            logging.info(
+                "Sinal %s descartado: não permanece confirmado na rechecagem.",
+                symbol
+            )
+            return False
+
+        candidate.update(current)
+        candidate["signal_timestamp"]=candles[-2].get("timestamp")
+        logging.info(
+            "Sinal %s %s CONFIRMADO novamente na mesma vela fechada.",
+            symbol,candidate["direction"]
+        )
+        return True
+    except ConnectionError:
+        raise
+    except Exception as exc:
+        logging.warning("Sinal %s descartado: falha na rechecagem: %s",symbol,exc)
+        return False
+
+
 def scan_once(connector,settings):
     tf=settings.get("timeframe","M1").upper()
     if tf != "M1": raise ValueError("Este teste do DEMEX está limitado ao timeframe M1.")
@@ -137,7 +190,11 @@ def main():
                         print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                         break
                     try:
-                        # Validar antes de anunciar ou enviar: sinal vencido não gera alerta nem ordem.
+                        # Reconsultar o ativo: só entra se o mesmo sinal continuar
+                        # confirmado na mesma vela fechada que originou o candidato.
+                        if not signal_still_present(connector,settings,candidate):
+                            continue
+                        # Validar a janela temporal depois da rechecagem e imediatamente antes da ordem.
                         if not signal_is_in_next_candle(connector,candidate):
                             continue
                         msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
