@@ -126,11 +126,13 @@ def refresh_approved_assets(connector, settings):
     global _approved_assets
     minimum_trades = int(settings.get("backtest_min_trades", 5))
     market_mode = settings.get("market_mode", "OTC")
-    assets = connector.get_open_assets(84.0, 100.0)
+    min_payout = float(settings.get("minimum_payout_percent", 84))
+    max_payout = float(settings.get("maximum_payout_percent", 100))
+    assets = connector.get_open_assets(min_payout, max_payout)
     assets = [a for a in assets if market_matches(a["symbol"], market_mode)]
     approved = []
-    logging.info("BACKTEST: avaliando %d ativos com payout binario >=84%%; janela de 100 candles M1.",
-                 len(assets))
+    logging.info("BACKTEST: avaliando %d ativos com payout binario entre %.1f%% e %.1f%%; janela de 100 candles M1.",
+                 min_payout, max_payout)
     for index, asset in enumerate(assets, 1):
         if _refresh_stop.is_set():
             break
