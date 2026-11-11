@@ -38,16 +38,20 @@ class BacktestStrategyTests(unittest.TestCase):
         rows = self.candles()
         rows[16] = {"open": 1.0, "close": 1.0}
 
+        rows[17] = {"open": 2.0, "close": 1.0}  # PUT vence
         def fake_signal(prefix, config):
             if len(prefix) == 17:
-                return {"direction": "CALL"}
+                return {"direction": "CALL"}  # empate
+            if len(prefix) == 18:
+                return {"direction": "PUT"}  # vitória
             return None
 
         with patch.object(my_strategy, "get_signal", side_effect=fake_signal):
             result = my_strategy.backtest_strategy(rows, {})
 
         self.assertEqual(result["ties"], 1)
-        self.assertEqual(result["accuracy"], 0.0)
+        self.assertEqual(result["wins"], 1)
+        self.assertEqual(result["accuracy"], 100.0)
 
 
 if __name__ == "__main__":
