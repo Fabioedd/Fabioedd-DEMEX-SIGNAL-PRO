@@ -11,9 +11,8 @@ from signal_engine import analyze
 from strategies.my_strategy import get_intrabar_signal
 from trade_manager import DemoTrader
 from entry_timing import (
-    closed_signal_entry_mode,
+    can_add_pending_signal,
     filter_market_assets,
-    is_intrabar_entry_window,
     is_candle_still_open,
 )
 
@@ -59,7 +58,7 @@ def get_market_assets(connector, settings):
 
 
 def scan_once(connector, settings, assets):
-    """Procura sinais SCRIPT AHORA RSI em todos os ativos carregados."""
+    """Analisa todos os ativos e devolve sinais sem bloquear a varredura."""
     global _scan_pass_number
     _scan_pass_number += 1
     if settings.get("timeframe", "M1").upper() != "M1":
@@ -69,6 +68,7 @@ def scan_once(connector, settings, assets):
 
     settings["timeframe"] = "M1"
     settings["expiry_minutes"] = 1
+    candidates = []
     for asset in assets:
         try:
             candles = connector.get_candles(
@@ -77,7 +77,7 @@ def scan_once(connector, settings, assets):
             if len(candles) < 17:
                 continue
 
-            # Sinal intrabar é apenas PREPARADO: nunca libera ordem antes do fechamento.
+            # Primeiro registra o pré-sinal da vela atual, sem enviar ordem.
             provisional = get_intrabar_signal(candles, settings)
             if provisional:
                 signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
@@ -85,46 +85,36 @@ def scan_once(connector, settings, assets):
                     server_ts = normalize_timestamp(connector.get_server_timestamp())
                     seconds_remaining = signal_ts + 60 - server_ts
                     if is_candle_still_open(seconds_remaining):
-                        candidate = {
+                        candidates.append({
                             **provisional, **asset, "timeframe": "M1",
                             "expiry_minutes": 1,
                             "signal_timestamp": candles[-1].get("timestamp"),
                             "stage": "INTRABAR",
-                        }
-                        logging.info(
-                            "SINAL PROVISÓRIO %s %s | RSI %.2f | faltam %.2fs. "
-                            "Aguardando fechamento para confirmar; nenhuma ordem agora.",
-                            asset["symbol"], provisional["direction"],
-                            provisional["rsi"], seconds_remaining
-                        )
-                        return candidate
+                        })
+                        continue
 
-            # Se não houve sinal intrabar, procura sinal na última vela já fechada.
+            # Também detecta sinais que já estavam na última vela concluída.
             result = analyze(candles, settings)
             if result:
                 closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
                 if closed_ts is None:
                     continue
-                candidate = {
+                candidates.append({
                     **result, **asset, "timeframe": "M1",
                     "expiry_minutes": 1,
                     "signal_timestamp": candles[-2].get("timestamp"),
                     "stage": "CLOSED",
-                }
-                logging.info(
-                    "SINAL CONFIRMADO NO FECHAMENTO %s %s | tolerância de até 5 segundos na vela seguinte.",
-                    asset["symbol"], result["direction"]
-                )
-                return candidate
+                })
         except ConnectionError:
             raise
         except Exception as exc:
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
-    logging.info("VARREDURA %d: %d ativos analisados; nenhum sinal válido.",
-                 _scan_pass_number, len(assets))
-    return None
-
+    logging.info(
+        "VARREDURA %d: %d ativos analisados; %d sinais encontrados.",
+        _scan_pass_number, len(assets), len(candidates)
+    )
+    return candidates
 
 def wait_until(connector, target_timestamp):
     """Espera usando o relógio da corretora; respeita pedido de parada."""
@@ -164,126 +154,36 @@ def verify_closed(connector, settings, candidate):
     return bool(current and current.get("direction") == candidate.get("direction"))
 
 
-def wait_for_closed_confirmation(connector, settings, candidate, deadline):
-    """Espera a corretora publicar a vela fechada e confirma o mesmo sinal."""
-    while not STOP_FILE.exists():
-        now = normalize_timestamp(connector.get_server_timestamp())
-        if now > deadline:
-            return False
-        if now >= candidate_close_timestamp(candidate):
-            if verify_closed(connector, settings, candidate):
-                return True
-        time.sleep(0.10)
-    return False
+def verify_closed(connector, settings, candidate):
+    """Confirma que o mesmo sinal continua presente na vela M1 já encerrada."""
+    candles = connector.get_candles(
+        candidate["symbol"], 60, int(settings.get("candles_count", 250))
+    )
+    if len(candles) < 2:
+        return False
+    current_ts = normalize_timestamp(candles[-1].get("timestamp"))
+    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
+    original_ts = normalize_timestamp(candidate.get("signal_timestamp"))
+    # Só valida depois que a corretora publicou uma vela posterior à vela do sinal.
+    if current_ts is None or closed_ts is None or original_ts is None:
+        return False
+    if current_ts <= original_ts or closed_ts != original_ts:
+        return False
+    current = analyze(candles, settings)
+    return bool(current and current.get("direction") == candidate.get("direction"))
+
+
+def candidate_key(candidate):
+    return "{}|{}|{}".format(
+        candidate.get("symbol"),
+        candidate.get("direction"),
+        candidate.get("signal_timestamp"),
+    )
 
 
 def candidate_close_timestamp(candidate):
     signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
     return None if signal_ts is None else signal_ts + 60
-
-
-def prepare_entry(connector, settings, candidate):
-    """Confirma no fechamento ou aceita detecção tardia até +5s na vela seguinte."""
-    signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    if signal_ts is None:
-        logging.warning("Sinal descartado: timestamp indisponível.")
-        return False
-
-    close_timestamp = signal_ts + 60
-    now = normalize_timestamp(connector.get_server_timestamp())
-    stage = candidate.get("stage", "CLOSED")
-
-    if stage == "INTRABAR":
-        # A faixa de 3–2s é somente a conferência final do pré-sinal.
-        # A ordem só poderá ser enviada depois do fechamento da vela M1.
-        entry_target = close_timestamp - 2.5
-        if now < entry_target:
-            now = wait_until(connector, entry_target)
-            if now is None:
-                return False
-
-        seconds_remaining = close_timestamp - now
-        if seconds_remaining > 3.0:
-            # Se o sinal apareceu cedo, aguarda a janela combinada de 3–2s.
-            now = wait_until(connector, close_timestamp - 2.5)
-            if now is None:
-                return False
-            seconds_remaining = close_timestamp - now
-
-        if is_intrabar_entry_window(seconds_remaining):
-            if not verify_intrabar(connector, settings, candidate):
-                logging.info(
-                    "Sinal %s cancelado antes do fechamento: o pré-sinal desapareceu ou mudou.",
-                    candidate["symbol"]
-                )
-                return False
-            logging.info(
-                "PRÉ-SINAL %s %s mantido faltando %.2fs. "
-                "Aguardando a vela fechar; ainda não existe entrada.",
-                candidate["symbol"], candidate["direction"], seconds_remaining
-            )
-        elif 0.0 < seconds_remaining < 2.0:
-            # A leitura chegou tarde na janela; ainda assim, só confirma após o fechamento.
-            logging.info(
-                "Sinal %s detectado com %.2fs restantes; janela de conferência passou. "
-                "Aguardando fechamento para validar a vela concluída.",
-                candidate["symbol"], seconds_remaining
-            )
-        elif seconds_remaining <= 0.0 and now <= close_timestamp + 0.75:
-            logging.info(
-                "Sinal %s chegou no instante do fechamento; validando somente a vela concluída.",
-                candidate["symbol"]
-            )
-        else:
-            logging.info(
-                "Sinal %s cancelado: janela de confirmação não está mais disponível.",
-                candidate["symbol"]
-            )
-            return False
-
-        if now < close_timestamp:
-            now = wait_until(connector, close_timestamp)
-            if now is None:
-                return False
-
-        # Aguarda a corretora publicar a vela concluída, por no máximo 0,75s.
-        if wait_for_closed_confirmation(
-            connector, settings, candidate, close_timestamp + 5.0
-        ):
-            logging.info(
-                "SINAL CONFIRMADO APÓS O FECHAMENTO M1. Entrada liberada."
-            )
-            return True
-
-        logging.info(
-            "Sinal %s cancelado: não foi confirmado na vela fechada. "
-            "Nenhuma ordem foi enviada.",
-            candidate["symbol"]
-        )
-        return False
-
-    # Sinal percebido no fechamento: entra imediatamente após confirmar a vela fechada.
-    # Se a leitura atrasar, ainda aceita até +5s na vela seguinte e entra assim que validar.
-    elapsed = now - close_timestamp
-    mode = closed_signal_entry_mode(elapsed)
-    if mode == "CLOSE":
-        if verify_closed(connector, settings, candidate):
-            logging.info("ENTRADA LIBERADA no fechamento da vela M1.")
-            return True
-        logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
-        return False
-    if mode == "NEXT_CANDLE":
-        if verify_closed(connector, settings, candidate):
-            logging.info(
-                "ENTRADA LIBERADA imediatamente: sinal confirmado %.2fs após a abertura da nova vela.",
-                elapsed
-            )
-            return True
-        logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
-        return False
-    logging.info("Sinal %s descartado: fechamento detectado fora da janela de 5 segundos.",
-                 candidate["symbol"])
-    return False
 
 
 def main():
@@ -322,13 +222,18 @@ def main():
         print("Ativos monitorados: {} | Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
               .format(len(assets), trader.base, trader.stop, trader.take))
 
+        # Mantém até três sinais provisórios enquanto continua varrendo os demais ativos.
+        pending = {}
+        processed = set()
+        max_pending = 3
+
         while not trader.stopped:
             if STOP_FILE.exists():
                 trader.stopped = True
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
             try:
-                candidate = scan_once(connector, settings, assets)
+                candidates = scan_once(connector, settings, assets)
             except ConnectionError as exc:
                 logging.warning("Conexão perdida durante a análise: %s", exc)
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
@@ -336,14 +241,87 @@ def main():
 
             if STOP_FILE.exists():
                 trader.stopped = True
-                print("PARADA SOLICITADA: sinal descartado; nenhuma nova operação será iniciada.")
+                print("PARADA SOLICITADA: sinais descartados; nenhuma nova operação será iniciada.")
                 break
 
-            if candidate:
+            confirmed = []
+            # Guarda os sinais intrabar sem interromper a análise dos outros ativos.
+            for candidate in candidates:
+                key = candidate_key(candidate)
+                if key in processed or key in pending:
+                    continue
+                if candidate.get("stage") == "INTRABAR":
+                    if can_add_pending_signal(len(pending), max_pending):
+                        pending[key] = candidate
+                        logging.info(
+                            "SINAL PENDENTE %s %s: aguardando fechamento; "
+                            "outros ativos continuam sendo analisados (%d/%d).",
+                            candidate["symbol"], candidate["direction"],
+                            len(pending), max_pending
+                        )
+                    continue
+                # Sinais já fechados também precisam ser confirmados no candle encerrado.
+                processed.add(key)
                 try:
-                    if not prepare_entry(connector, settings, candidate):
-                        time.sleep(scan_delay(settings))
-                        continue
+                    if verify_closed(connector, settings, candidate):
+                        confirmed.append(candidate)
+                except ConnectionError:
+                    raise
+
+            # Reavalia todos os sinais pendentes cujo candle já deveria ter fechado.
+            now = normalize_timestamp(connector.get_server_timestamp())
+            for key, candidate in list(pending.items()):
+                close_ts = candidate_close_timestamp(candidate)
+                if close_ts is None or now < close_ts:
+                    continue
+                try:
+                    candles = connector.get_candles(
+                        candidate["symbol"], 60, int(settings.get("candles_count", 250))
+                    )
+                    latest_ts = (
+                        normalize_timestamp(candles[-1].get("timestamp"))
+                        if candles else None
+                    )
+                    if latest_ts is not None and latest_ts > normalize_timestamp(candidate["signal_timestamp"]):
+                        processed.add(key)
+                        if verify_closed(connector, settings, candidate):
+                            confirmed.append(candidate)
+                            logging.info(
+                                "SINAL CONFIRMADO NO FECHAMENTO: %s %s.",
+                                candidate["symbol"], candidate["direction"]
+                            )
+                        else:
+                            logging.info(
+                                "SINAL CANCELADO: %s não permaneceu válido no fechamento.",
+                                candidate["symbol"]
+                            )
+                        del pending[key]
+                    elif now > close_ts + 2.0:
+                        # Expira apenas se a corretora não publicar a vela fechada;
+                        # não existe tolerância para entrar na vela seguinte.
+                        processed.add(key)
+                        del pending[key]
+                        logging.warning(
+                            "SINAL DESCARTADO: dados de fechamento de %s não chegaram a tempo.",
+                            candidate["symbol"]
+                        )
+                except ConnectionError:
+                    raise
+
+            if confirmed:
+                # Uma única entrada: escolhe o sinal confirmado mais antigo; os demais são descartados.
+                confirmed.sort(key=lambda item: normalize_timestamp(item["signal_timestamp"]) or 0)
+                candidate = confirmed[0]
+                for item in confirmed[1:]:
+                    processed.add(candidate_key(item))
+                for key in list(pending):
+                    processed.add(key)
+                    del pending[key]
+                logging.info(
+                    "SELEÇÃO ÚNICA: %s %s. Outros sinais confirmados não serão operados.",
+                    candidate["symbol"], candidate["direction"]
+                )
+                try:
                     if STOP_FILE.exists():
                         trader.stopped = True
                         break
