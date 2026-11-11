@@ -41,7 +41,7 @@ def scan_once(connector,settings):
     assets=connector.get_open_assets(min_payout)
     assets=[a for a in assets if market_matches(a["symbol"],settings.get("market_mode","OTC"))]
     logging.info("Ativos com payout >= %.1f%% no filtro %s: %d",min_payout,settings.get("market_mode"),len(assets))
-    best=None
+    candidates=[]
     for asset in assets:
         try:
             candles=connector.get_candles(asset["symbol"],seconds,int(settings.get("candles_count",120)))
@@ -50,11 +50,13 @@ def scan_once(connector,settings):
             # Estratégia ignora a última vela (em formação); identificar a vela fechada que gerou o sinal.
             signal_ts=candles[-2].get("timestamp") if len(candles)>=2 else None
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
-            if best is None or (candidate["confidence"],candidate["payout_percent"])>(best["confidence"],best["payout_percent"]): best=candidate
+            candidates.append(candidate)
         except ConnectionError:
             raise
         except Exception as exc: logging.warning("Falha ao analisar %s: %s",asset["symbol"],exc)
-    return best
+    # Tenta primeiro os sinais com maior confiança e payout.
+    candidates.sort(key=lambda item: (item["confidence"], item["payout_percent"]), reverse=True)
+    return candidates
 
 def main():
     load_dotenv()
@@ -98,22 +100,45 @@ def main():
                 print("PARADA SOLICITADA: sinal descartado; nenhuma nova operação será iniciada.")
                 break
             if signal:
-                msg=(f"SINAL {signal['symbol']} | {signal['direction']} | {signal['timeframe']} | "
-                     f"expiração {signal['expiry_minutes']} min | confiança técnica {signal['confidence']}% | "
-                     f"payout {signal['payout_percent']:.1f}%")
-                alert(msg,bool(settings.get("sound_alert",True)))
-                print("Confirmações: "+", ".join(signal["reasons"]))
-                try:
-                    summary=trader.execute_and_settle(signal)
-                    if summary:
-                        print("OPERAÇÃO {result} | Entrada R$ {entry:.2f} | Resultado R$ {pnl:+.2f} | "
-                              "Acumulado R$ {session_net:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
-                        if summary["stopped"]: print("ROBÔ ENCERRADO: "+str(summary["stop_reason"]))
+                order_accepted_or_settled=False
+                unavailable_assets=set()
+                for candidate in signal:
+                    if STOP_FILE.exists():
+                        trader.stopped=True
+                        print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
+                        break
+                    msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
+                         f"expiração {candidate['expiry_minutes']} min | confiança técnica {candidate['confidence']}% | "
+                         f"payout {candidate['payout_percent']:.1f}%")
+                    alert(msg,bool(settings.get("sound_alert",True)))
+                    print("Confirmações: "+", ".join(candidate["reasons"]))
+                    try:
+                        summary=trader.execute_and_settle(candidate)
+                        if summary:
+                            order_accepted_or_settled=True
+                            print("OPERAÇÃO {result} | Entrada R$ {entry:.2f} | Resultado R$ {pnl:+.2f} | "
+                                  "Acumulado R$ {session_net:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
+                            if summary["stopped"]: print("ROBÔ ENCERRADO: "+str(summary["stop_reason"]))
+                            break
+                        # Sinal duplicado ou operação não iniciada: não insistir nele.
+                    except RuntimeError as exc:
+                        if "Cannot purchase an option (the asset is not available at the moment)" in str(exc):
+                            unavailable_assets.add(candidate["symbol"])
+                            logging.warning("Ativo %s indisponível para entrada. Procurando o próximo sinal...",candidate["symbol"])
+                            continue
+                        logging.exception("Falha na execução; robô interrompido por segurança.")
+                        trader.stopped=True
+                        break
+                    except Exception:
+                        logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
+                        trader.stopped=True
+                        break
+                if not order_accepted_or_settled and not trader.stopped:
+                    if unavailable_assets:
+                        logging.warning("Todos os %d ativo(s) com sinal testados foram recusados ou não puderam receber ordem. Nova varredura em seguida.",len(unavailable_assets))
                     else:
-                        time.sleep(scan_delay(settings))
-                except Exception:
-                    logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
-                    break
+                        print("Nenhuma ordem iniciada. Aguardando nova varredura...")
+                    time.sleep(scan_delay(settings))
             else:
                 print("Nenhum sinal qualificado. Aguardando...")
                 time.sleep(scan_delay(settings))
