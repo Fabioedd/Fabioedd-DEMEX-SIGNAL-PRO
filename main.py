@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
-from strategies.my_strategy import get_pre_signal, get_intrabar_signal
+from strategies.my_strategy import get_pre_signal
 from trade_manager import DemoTrader
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
@@ -52,11 +52,12 @@ def signal_is_in_next_candle(connector, signal):
         server_ts /= 1000.0
 
     next_candle_start=signal_ts+60
-    next_candle_end=next_candle_start+60
-    if not (next_candle_start <= server_ts < next_candle_end):
+    # Janela estrita: somente os primeiros 5 segundos da vela vizinha.
+    entry_deadline=next_candle_start+5.0
+    if not (next_candle_start <= server_ts < entry_deadline):
         logging.info(
-            "Sinal %s descartado por atraso: candle do sinal=%d, janela de entrada=[%d,%d), servidor=%.3f.",
-            signal.get("symbol","?"),int(signal_ts),int(next_candle_start),int(next_candle_end),server_ts
+            "Sinal %s descartado por atraso: candle do sinal=%d, janela de entrada=[%.3f,%.3f), servidor=%.3f.",
+            signal.get("symbol","?"),int(signal_ts),next_candle_start,entry_deadline,server_ts
         )
         return False
     return True
@@ -177,14 +178,13 @@ def scan_once(connector,settings):
             pre=get_pre_signal(candles,settings)
             if pre:
                 pre_signals.append({**pre,**asset})
-            result=get_intrabar_signal(candles,settings)
+            # O gatilho é calculado exclusivamente na última vela já fechada.
+            result=analyze(candles,settings)
             if not result: continue
-            # O sinal e a entrada pertencem à vela M1 ainda em formação.
-            signal_ts=candles[-1].get("timestamp")
+            signal_ts=candles[-2].get("timestamp")
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
-            # Não continuar varrendo: revalidar e tentar a entrada imediatamente na vela do sinal.
             _priority_symbols=list(dict.fromkeys([asset["symbol"]]+[item["symbol"] for item in pre_signals]))
-            logging.info("CONFLUÊNCIA INTRABAR %s em %s; interrompendo varredura para validar a entrada na mesma vela.",result["direction"],asset["symbol"])
+            logging.info("SINAL CONFIRMADO NA VELA FECHADA: %s em %s; aguardando a vela vizinha (janela máxima de 5s).",result["direction"],asset["symbol"])
             return [candidate]
         except ConnectionError:
             raise
