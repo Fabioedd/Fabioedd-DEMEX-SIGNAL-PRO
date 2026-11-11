@@ -25,7 +25,9 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Durante os 30 minutos seguintes, a varredura de sinais consulta somente essa lista; **não executa backtest a cada sinal nem a cada ciclo de varredura**.
 - Ao completar 30 minutos, um processo em segundo plano roda novo backtest e substitui a lista pelos ativos aprovados no novo ciclo. Se a atualização falhar, mantém a última lista aprovada.
 - Um sinal cuja janela de entrada já expirou é descartado durante a própria varredura, e o robô continua procurando sinais válidos nos demais ativos aprovados. Antes de enviar qualquer ordem, a janela é verificada novamente.
-- Se a API de compra não devolver confirmação e ID da ordem, o robô interrompe a execução por segurança. Não tenta repetir automaticamente uma solicitação de resultado ambíguo, para evitar uma possível ordem duplicada.
+- Se a API de compra retornar `False, None` (timeout de confirmação de 5 segundos), a solicitação é tratada como **ambígua**, não como rejeição confirmada. O conector grava os dados da tentativa em `.demex_pending_order.json`, interrompe a sessão e bloqueia novas inicializações.
+- O bloqueio é intencional: consulte o histórico da conta PRACTICE na corretora e reconcilie a tentativa antes de remover manualmente `.demex_pending_order.json`. Não apague o arquivo apenas porque não apareceu um ID no terminal; a ordem pode ter sido aceita sem a confirmação chegar ao cliente.
+- Uma rejeição explícita com mensagem da corretora continua sendo tratada como rejeição; o bloqueio persistente é reservado ao caso sem ID/mensagem conclusiva.
 
 ## Trava de segurança
 
