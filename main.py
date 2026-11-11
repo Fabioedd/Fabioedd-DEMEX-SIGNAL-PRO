@@ -48,6 +48,11 @@ def normalize_timestamp(value):
     return ts / 1000.0 if ts > 10_000_000_000 else ts
 
 
+def intrabar_entry_window(seconds_remaining):
+    """Verdadeiro apenas quando faltam de 3 a 2 segundos para fechar a M1."""
+    return 2.0 <= float(seconds_remaining) <= 3.0
+
+
 def get_market_assets(connector, settings):
     """Carrega os ativos do mercado escolhido sem consultar payout ou backtest."""
     mode = settings.get("market_mode", "OTC")
@@ -86,7 +91,7 @@ def scan_once(connector, settings, assets):
                     seconds_remaining = signal_ts + 60 - server_ts
                     # Não bloqueia a varredura esperando uma vela terminar:
                     # só seleciona o sinal quando faltam entre 3 e 2 segundos.
-                    if 2.0 <= seconds_remaining <= 3.0:
+                    if intrabar_entry_window(seconds_remaining):
                         candidate = {
                             **provisional, **asset, "timeframe": "M1",
                             "expiry_minutes": 1,
