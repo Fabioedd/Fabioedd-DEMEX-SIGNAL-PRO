@@ -2,7 +2,7 @@
   "market_mode": "OTC",
   "timeframe": "M1",
   "expiry_minutes": 1,
-  "minimum_payout_percent": 80,
+  "minimum_payout_percent": 85,
   "minimum_confidence": 70,
   "scan_interval_seconds": 2,
   "candles_count": 250,
@@ -45,5 +45,7 @@
     "take_profit_brl": 30,
     "automatic_execution_enabled": true,
     "note": "Ordens automáticas permitidas somente com conta PRACTICE confirmada pela corretora."
-  }
+  },
+  "maximum_payout_percent": 90,
+  "payout_filter_inclusive": true
 }
