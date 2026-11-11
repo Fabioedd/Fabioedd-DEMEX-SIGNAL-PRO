@@ -229,7 +229,7 @@ def main():
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
 
-            if time.monotonic() >= next_asset_refresh:
+            if len(pending) < MAX_PENDING_SIGNALS and time.monotonic() >= next_asset_refresh:
                 try:
                     assets = get_market_assets(connector, settings)
                     logging.info(
@@ -322,6 +322,7 @@ def main():
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
                 assets = []
                 pending.clear()
+                preferred_key = None
                 next_asset_refresh = 0.0
                 continue
             except Exception as exc:
