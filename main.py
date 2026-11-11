@@ -260,11 +260,8 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida durante a atualização dos ativos OTC: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                assets = []
-                next_asset_refresh = 0.0
                     assets = []
                     next_asset_refresh = 0.0
-                    assets = []
                 except Exception as exc:
                     # Falha na leitura: não usa uma lista possivelmente desatualizada.
                     logging.error("Não foi possível confirmar a disponibilidade OTC; análise pausada: %s", exc)
@@ -309,8 +306,6 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                assets = []
-                next_asset_refresh = 0.0
                     assets = []
                     next_asset_refresh = 0.0
                     connection_lost = True
@@ -367,8 +362,6 @@ def main():
                     logging.warning("Conexão perdida ao confirmar pendência %s: %s",
                                     candidate["symbol"], exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                assets = []
-                next_asset_refresh = 0.0
                     assets = []
                     next_asset_refresh = 0.0
                     pending.clear()
@@ -424,8 +417,6 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida antes da ordem: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                assets = []
-                next_asset_refresh = 0.0
                     assets = []
                     next_asset_refresh = 0.0
                 except RuntimeError as exc:
