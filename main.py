@@ -135,53 +135,12 @@ def verify_intrabar(connector, settings, candidate):
     return bool(current and current.get("direction") == candidate.get("direction"))
 
 
-def verify_closed(connector, settings, candidate):
-    candles = connector.get_candles(
-        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-    )
-    if len(candles) < 2:
-        return False
-    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-    original_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    if closed_ts != original_ts:
-        return False
-    current = analyze(candles, settings)
-    return bool(current and current.get("direction") == candidate.get("direction"))
-
-
-def verify_closed(connector, settings, candidate):
-    """Confirma que o mesmo sinal continua presente na vela M1 já encerrada."""
-    candles = connector.get_candles(
-        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-    )
-    if len(candles) < 2:
-        return False
-    current_ts = normalize_timestamp(candles[-1].get("timestamp"))
-    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-    original_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    # Só valida depois que a corretora publicou uma vela posterior à vela do sinal.
-    if current_ts is None or closed_ts is None or original_ts is None:
-        return False
-    if current_ts <= original_ts or closed_ts != original_ts:
-        return False
-    elapsed = normalize_timestamp(connector.get_server_timestamp()) - (original_ts + 60)
-    if not is_close_confirmation_window(elapsed):
-        return False
-    current = analyze(candles, settings)
-    return bool(current and current.get("direction") == candidate.get("direction"))
-
-
 def candidate_key(candidate):
     return "{}|{}|{}".format(
         candidate.get("symbol"),
         candidate.get("direction"),
         candidate.get("signal_timestamp"),
     )
-
-
-def candidate_close_timestamp(candidate):
-    signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    return None if signal_ts is None else signal_ts + 60
 
 
 def main():
