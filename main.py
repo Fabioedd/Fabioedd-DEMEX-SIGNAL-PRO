@@ -185,6 +185,14 @@ def main():
     refresh_thread=None
     load_dotenv()
     settings=load_settings()
+    # Uma resposta buy() sem ID é ambígua: pode existir ordem aberta na corretora.
+    # Não iniciar outra sessão até a conferência manual do histórico PRACTICE.
+    pending_order=Path(".demex_pending_order.json")
+    if pending_order.exists():
+        print("ROBÔ BLOQUEADO: existe uma submissão de ordem sem confirmação.")
+        print("Confira o histórico da conta PRACTICE e os dados em .demex_pending_order.json.")
+        print("Não apague o bloqueio nem reinicie o robô antes de reconciliar a operação.")
+        return
     trading=settings.get("trading",{})
     if not trading.get("automatic_execution_enabled",False):
         raise RuntimeError("Execução automática desabilitada em settings.json.")
