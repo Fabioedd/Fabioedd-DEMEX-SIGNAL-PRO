@@ -1,9 +1,11 @@
 import unittest
+from pathlib import Path
 
 from entry_timing import (
     can_add_pending_signal,
     filter_market_assets,
     is_candle_still_open,
+    is_close_confirmation_window,
 )
 
 
@@ -14,6 +16,20 @@ class CandleCloseTests(unittest.TestCase):
         self.assertFalse(is_candle_still_open(0.0))
         self.assertFalse(is_candle_still_open(-0.1))
         self.assertFalse(is_candle_still_open(None))
+
+    def test_only_immediate_close_confirmation_is_allowed(self):
+        self.assertTrue(is_close_confirmation_window(0.0))
+        self.assertTrue(is_close_confirmation_window(0.5))
+        self.assertTrue(is_close_confirmation_window(0.75))
+        self.assertFalse(is_close_confirmation_window(0.76))
+        self.assertFalse(is_close_confirmation_window(5.0))
+        self.assertFalse(is_close_confirmation_window(-0.1))
+
+
+class MainSyntaxTests(unittest.TestCase):
+    def test_main_module_compiles_without_importing_broker_dependencies(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+        compile(source, "main.py", "exec")
 
 
 class MultiplePendingSignalTests(unittest.TestCase):
