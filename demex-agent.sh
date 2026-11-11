@@ -1,0 +1,219 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# DEMEX Agent: sincronizacao segura GitHub <-> Termux.
+# Nao inicia, para ou reinicia o robô DEMEX.
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+REMOTE="${DEMEX_GIT_REMOTE:-origin}"
+MAIN_BRANCH="${DEMEX_MAIN_BRANCH:-main}"
+POLL_SECONDS="${DEMEX_POLL_SECONDS:-60}"
+PID_FILE=".demex-agent.pid"
+LOG_FILE=".demex-agent.log"
+BACKUP_DIR=".demex-agent-backups"
+LOCK_DIR=".demex-agent.lock"
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2; }
+py() {
+  if [ -x ".venv/bin/python" ]; then .venv/bin/python "$@"; else python "$@"; fi
+}
+is_allowed_path() {
+  case "$1" in
+    main.py|settings.json|signal_engine.py|backtest_filter.py|trade_manager.py|bullex_connector.py|strategies/*.py|tests/*.py)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+require_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    log "ERRO: esta pasta nao e um repositorio Git."
+    return 1
+  }
+  git remote get-url "$REMOTE" >/dev/null 2>&1 || {
+    log "ERRO: remoto '$REMOTE' nao configurado."
+    return 1
+  }
+}
+working_tree_clean() { [ -z "$(git status --porcelain)" ]; }
+
+backup_incoming_changes() {
+  local changed=()
+  while IFS= read -r path; do
+    [ -n "$path" ] && changed+=("$path")
+  done < <(git diff --name-only HEAD "refs/remotes/$REMOTE/$MAIN_BRANCH")
+  [ "${#changed[@]}" -gt 0 ] || return 0
+  mkdir -p "$BACKUP_DIR"
+  local stamp
+  stamp="$(date '+%Y%m%d_%H%M%S')"
+  local existing=()
+  for path in "${changed[@]}"; do
+    [ -e "$path" ] && existing+=("$path")
+  done
+  if [ "${#existing[@]}" -gt 0 ]; then
+    tar -czf "$BACKUP_DIR/pre_update_$stamp.tar.gz" "${existing[@]}"
+    log "Backup criado: $BACKUP_DIR/pre_update_$stamp.tar.gz"
+  fi
+}
+
+publish_local_changes() {
+  local changed=()
+  while IFS= read -r path; do
+    [ -n "$path" ] && changed+=("$path")
+  done < <(git diff --name-only)
+  while IFS= read -r path; do
+    [ -n "$path" ] && changed+=("$path")
+  done < <(git diff --cached --name-only)
+  [ "${#changed[@]}" -gt 0 ] || return 0
+
+  local unique=()
+  local seen='|'
+  for path in "${changed[@]}"; do
+    if [[ "$seen" == *"|$path|"* ]]; then continue; fi
+    seen="$seen$path|"
+    is_allowed_path "$path" || {
+      log "ALTERACAO LOCAL NAO PUBLICADA: arquivo fora da lista segura: $path"
+      return 1
+    }
+    unique+=("$path")
+  done
+
+  if ! git config user.name >/dev/null; then git config user.name "DEMEX Agent"; fi
+  if ! git config user.email >/dev/null; then git config user.email "demex-agent@users.noreply.github.com"; fi
+
+  git add -- "${unique[@]}"
+  if git diff --cached --quiet; then return 0; fi
+
+  local sync_branch host
+  host="$(hostname 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-24)"
+  [ -n "$host" ] || host="termux"
+  sync_branch="termux-sync-$host"
+
+  git commit -m "DEMEX Termux: sincronizacao local $(date '+%Y-%m-%d %H:%M:%S')"
+  log "Alteracoes locais commitadas; enviando para branch $sync_branch (nao para main)."
+  git push "$REMOTE" "HEAD:refs/heads/$sync_branch" || {
+    log "PUSH NAO CONCLUIDO. Verifique autenticacao/permissao Git do Termux."
+    return 1
+  }
+  log "Alteracoes locais enviadas para GitHub/$sync_branch. Revise e integre por Pull Request."
+}
+
+test_remote_candidate() {
+  local tmp
+  tmp="$(mktemp -d "$ROOT/.demex-agent-test.XXXXXX")"
+  trap 'rm -rf "$tmp"' RETURN
+  git archive "refs/remotes/$REMOTE/$MAIN_BRANCH" | tar -x -C "$tmp"
+  py -m compileall -q "$tmp"
+  if [ -d "$tmp/tests" ]; then
+    (cd "$tmp" && PYTHONPATH="$tmp" py -m unittest discover -s tests -v)
+  fi
+  rm -rf "$tmp"
+  trap - RETURN
+}
+
+sync_once() {
+  require_repo || return 1
+  local branch
+  branch="$(git branch --show-current)"
+  if [ "$branch" != "$MAIN_BRANCH" ]; then
+    log "Sincronizacao suspensa: branch local '$branch'; esperado '$MAIN_BRANCH'."
+    return 1
+  fi
+
+  if ! working_tree_clean; then
+    log "Alteracoes locais detectadas. Tentando publica-las em branch separada."
+    publish_local_changes || return 1
+  fi
+
+  if ! working_tree_clean; then
+    log "Atualizacao remota bloqueada: arvore de trabalho ainda possui alteracoes."
+    return 1
+  fi
+
+  git fetch "$REMOTE" "$MAIN_BRANCH"
+  local local_sha remote_sha
+  local_sha="$(git rev-parse HEAD)"
+  remote_sha="$(git rev-parse "refs/remotes/$REMOTE/$MAIN_BRANCH")"
+  [ "$local_sha" = "$remote_sha" ] && {
+    log "Termux ja esta atualizado ($local_sha)."
+    return 0
+  }
+
+  if ! git merge-base --is-ancestor HEAD "refs/remotes/$REMOTE/$MAIN_BRANCH"; then
+    log "Atualizacao pausada: GitHub e Termux divergiram. Nenhum arquivo foi sobrescrito."
+    return 1
+  fi
+
+  log "Nova versao encontrada no GitHub: $remote_sha. Validando antes de instalar."
+  test_remote_candidate || {
+    log "VALIDACAO FALHOU. Versao remota nao instalada."
+    return 1
+  }
+
+  backup_incoming_changes
+  git merge --ff-only "refs/remotes/$REMOTE/$MAIN_BRANCH"
+  log "Atualizacao instalada localmente. O processo do robô nao foi reiniciado."
+}
+
+run_loop() {
+  log "DEMEX Agent iniciado. Consulta ao GitHub a cada $POLL_SECONDS segundos."
+  while true; do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      sync_once || true
+      rmdir "$LOCK_DIR" 2>/dev/null || true
+    else
+      log "Outra sincronizacao esta em andamento; aguardando."
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+case "${1:-}" in
+  instalar|install)
+    require_repo
+    [ "$(git branch --show-current)" = "$MAIN_BRANCH" ] || {
+      log "Entre na branch $MAIN_BRANCH antes de instalar."
+      exit 1
+    }
+    log "Agente preparado. Para iniciar: bash demex-agent.sh iniciar"
+    ;;
+  sincronizar|sync-once) sync_once ;;
+  iniciar|start)
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      log "Agente ja esta em execucao (PID $(cat "$PID_FILE"))."
+      exit 0
+    fi
+    rm -f "$PID_FILE"
+    nohup bash "$ROOT/demex-agent.sh" _run >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    sleep 1
+    if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      log "Agente iniciado em segundo plano. Log: $LOG_FILE"
+    else
+      rm -f "$PID_FILE"
+      log "Falha ao iniciar. Consulte $LOG_FILE."
+      exit 1
+    fi
+    ;;
+  parar|stop)
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      kill "$(cat "$PID_FILE")"
+      rm -f "$PID_FILE"
+      log "Agente parado. O robô DEMEX nao foi afetado."
+    else
+      rm -f "$PID_FILE"
+      log "Agente ja estava parado."
+    fi
+    ;;
+  status)
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      log "Agente ativo (PID $(cat "$PID_FILE"))."
+    else
+      log "Agente parado."
+    fi
+    ;;
+  _run) run_loop ;;
+  *)
+    echo "Uso: bash demex-agent.sh {instalar|sincronizar|iniciar|parar|status}"
+    exit 2
+    ;;
+esac
