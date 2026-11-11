@@ -37,6 +37,17 @@ class BullexReadOnlyConnector:
             try: self.account_mode=self.client.get_balance_mode()
             except Exception as exc: logger.warning("Falha ao confirmar conta: %s",exc)
         return {"connected":self.connected,"account_type":self.account_mode or self.config.account_type}
+    def _wait_for_retry(self, delay, stop_check=None):
+        """Aguarda a próxima tentativa em pequenos intervalos, respeitando /stop."""
+        deadline = time.monotonic() + max(0.0, float(delay))
+        while True:
+            if stop_check and stop_check():
+                raise InterruptedError("Parada solicitada durante a reconexão.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.25, remaining))
+
     def reconnect_forever(self, stop_check=None):
         """Reconecta continuamente e só retorna após confirmar a conta PRACTICE."""
         delay=2
@@ -45,7 +56,7 @@ class BullexReadOnlyConnector:
                 raise InterruptedError("Parada solicitada durante a reconexão.")
             try:
                 logger.warning("Conexão perdida. Nova tentativa em %s segundos...",delay)
-                time.sleep(delay)
+                self._wait_for_retry(delay, stop_check)
                 with self.api_lock:
                     try:
                         self.client.logout()
