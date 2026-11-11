@@ -29,6 +29,35 @@ def market_matches(symbol,mode):
     otc="OTC" in symbol.upper()
     return otc if mode.upper()=="OTC" else not otc
 
+def signal_is_in_next_candle(connector, signal):
+    """Só autoriza a entrada durante a M1 imediatamente posterior ao candle do sinal."""
+    raw_ts=signal.get("signal_timestamp")
+    if raw_ts is None:
+        logging.warning("Sinal %s descartado: timestamp do candle não disponível.",signal.get("symbol","?"))
+        return False
+    try:
+        signal_ts=float(raw_ts)
+        server_ts=float(connector.client.get_server_timestamp())
+    except (TypeError,ValueError,AttributeError) as exc:
+        logging.error("Não foi possível validar o horário do sinal: %s",exc)
+        raise RuntimeError("Horário do servidor/candle inválido; entrada bloqueada.") from exc
+
+    # Algumas APIs podem devolver timestamps em milissegundos.
+    if signal_ts > 10_000_000_000:
+        signal_ts /= 1000.0
+    if server_ts > 10_000_000_000:
+        server_ts /= 1000.0
+
+    next_candle_start=signal_ts+60
+    next_candle_end=next_candle_start+60
+    if not (next_candle_start <= server_ts < next_candle_end):
+        logging.info(
+            "Sinal %s descartado por atraso: candle do sinal=%d, janela de entrada=[%d,%d), servidor=%.3f.",
+            signal.get("symbol","?"),int(signal_ts),int(next_candle_start),int(next_candle_end),server_ts
+        )
+        return False
+    return True
+
 def scan_once(connector,settings):
     tf=settings.get("timeframe","M1").upper()
     if tf != "M1": raise ValueError("Este teste do DEMEX está limitado ao timeframe M1.")
@@ -113,6 +142,9 @@ def main():
                     alert(msg,bool(settings.get("sound_alert",True)))
                     print("Confirmações: "+", ".join(candidate["reasons"]))
                     try:
+                        # Validar imediatamente antes do envio: só vale a vela M1 seguinte ao sinal.
+                        if not signal_is_in_next_candle(connector,candidate):
+                            continue
                         summary=trader.execute_and_settle(candidate)
                         if summary:
                             order_accepted_or_settled=True
