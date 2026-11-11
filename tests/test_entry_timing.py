@@ -4,6 +4,7 @@ from entry_timing import (
     closed_signal_entry_mode,
     filter_market_assets,
     is_intrabar_entry_window,
+    is_candle_still_open,
 )
 
 
@@ -12,6 +13,13 @@ class EntryTimingTests(unittest.TestCase):
         self.assertTrue(is_intrabar_entry_window(3.0))
         self.assertTrue(is_intrabar_entry_window(2.0))
         self.assertTrue(is_intrabar_entry_window(2.5))
+
+    def test_intrabar_signal_is_pending_until_candle_closes(self):
+        self.assertTrue(is_candle_still_open(30.0))
+        self.assertTrue(is_candle_still_open(2.5))
+        self.assertFalse(is_candle_still_open(0.0))
+        self.assertFalse(is_candle_still_open(-0.1))
+        self.assertFalse(is_candle_still_open(None))
 
     def test_intrabar_window_rejects_outside_boundaries(self):
         self.assertFalse(is_intrabar_entry_window(3.01))
