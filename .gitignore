@@ -15,3 +15,6 @@ vendor/
 *.backup*
 *.bak*
 -la .envpython main.py .demex_stop demex_teste.pid
+
+.demex-agent.sh
+.demex-agent.sh.new
