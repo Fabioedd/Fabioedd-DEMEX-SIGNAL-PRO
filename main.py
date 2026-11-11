@@ -10,6 +10,7 @@ from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from strategies.my_strategy import get_intrabar_signal, get_signal, backtest_strategy
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
+from robot_lock import acquire_robot_lock
 from entry_timing import (
     can_add_pending_signal,
     filter_market_assets,
@@ -175,6 +176,13 @@ def candidate_key(candidate):
 
 
 def main():
+    # A trava é liberada pelo sistema operacional quando o processo termina.
+    # Isso impede duas instâncias, mesmo se Termux e Telegram enviarem /start juntos.
+    robot_lock = acquire_robot_lock()
+    if robot_lock is None:
+        print("DEMEX já está em execução nesta pasta. Nenhuma segunda instância será iniciada.", flush=True)
+        return
+
     load_dotenv()
     settings = load_settings()
     trading = settings.get("trading", {})
