@@ -10,21 +10,15 @@ def candle(ts, open_=1.0, close=1.1):
 
 
 class BacktestFilterTests(unittest.TestCase):
-    def test_approves_only_above_70_percent_and_minimum_sample(self):
-        # 23 inputs -> 22 closed candles -> 6 possible historical signals.
+    def test_approves_single_historical_trade_when_rate_is_above_70(self):
+        # Mesmo com apenas uma operação histórica, a assertividade >70% aprova.
         candles = [candle(i * 60) for i in range(23)]
-        with patch("backtest_filter.get_signal", return_value={"direction": "CALL"}):
-            result = evaluate_backtest(candles, minimum_trades=5)
+        signals = [None, None, None, None, None, {"direction": "CALL"}]
+        with patch("backtest_filter.get_signal", side_effect=signals):
+            result = evaluate_backtest(candles)
         self.assertTrue(result["approved"])
-        self.assertEqual(result["trades"], 6)
+        self.assertEqual(result["trades"], 1)
         self.assertEqual(result["win_rate"], 100.0)
-
-    def test_blocks_insufficient_sample(self):
-        candles = [candle(i * 60) for i in range(23)]
-        with patch("backtest_filter.get_signal", return_value={"direction": "CALL"}):
-            result = evaluate_backtest(candles, minimum_trades=7)
-        self.assertFalse(result["approved"])
-        self.assertEqual(result["reason"], "amostra_insuficiente")
 
     def test_blocks_rate_equal_to_70_percent(self):
         candles = [candle(i * 60, 1.0, 1.1) for i in range(27)]
@@ -32,10 +26,18 @@ class BacktestFilterTests(unittest.TestCase):
         for index in (23, 24, 25):
             candles[index] = candle(index * 60, 1.1, 1.0)
         with patch("backtest_filter.get_signal", return_value={"direction": "CALL"}):
-            result = evaluate_backtest(candles, minimum_trades=5)
+            result = evaluate_backtest(candles)
         self.assertFalse(result["approved"])
         self.assertEqual(result["trades"], 10)
         self.assertEqual(result["win_rate"], 70.0)
+
+    def test_blocks_when_there_are_no_decisive_historical_trades(self):
+        candles = [candle(i * 60) for i in range(23)]
+        with patch("backtest_filter.get_signal", return_value=None):
+            result = evaluate_backtest(candles)
+        self.assertFalse(result["approved"])
+        self.assertEqual(result["reason"], "sem_operacoes_validas")
+        self.assertEqual(result["trades"], 0)
 
 
 if __name__ == "__main__":
