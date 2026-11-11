@@ -10,6 +10,7 @@ from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from strategies.my_strategy import get_intrabar_signal, get_signal, backtest_strategy
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
+from robot_lock import acquire_robot_lock
 from entry_timing import (
     can_add_pending_signal,
     filter_market_assets,
@@ -175,6 +176,13 @@ def candidate_key(candidate):
 
 
 def main():
+    # A trava é liberada pelo sistema operacional quando o processo termina.
+    # Isso impede duas instâncias, mesmo se Termux e Telegram enviarem /start juntos.
+    robot_lock = acquire_robot_lock()
+    if robot_lock is None:
+        print("DEMEX já está em execução nesta pasta. Nenhuma segunda instância será iniciada.", flush=True)
+        return
+
     load_dotenv()
     settings = load_settings()
     trading = settings.get("trading", {})
@@ -506,7 +514,21 @@ def main():
             except Exception:
                 logging.exception("Não foi possível enviar a confirmação final ao Telegram.")
     except KeyboardInterrupt:
-        print("\\nRobô encerrado pelo usuário.")
+        print("\\nInterrupção recebida no Termux. Registrando o encerramento no Telegram.", flush=True)
+        trader_instance = locals().get("trader")
+        telegram_instance = locals().get("telegram")
+        if trader_instance is not None and telegram_instance is not None:
+            try:
+                telegram_instance.send_session_end(
+                    reason="Interrupção recebida pelo Termux (Ctrl+C)",
+                    total_entries=trader_instance.total_entries,
+                    wins=trader_instance.wins,
+                    losses=trader_instance.losses,
+                    ties=trader_instance.ties,
+                    session_net=trader_instance.net,
+                )
+            except Exception:
+                logging.exception("Não foi possível enviar a confirmação de encerramento ao Telegram.")
     finally:
         connector.close()
 

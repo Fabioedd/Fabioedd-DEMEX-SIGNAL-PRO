@@ -160,10 +160,40 @@ class TelegramControl:
         log_handle.close()
         self.robot_process = process
         PID_FILE.write_text(str(process.pid), encoding="utf-8")
+
+        # Aguarda a criação do processo visível em /proc. Isso evita confirmar
+        # uma inicialização que falhou ou perdeu a disputa pela trava única.
+        deadline = time.monotonic() + 3.0
+        active_pid = None
+        while time.monotonic() < deadline:
+            active_pid = find_robot_pid()
+            if active_pid:
+                break
+            if process.poll() is not None:
+                break
+            time.sleep(0.1)
+
+        if active_pid:
+            if active_pid != process.pid:
+                self.reply(
+                    chat_id,
+                    "🟡 O DEMEX já estava ligado (PID {}). Não iniciei outra instância.".format(active_pid)
+                )
+            else:
+                self.reply(
+                    chat_id,
+                    "🚀 DEMEX iniciado no Termux (PID {}). "
+                    "A execução só será liberada após confirmar PRACTICE/DEMO na corretora. "
+                    "Acompanhe os registros em .demex-telegram-robot.log.".format(active_pid)
+                )
+            return
+
+        PID_FILE.unlink(missing_ok=True)
+        self.robot_process = None
         self.reply(
             chat_id,
-            "🚀 Comando recebido. O DEMEX está iniciando. "
-            "A execução só será liberada se a corretora confirmar PRACTICE/DEMO."
+            "❌ O processo DEMEX não permaneceu ativo após o comando. "
+            "Confira .demex-telegram-robot.log no Termux."
         )
 
     def stop_robot(self, chat_id):
