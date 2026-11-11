@@ -82,16 +82,22 @@ def scan_once(connector, settings, assets):
             if provisional:
                 signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
                 if signal_ts is not None:
-                    candidate = {
-                        **provisional, **asset, "timeframe": "M1",
-                        "expiry_minutes": 1,
-                        "signal_timestamp": candles[-1].get("timestamp"),
-                    }
-                    logging.info(
-                        "SINAL INTRABAR %s %s | RSI %.2f | aguardando janela de 3 a 2 segundos antes do fechamento.",
-                        asset["symbol"], provisional["direction"], provisional["rsi"]
-                    )
-                    return candidate
+                    server_ts = normalize_timestamp(connector.get_server_timestamp())
+                    seconds_remaining = signal_ts + 60 - server_ts
+                    # Não bloqueia a varredura esperando uma vela terminar:
+                    # só seleciona o sinal quando faltam entre 3 e 2 segundos.
+                    if 2.0 <= seconds_remaining <= 3.0:
+                        candidate = {
+                            **provisional, **asset, "timeframe": "M1",
+                            "expiry_minutes": 1,
+                            "signal_timestamp": candles[-1].get("timestamp"),
+                        }
+                        logging.info(
+                            "SINAL INTRABAR %s %s | RSI %.2f | faltam %.2fs para fechar.",
+                            asset["symbol"], provisional["direction"],
+                            provisional["rsi"], seconds_remaining
+                        )
+                        return candidate
 
             # Se não houve sinal intrabar, procura sinal na última vela já fechada.
             result = analyze(candles, settings)
