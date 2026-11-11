@@ -66,61 +66,6 @@ def signal_is_in_next_candle(connector, signal):
         return False
     return True
 
-def normalize_timestamp(value):
-    """Converte timestamp Unix em segundos, aceitando também milissegundos."""
-    if value is None:
-        return None
-    ts=float(value)
-    return ts / 1000.0 if ts > 10_000_000_000 else ts
-
-
-def signal_still_present(connector, settings, candidate):
-    """Reconsulta o ativo e exige o mesmo sinal na mesma vela fechada."""
-    symbol=candidate["symbol"]
-    try:
-        candles=connector.get_candles(
-            symbol,60,int(settings.get("candles_count",250))
-        )
-        if len(candles) < 2:
-            logging.info("Sinal %s descartado: candles insuficientes na rechecagem.",symbol)
-            return False
-
-        latest_closed_ts=normalize_timestamp(candles[-2].get("timestamp"))
-        original_ts=normalize_timestamp(candidate.get("signal_timestamp"))
-        if latest_closed_ts is None or original_ts is None or latest_closed_ts != original_ts:
-            logging.info(
-                "Sinal %s descartado: a vela fechada mudou desde a detecção "
-                "(original=%s, atual=%s).",
-                symbol,original_ts,latest_closed_ts
-            )
-            return False
-
-        current=analyze(candles,settings)
-        if (not current
-                or current.get("direction") != candidate.get("direction")
-                or current.get("confidence",0) < settings["minimum_confidence"]):
-            logging.info(
-                "Sinal %s descartado: não permanece confirmado na rechecagem.",
-                symbol
-            )
-            return False
-
-        candidate.update(current)
-        candidate["signal_timestamp"]=candles[-2].get("timestamp")
-        logging.info(
-            "Sinal %s %s CONFIRMADO novamente na mesma vela fechada.",
-            symbol,candidate["direction"]
-        )
-        return True
-    except ConnectionError:
-        raise
-    except Exception as exc:
-        logging.warning("Sinal %s descartado: falha na rechecagem: %s",symbol,exc)
-        return False
-
-
-
-
 def refresh_approved_assets(connector, settings):
     """Backtesta os ultimos 100 candles M1 dos ativos com payout binario >=84%."""
     global _approved_assets
@@ -194,9 +139,17 @@ def scan_once(connector,settings):
     assets.sort(key=lambda item: priority_rank.get(item["symbol"],len(priority_rank)+1))
     candidates=[]
     pre_signals=[]
+    # A estratégia AHORA precisa de 17 candles; 40 dão margem sem baixar 250
+    # candles em cada ativo a cada ciclo. O histórico de backtest continua em 100.
+    scan_candle_count=max(30,min(40,int(settings.get("candles_count",120))))
+    # Um único horário de referência por ciclo evita uma chamada de relógio por ativo.
+    scan_server_time=connector.get_server_timestamp()
     for asset in assets:
         try:
-            candles=connector.get_candles(asset["symbol"],seconds,int(settings.get("candles_count",120)))
+            candles=connector.get_candles(
+                asset["symbol"],seconds,scan_candle_count,
+                server_timestamp=scan_server_time
+            )
             pre=get_pre_signal(candles,settings)
             if pre:
                 pre_signals.append({**pre,**asset})
@@ -277,9 +230,8 @@ def main():
                         print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                         break
                     try:
-                        # Reconsultar e confirmar o mesmo sinal na mesma vela já fechada.
-                        if not signal_still_present(connector,settings,candidate):
-                            continue
+                        # O sinal já foi calculado sobre a vela fechada recebida na varredura.
+                        # Não fazer uma segunda consulta de candles: ela consome a janela de entrada.
                         # Entrada somente na vela M1 imediatamente seguinte, até 5s após abrir.
                         if not signal_is_in_next_candle(connector,candidate):
                             continue
