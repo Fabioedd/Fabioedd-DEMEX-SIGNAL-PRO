@@ -14,6 +14,7 @@ from entry_timing import (
     closed_signal_entry_mode,
     filter_market_assets,
     is_intrabar_entry_window,
+    is_candle_still_open,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -76,23 +77,23 @@ def scan_once(connector, settings, assets):
             if len(candles) < 17:
                 continue
 
-            # Prioridade: sinal na vela em formação, para entrada entre 3 e 2s do fechamento.
+            # Sinal intrabar é apenas PREPARADO: nunca libera ordem antes do fechamento.
             provisional = get_intrabar_signal(candles, settings)
             if provisional:
                 signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
                 if signal_ts is not None:
                     server_ts = normalize_timestamp(connector.get_server_timestamp())
                     seconds_remaining = signal_ts + 60 - server_ts
-                    # Não bloqueia a varredura esperando uma vela terminar:
-                    # só seleciona o sinal quando faltam entre 3 e 2 segundos.
-                    if is_intrabar_entry_window(seconds_remaining):
+                    if is_candle_still_open(seconds_remaining):
                         candidate = {
                             **provisional, **asset, "timeframe": "M1",
                             "expiry_minutes": 1,
                             "signal_timestamp": candles[-1].get("timestamp"),
+                            "stage": "INTRABAR",
                         }
                         logging.info(
-                            "SINAL INTRABAR %s %s | RSI %.2f | faltam %.2fs para fechar.",
+                            "SINAL PROVISÓRIO %s %s | RSI %.2f | faltam %.2fs. "
+                            "Aguardando fechamento para confirmar; nenhuma ordem agora.",
                             asset["symbol"], provisional["direction"],
                             provisional["rsi"], seconds_remaining
                         )
@@ -163,6 +164,24 @@ def verify_closed(connector, settings, candidate):
     return bool(current and current.get("direction") == candidate.get("direction"))
 
 
+def wait_for_closed_confirmation(connector, settings, candidate, deadline):
+    """Espera a corretora publicar a vela fechada e confirma o mesmo sinal."""
+    while not STOP_FILE.exists():
+        now = normalize_timestamp(connector.get_server_timestamp())
+        if now >= candidate_close_timestamp(candidate):
+            if verify_closed(connector, settings, candidate):
+                return True
+        if now > deadline:
+            return False
+        time.sleep(0.10)
+    return False
+
+
+def candidate_close_timestamp(candidate):
+    signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
+    return None if signal_ts is None else signal_ts + 60
+
+
 def prepare_entry(connector, settings, candidate):
     """Aplica a janela: 2–3s antes do fechamento, no fechamento ou +3s na vela seguinte."""
     signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
@@ -175,41 +194,52 @@ def prepare_entry(connector, settings, candidate):
     stage = candidate.get("stage", "CLOSED")
 
     if stage == "INTRABAR":
+        # A faixa de 3–2s é somente a conferência final do pré-sinal.
+        # A ordem só poderá ser enviada depois do fechamento da vela M1.
         entry_target = close_timestamp - 2.5
         if now < entry_target:
             now = wait_until(connector, entry_target)
             if now is None:
                 return False
 
-        # Só entra antes do fechamento se a condição ainda estiver presente na faixa 3–2s.
-        if close_timestamp - 3.0 <= now <= close_timestamp - 2.0:
-            if verify_intrabar(connector, settings, candidate):
-                logging.info("ENTRADA LIBERADA: sinal permanece válido faltando %.2fs para fechar.",
-                             close_timestamp - now)
-                return True
+        seconds_remaining = close_timestamp - now
+        if not is_intrabar_entry_window(seconds_remaining):
+            logging.info(
+                "Sinal %s cancelado: não foi possível validar na janela de 3–2s antes do fechamento.",
+                candidate["symbol"]
+            )
+            return False
 
-        # Se a janela antecipada passou, aguarda o fechamento e valida a vela concluída.
-        if now < close_timestamp:
-            now = wait_until(connector, close_timestamp)
-            if now is None:
-                return False
-        if now <= close_timestamp + 0.75:
-            if verify_closed(connector, settings, candidate):
-                logging.info("ENTRADA LIBERADA no fechamento da vela M1.")
-                return True
+        if not verify_intrabar(connector, settings, candidate):
+            logging.info(
+                "Sinal %s cancelado antes do fechamento: o pré-sinal desapareceu ou mudou.",
+                candidate["symbol"]
+            )
+            return False
 
-        # Se a confirmação só foi capturada já na vela seguinte, aguarda exatamente 3s.
-        next_candle_entry = close_timestamp + 3.0
-        if now <= next_candle_entry:
-            now = wait_until(connector, next_candle_entry)
-            if now is None:
-                return False
-            if verify_closed(connector, settings, candidate):
-                logging.info("ENTRADA LIBERADA com 3s de atraso na vela M1 seguinte.")
-                return True
+        logging.info(
+            "PRÉ-SINAL %s %s mantido faltando %.2fs. "
+            "Aguardando a vela fechar; ainda não existe entrada.",
+            candidate["symbol"], candidate["direction"], seconds_remaining
+        )
+        now = wait_until(connector, close_timestamp)
+        if now is None:
+            return False
 
-        logging.info("Sinal %s cancelado: janela de entrada passou ou condição mudou.",
-                     candidate["symbol"])
+        # Aguarda a corretora publicar a vela concluída, por no máximo 0,75s.
+        if wait_for_closed_confirmation(
+            connector, settings, candidate, close_timestamp + 0.75
+        ):
+            logging.info(
+                "SINAL CONFIRMADO APÓS O FECHAMENTO M1. Entrada liberada."
+            )
+            return True
+
+        logging.info(
+            "Sinal %s cancelado: não foi confirmado na vela fechada. "
+            "Nenhuma ordem foi enviada.",
+            candidate["symbol"]
+        )
         return False
 
     # Sinal percebido no fechamento: entra no fechamento se capturado imediatamente;
