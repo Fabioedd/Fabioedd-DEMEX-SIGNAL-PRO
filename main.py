@@ -131,10 +131,12 @@ def refresh_approved_assets(connector, settings):
     assets = connector.get_open_assets(min_payout, max_payout)
     assets = [a for a in assets if market_matches(a["symbol"], market_mode)]
     approved = []
+    completed = not _refresh_stop.is_set()
     logging.info("BACKTEST: avaliando %d ativos com payout binario entre %.1f%% e %.1f%%; janela de 100 candles M1.",
                  len(assets), min_payout, max_payout)
     for index, asset in enumerate(assets, 1):
         if _refresh_stop.is_set():
+            completed = False
             break
         try:
             candles = connector.get_candles(
@@ -151,27 +153,32 @@ def refresh_approved_assets(connector, settings):
             raise
         except Exception as exc:
             logging.warning("BACKTEST ignorou %s: %s", asset["symbol"], exc)
+    if _refresh_stop.is_set():
+        completed = False
     approved.sort(key=lambda a: (a["backtest"]["win_rate"],
                                  a["backtest"]["trades"],
                                  a["payout_percent"]), reverse=True)
-    # Uma rodada sem aprovados nao apaga uma lista valida que ja esteja em uso.
-    # A lista anterior permanece ativa ate uma nova lista nao vazia ser aprovada.
+    # Uma varredura completa sempre substitui a lista, inclusive por [].
+    # Se a varredura foi interrompida, preserva a lista ativa anterior.
     with _approved_lock:
-        if approved:
+        if completed:
             _approved_assets = approved
             active_assets = list(_approved_assets)
-            logging.info("LISTA APROVADA ATUALIZADA: %d ativos.", len(active_assets))
+            if active_assets:
+                logging.info("LISTA APROVADA SUBSTITUIDA: %d ativos.", len(active_assets))
+            else:
+                logging.warning("VARREDURA COMPLETA SEM APROVADOS: lista ativa zerada; nenhum ativo sera monitorado.")
         else:
             active_assets = list(_approved_assets)
-            if active_assets:
-                logging.warning(
-                    "NOVO BACKTEST SEM APROVADOS: mantendo os %d ativos da ultima lista valida.",
-                    len(active_assets)
-                )
-            else:
-                logging.warning("BACKTEST SEM APROVADOS e sem lista anterior; aguardando nova avaliacao.")
-    logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados nesta rodada (assertividade >70%% e payout binario >=84%%; sem minimo de operacoes historicas). Lista ativa: %d.",
-                 len(approved), len(assets), len(active_assets))
+            logging.warning(
+                "BACKTEST INTERROMPIDO: mantendo os %d ativos da lista anterior; resultado parcial descartado.",
+                len(active_assets)
+            )
+    if completed:
+        logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados nesta rodada (assertividade >70%% e payout binario >=84%%; sem minimo de operacoes historicas). Lista ativa: %d.",
+                     len(approved), len(assets), len(active_assets))
+    else:
+        logging.warning("BACKTEST NAO CONCLUIDO; lista ativa inalterada com %d ativos.",len(active_assets))
     return active_assets
 
 
