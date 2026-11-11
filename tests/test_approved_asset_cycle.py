@@ -76,11 +76,11 @@ class ApprovedAssetCycleTests(unittest.TestCase):
             "scan_interval_seconds": 2,
             "candles_count": 20,
         }
-        with patch.object(main, "get_pre_signal", return_value=None), \\
-             patch.object(main, "analyze", return_value=None):
-            self.assertEqual(main.scan_once(connector, settings), [])
-            first_pass = list(connector.candle_requests)
-            self.assertEqual(main.scan_once(connector, settings), [])
+        with patch.object(main, "get_pre_signal", return_value=None):
+            with patch.object(main, "analyze", return_value=None):
+                self.assertEqual(main.scan_once(connector, settings), [])
+                first_pass = list(connector.candle_requests)
+                self.assertEqual(main.scan_once(connector, settings), [])
         self.assertEqual(first_pass, ["EURUSD-OTC", "GBPUSD-OTC"])
         self.assertEqual(connector.candle_requests,
                          ["EURUSD-OTC", "GBPUSD-OTC", "EURUSD-OTC", "GBPUSD-OTC"])
