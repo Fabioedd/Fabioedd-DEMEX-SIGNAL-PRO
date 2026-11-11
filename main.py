@@ -7,8 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
-from signal_engine import analyze
-from strategies.my_strategy import get_intrabar_signal
+from strategies.my_strategy import get_intrabar_signal, get_signal
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from entry_timing import (
@@ -21,11 +20,14 @@ from entry_timing import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 STOP_FILE = Path(".demex_stop")
+ASSET_REFRESH_INTERVAL_SECONDS = 300
+MAX_PENDING_SIGNALS = 3
+ENTRY_CONFIRMATION_SECONDS = 5.0
 _scan_pass_number = 0
 
 
 def scan_delay(settings):
-    """Intervalo normal entre varreduras, limitado a 1–3 segundos."""
+    """Mantém a varredura no intervalo configurado (padrão aprovado: 2 segundos)."""
     return max(1, min(3, int(settings.get("scan_interval_seconds", 2))))
 
 
@@ -46,21 +48,34 @@ def alert(message, enabled=True):
 def normalize_timestamp(value):
     if value is None:
         return None
-    ts = float(value)
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return None
     return ts / 1000.0 if ts > 10_000_000_000 else ts
 
 
 def get_market_assets(connector, settings):
-    """Carrega os ativos do mercado escolhido sem consultar payout ou backtest."""
-    mode = settings.get("market_mode", "OTC")
-    assets = filter_market_assets(connector.get_assets(), mode)
-    logging.info("ATIVOS CARREGADOS: %d ativos do mercado %s; sem filtro de payout/backtest.",
-                 len(assets), mode)
-    return assets
+    """Retorna somente ativos OTC binários que a corretora informa disponíveis."""
+    mode = str(settings.get("market_mode", "OTC")).upper()
+    if mode != "OTC":
+        raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
+    availability = connector.get_otc_asset_availability()
+    available = [
+        {"symbol": item["symbol"], "active_id": item["active_id"]}
+        for item in availability if item.get("available") is True
+    ]
+    unavailable_count = len(availability) - len(available)
+    logging.info(
+        "DISPONIBILIDADE OTC: %d disponíveis; %d fechados ou suspensos. "
+        "Atualização a cada %d minutos.",
+        len(available), unavailable_count, ASSET_REFRESH_INTERVAL_SECONDS // 60
+    )
+    return filter_market_assets(available, "OTC")
 
 
 def scan_once(connector, settings, assets):
-    """Analisa todos os ativos e devolve sinais sem bloquear a varredura."""
+    """Detecta pré-sinais na vela M1 atual; nunca envia ordens nesta etapa."""
     global _scan_pass_number
     _scan_pass_number += 1
     if settings.get("timeframe", "M1").upper() != "M1":
@@ -68,8 +83,6 @@ def scan_once(connector, settings, assets):
     if settings.get("trade_type", "binary").lower() != "binary":
         raise ValueError("Este robô está bloqueado para operar somente opções BINÁRIAS.")
 
-    settings["timeframe"] = "M1"
-    settings["expiry_minutes"] = 1
     candidates = []
     for asset in assets:
         try:
@@ -79,33 +92,23 @@ def scan_once(connector, settings, assets):
             if len(candles) < 17:
                 continue
 
-            # Primeiro registra o pré-sinal da vela atual, sem enviar ordem.
             provisional = get_intrabar_signal(candles, settings)
-            if provisional:
-                signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
-                if signal_ts is not None:
-                    server_ts = normalize_timestamp(connector.get_server_timestamp())
-                    seconds_remaining = signal_ts + 60 - server_ts
-                    if is_candle_still_open(seconds_remaining):
-                        candidates.append({
-                            **provisional, **asset, "timeframe": "M1",
-                            "expiry_minutes": 1,
-                            "signal_timestamp": candles[-1].get("timestamp"),
-                            "stage": "INTRABAR",
-                        })
-                        continue
-
-            # Também detecta sinais que já estavam na última vela concluída.
-            result = analyze(candles, settings)
-            if result:
-                closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-                if closed_ts is None:
-                    continue
+            if not provisional:
+                continue
+            signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
+            server_ts = normalize_timestamp(connector.get_server_timestamp())
+            if signal_ts is None or server_ts is None:
+                continue
+            seconds_remaining = signal_ts + 60 - server_ts
+            if is_candle_still_open(seconds_remaining):
                 candidates.append({
-                    **result, **asset, "timeframe": "M1",
+                    **asset,
+                    **provisional,
+                    "timeframe": "M1",
                     "expiry_minutes": 1,
-                    "signal_timestamp": candles[-2].get("timestamp"),
-                    "stage": "CLOSED",
+                    "signal_timestamp": candles[-1].get("timestamp"),
+                    "close_timestamp": signal_ts + 60,
+                    "stage": "PENDING_CLOSE",
                 })
         except ConnectionError:
             raise
@@ -113,69 +116,40 @@ def scan_once(connector, settings, assets):
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
     logging.info(
-        "VARREDURA %d: %d ativos analisados; %d sinais encontrados.",
+        "VARREDURA %d: %d ativos analisados; %d pré-sinais encontrados.",
         _scan_pass_number, len(assets), len(candidates)
     )
     return candidates
 
-def wait_until(connector, target_timestamp):
-    """Espera usando o relógio da corretora; respeita pedido de parada."""
-    while not STOP_FILE.exists():
-        now = normalize_timestamp(connector.get_server_timestamp())
-        if now >= target_timestamp:
-            return now
-        time.sleep(min(0.15, max(0.02, target_timestamp - now)))
-    return None
 
-
-def verify_intrabar(connector, settings, candidate):
+def verify_closed_signal(connector, settings, candidate):
+    """Confirma o mesmo sinal na vela já fechada, usando a estratégia original."""
     candles = connector.get_candles(
         candidate["symbol"], 60, int(settings.get("candles_count", 250))
     )
-    if not candles:
-        return False
-    current_ts = normalize_timestamp(candles[-1].get("timestamp"))
-    original_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    if current_ts != original_ts:
-        return False
-    current = get_intrabar_signal(candles, settings)
-    return bool(current and current.get("direction") == candidate.get("direction"))
+    if len(candles) < 17:
+        return None
 
+    # get_signal avalia candles[:-1], ou seja, a última vela concluída.
+    closed_timestamp = normalize_timestamp(candles[-2].get("timestamp"))
+    target_timestamp = normalize_timestamp(candidate.get("signal_timestamp"))
+    if closed_timestamp is None or target_timestamp is None:
+        return None
+    if closed_timestamp != target_timestamp:
+        return None
 
-def verify_closed(connector, settings, candidate):
-    candles = connector.get_candles(
-        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-    )
-    if len(candles) < 2:
-        return False
-    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-    original_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    if closed_ts != original_ts:
-        return False
-    current = analyze(candles, settings)
-    return bool(current and current.get("direction") == candidate.get("direction"))
-
-
-def verify_closed(connector, settings, candidate):
-    """Confirma que o mesmo sinal continua presente na vela M1 já encerrada."""
-    candles = connector.get_candles(
-        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-    )
-    if len(candles) < 2:
-        return False
-    current_ts = normalize_timestamp(candles[-1].get("timestamp"))
-    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-    original_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    # Só valida depois que a corretora publicou uma vela posterior à vela do sinal.
-    if current_ts is None or closed_ts is None or original_ts is None:
-        return False
-    if current_ts <= original_ts or closed_ts != original_ts:
-        return False
-    elapsed = normalize_timestamp(connector.get_server_timestamp()) - (original_ts + 60)
-    if not is_close_confirmation_window(elapsed):
-        return False
-    current = analyze(candles, settings)
-    return bool(current and current.get("direction") == candidate.get("direction"))
+    confirmed = get_signal(candles, settings)
+    if not confirmed or confirmed.get("direction") != candidate.get("direction"):
+        return None
+    return {
+        **candidate,
+        **confirmed,
+        "symbol": candidate["symbol"],
+        "active_id": candidate["active_id"],
+        "signal_timestamp": candidate["signal_timestamp"],
+        "timeframe": "M1",
+        "expiry_minutes": 1,
+    }
 
 
 def candidate_key(candidate):
@@ -184,11 +158,6 @@ def candidate_key(candidate):
         candidate.get("direction"),
         candidate.get("signal_timestamp"),
     )
-
-
-def candidate_close_timestamp(candidate):
-    signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    return None if signal_ts is None else signal_ts + 60
 
 
 def main():
@@ -216,8 +185,7 @@ def main():
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
 
         assets = get_market_assets(connector, settings)
-        if not assets:
-            raise RuntimeError("Nenhum ativo foi encontrado no mercado configurado.")
+        next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
         trader = DemoTrader(connector, settings)
         telegram = TelegramNotifier.from_env()
         print(
@@ -225,29 +193,54 @@ def main():
             "SCRIPT AHORA RSI EXHAUSTION | RSI({}) | sem payout/backtest/varredura de 30 minutos."
             .format(settings.get("rsi_period", 14))
         )
-        print("Ativos monitorados: {} | Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
-              .format(len(assets), trader.base, trader.stop, trader.take))
+        print(
+            "Ativos OTC disponíveis: {} | Atualização a cada 5 minutos | "
+            "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
+            .format(len(assets), trader.base, trader.stop, trader.take)
+        )
         telegram.send_session_start(
             account="PRACTICE/DEMO", market=settings.get("market_mode", "OTC"),
             timeframe="M1", expiry_minutes=trader.expiry, assets_count=len(assets),
             initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
         )
 
-        # Mantém até três sinais provisórios enquanto continua varrendo os demais ativos.
+        # Guarda no máximo três pré-sinais e só os confirma após o fechamento.
         pending = {}
         processed = set()
-        max_pending = 3
 
         while not trader.stopped:
             if STOP_FILE.exists():
                 trader.stopped = True
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
+
+            if time.monotonic() >= next_asset_refresh:
+                try:
+                    assets = get_market_assets(connector, settings)
+                    logging.info(
+                        "LISTA OTC ATUALIZADA: %d ativos disponíveis para análise.",
+                        len(assets)
+                    )
+                    next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    next_asset_refresh = 0.0
+                except Exception as exc:
+                    logging.error(
+                        "Disponibilidade OTC não confirmada; análise pausada: %s", exc
+                    )
+                    assets = []
+                    next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
+
             try:
                 candidates = scan_once(connector, settings, assets)
             except ConnectionError as exc:
                 logging.warning("Conexão perdida durante a análise: %s", exc)
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
                 continue
 
             if STOP_FILE.exists():
@@ -255,109 +248,92 @@ def main():
                 print("PARADA SOLICITADA: sinais descartados; nenhuma nova operação será iniciada.")
                 break
 
-            confirmed = []
-            connection_lost = False
-            # Guarda os sinais intrabar sem interromper a análise dos outros ativos.
             for candidate in candidates:
                 key = candidate_key(candidate)
                 if key in processed or key in pending:
                     continue
-                if candidate.get("stage") == "INTRABAR":
-                    if can_add_pending_signal(len(pending), max_pending):
-                        pending[key] = candidate
-                        logging.info(
-                            "SINAL PENDENTE %s %s: aguardando fechamento; "
-                            "outros ativos continuam sendo analisados (%d/%d).",
-                            candidate["symbol"], candidate["direction"],
-                            len(pending), max_pending
-                        )
-                    continue
-                # Sinais já fechados também precisam ser confirmados no candle encerrado.
-                processed.add(key)
-                try:
-                    if verify_closed(connector, settings, candidate):
-                        confirmed.append(candidate)
-                except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
-                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                    connection_lost = True
-                    break
+                if can_add_pending_signal(len(pending), MAX_PENDING_SIGNALS):
+                    pending[key] = candidate
+                    logging.info(
+                        "PRÉ-SINAL AGUARDANDO FECHAMENTO: %s %s | vela %s",
+                        candidate["symbol"], candidate["direction"],
+                        candidate["signal_timestamp"]
+                    )
 
-            if connection_lost:
-                continue
-
-            # Reavalia todos os sinais pendentes cujo candle já deveria ter fechado.
             try:
-                now = normalize_timestamp(connector.get_server_timestamp())
-            except ConnectionError as exc:
-                logging.warning("Conexão perdida ao consultar horário da corretora: %s", exc)
-                connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                server_now = normalize_timestamp(connector.get_server_timestamp())
+            except ConnectionError:
+                raise
+            except Exception as exc:
+                logging.warning("Não foi possível ler o relógio da corretora: %s", exc)
+                time.sleep(scan_delay(settings))
                 continue
+
+            ready = []
             for key, candidate in list(pending.items()):
-                close_ts = candidate_close_timestamp(candidate)
-                if close_ts is None or now < close_ts:
-                    continue
-                try:
-                    candles = connector.get_candles(
-                        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-                    )
-                    latest_ts = (
-                        normalize_timestamp(candles[-1].get("timestamp"))
-                        if candles else None
-                    )
-                    if latest_ts is not None and latest_ts > normalize_timestamp(candidate["signal_timestamp"]):
-                        processed.add(key)
-                        if verify_closed(connector, settings, candidate):
-                            confirmed.append(candidate)
-                            logging.info(
-                                "SINAL CONFIRMADO NO FECHAMENTO: %s %s.",
-                                candidate["symbol"], candidate["direction"]
-                            )
-                        else:
-                            logging.info(
-                                "SINAL CANCELADO: %s não permaneceu válido no fechamento.",
-                                candidate["symbol"]
-                            )
-                        del pending[key]
-                    elif now > close_ts + 0.75:
-                        # Margem máxima de 0,75s apenas para a corretora publicar o candle;
-                        # não existe tolerância para entrar na vela seguinte.
-                        processed.add(key)
-                        del pending[key]
-                        logging.warning(
-                            "SINAL DESCARTADO: dados de fechamento de %s não chegaram a tempo.",
-                            candidate["symbol"]
-                        )
-                except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao confirmar pendência %s: %s",
-                                    candidate["symbol"], exc)
-                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                    pending.clear()
-                    connection_lost = True
-                    break
-
-            if connection_lost:
-                continue
-
-            if confirmed:
-                # Uma única entrada: escolhe o sinal confirmado mais antigo; os demais são descartados.
-                confirmed.sort(key=lambda item: normalize_timestamp(item["signal_timestamp"]) or 0)
-                candidate = confirmed[0]
-                for item in confirmed[1:]:
-                    processed.add(candidate_key(item))
-                for key in list(pending):
+                close_ts = normalize_timestamp(candidate.get("close_timestamp"))
+                if server_now is None or close_ts is None:
+                    pending.pop(key, None)
                     processed.add(key)
-                    del pending[key]
+                    continue
+                elapsed = server_now - close_ts
+                if elapsed < 0:
+                    continue
+                if not is_close_confirmation_window(elapsed, ENTRY_CONFIRMATION_SECONDS):
+                    logging.info(
+                        "SINAL EXPIRADO: %s %s | %.2fs após o fechamento.",
+                        candidate["symbol"], candidate["direction"], elapsed
+                    )
+                    pending.pop(key, None)
+                    processed.add(key)
+                    continue
+
+                confirmed = verify_closed_signal(connector, settings, candidate)
+                if not confirmed:
+                    logging.info(
+                        "SINAL DESCARTADO: não confirmou no fechamento | %s %s.",
+                        candidate["symbol"], candidate["direction"]
+                    )
+                    pending.pop(key, None)
+                    processed.add(key)
+                    continue
+
+                # A confirmação da API pode consumir tempo; confira novamente
+                # imediatamente antes de autorizar a ordem.
+                final_now = normalize_timestamp(connector.get_server_timestamp())
+                final_elapsed = final_now - close_ts if final_now is not None else None
+                if final_elapsed is None or not is_close_confirmation_window(
+                    final_elapsed, ENTRY_CONFIRMATION_SECONDS
+                ):
+                    logging.info(
+                        "SINAL EXPIRADO DURANTE A CONFIRMAÇÃO: %s %s.",
+                        candidate["symbol"], candidate["direction"]
+                    )
+                    pending.pop(key, None)
+                    processed.add(key)
+                    continue
+
+                ready.append((close_ts, key, confirmed))
+
+            if ready:
+                ready.sort(key=lambda item: item[0])
+                _, selected_key, candidate = ready[0]
+                pending.pop(selected_key, None)
+                processed.add(selected_key)
                 logging.info(
-                    "SELEÇÃO ÚNICA: %s %s. Outros sinais confirmados não serão operados.",
+                    "ENTRADA AUTORIZADA: %s %s | vela fechada | até 5 segundos após o fechamento.",
                     candidate["symbol"], candidate["direction"]
                 )
+                for _, other_key, _ in ready[1:]:
+                    pending.pop(other_key, None)
+                    processed.add(other_key)
+
                 try:
                     if STOP_FILE.exists():
                         trader.stopped = True
                         break
                     message = (
-                        "SINAL {} | {} | M1 | RSI {:.2f} | expiração 1 minuto"
+                        "SINAL CONFIRMADO {} | {} | M1 | RSI {:.2f} | expiração 1 minuto"
                         .format(candidate["symbol"], candidate["direction"],
                                 float(candidate.get("rsi") or 0.0))
                     )
@@ -385,10 +361,15 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida antes da ordem: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    next_asset_refresh = 0.0
                 except RuntimeError as exc:
                     error_text = str(exc).lower()
-                    if ("cannot purchase an option (the asset is not available at the moment)" in error_text
-                            or "cannot purchase an option (active is suspended)" in error_text):
+                    if (
+                        "cannot purchase an option (the asset is not available at the moment)"
+                        in error_text
+                        or "cannot purchase an option (active is suspended)" in error_text
+                    ):
                         logging.warning("Ativo %s indisponível/suspenso: %s",
                                         candidate["symbol"], exc)
                     else:
