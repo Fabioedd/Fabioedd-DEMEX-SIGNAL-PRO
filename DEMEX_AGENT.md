@@ -4,25 +4,26 @@ O agente sincroniza o repositorio GitHub com a pasta local do DEMEX. Ele **nao i
 
 ## Instalar no Termux
 
-Depois que esta alteracao for integrada em `main`, dentro de `~/Fabioedd-DEMEX-SIGNAL-PRO`:
+Dentro de `~/Fabioedd-DEMEX-SIGNAL-PRO`, baixe o agente para um arquivo oculto (assim o Git pode receber a versao oficial sem conflito com o arquivo em execucao):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/main/demex-agent.sh -o demex-agent.sh
-bash demex-agent.sh instalar
-bash demex-agent.sh iniciar
+curl -fsSL https://raw.githubusercontent.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/main/demex-agent.sh -o .demex-agent.sh
+chmod 700 .demex-agent.sh
+bash .demex-agent.sh instalar
+bash .demex-agent.sh iniciar
 ```
 
 O agente consulta o GitHub a cada 60 segundos. Para verificar:
 
 ```bash
-bash demex-agent.sh status
+bash .demex-agent.sh status
 tail -n 40 .demex-agent.log
 ```
 
 Para parar somente o agente:
 
 ```bash
-bash demex-agent.sh parar
+bash .demex-agent.sh parar
 ```
 
 ## Regras de seguranca
@@ -31,11 +32,11 @@ bash demex-agent.sh parar
 - Faz backup dos arquivos que serao atualizados em `.demex-agent-backups/`.
 - Nunca executa `reset --hard`, `clean`, `pull` com merge, nem sobrescreve alteracoes locais.
 - Alteracoes locais rastreadas em arquivos-fonte permitidos sao commitadas e enviadas para uma branch separada `termux-sync-<dispositivo>`, nunca diretamente para `main`. Elas precisam de revisao/PR antes de virarem versao oficial.
-- Arquivos nao rastreados ou fora da lista permitida bloqueiam a atualizacao remota.
+- Arquivos locais nao rastreados fora da lista segura bloqueiam a atualizacao; logs, PID, backups, vendor e o diff temporario conhecido sao preservados e ignorados.
 - Nao envia `.env`, logs, PID, backups, dependencias ou arquivos nao rastreados.
-- Nao altera `settings.json` por conta propria e nao muda a estrategia.
-- Nao envia ordens e nao altera o estado da conta da corretora.
-- O processo do robô que ja estiver rodando continua com o codigo carregado em memoria; reiniciar o robô e uma acao separada e manual.
+- Nao altera a estrategia nem envia ordens.
+- O processo do robo que ja estiver rodando continua com o codigo carregado em memoria; reiniciar o robo e uma acao separada e manual.
+- Depois de instalar uma atualizacao do repositorio, o agente atualiza sua copia oculta para que a proxima inicializacao use a versao mais recente.
 
 ## Sincronizacao nos dois sentidos
 
