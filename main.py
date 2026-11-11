@@ -114,6 +114,7 @@ def signal_still_present(connector, settings, candidate):
 
 
 def scan_once(connector,settings):
+    global _priority_symbols
     tf=settings.get("timeframe","M1").upper()
     if tf != "M1": raise ValueError("Este teste do DEMEX está limitado ao timeframe M1.")
     seconds=60
@@ -145,7 +146,6 @@ def scan_once(connector,settings):
             raise
         except Exception as exc: logging.warning("Falha ao analisar %s: %s",asset["symbol"],exc)
     pre_signals.sort(key=lambda item: (item["proximity"],item["payout_percent"]), reverse=True)
-    global _priority_symbols
     _priority_symbols=[item["symbol"] for item in pre_signals]
     if pre_signals:
         preview=", ".join("{} {} ({:.0%})".format(item["symbol"],item["direction"],item["proximity"]) for item in pre_signals[:10])
