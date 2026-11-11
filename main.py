@@ -203,28 +203,48 @@ def prepare_entry(connector, settings, candidate):
                 return False
 
         seconds_remaining = close_timestamp - now
-        if not is_intrabar_entry_window(seconds_remaining):
+        if seconds_remaining > 3.0:
+            # Se o sinal apareceu cedo, aguarda a janela combinada de 3–2s.
+            now = wait_until(connector, close_timestamp - 2.5)
+            if now is None:
+                return False
+            seconds_remaining = close_timestamp - now
+
+        if is_intrabar_entry_window(seconds_remaining):
+            if not verify_intrabar(connector, settings, candidate):
+                logging.info(
+                    "Sinal %s cancelado antes do fechamento: o pré-sinal desapareceu ou mudou.",
+                    candidate["symbol"]
+                )
+                return False
             logging.info(
-                "Sinal %s cancelado: não foi possível validar na janela de 3–2s antes do fechamento.",
+                "PRÉ-SINAL %s %s mantido faltando %.2fs. "
+                "Aguardando a vela fechar; ainda não existe entrada.",
+                candidate["symbol"], candidate["direction"], seconds_remaining
+            )
+        elif 0.0 < seconds_remaining < 2.0:
+            # A leitura chegou tarde na janela; ainda assim, só confirma após o fechamento.
+            logging.info(
+                "Sinal %s detectado com %.2fs restantes; janela de conferência passou. "
+                "Aguardando fechamento para validar a vela concluída.",
+                candidate["symbol"], seconds_remaining
+            )
+        elif seconds_remaining <= 0.0 and now <= close_timestamp + 0.75:
+            logging.info(
+                "Sinal %s chegou no instante do fechamento; validando somente a vela concluída.",
+                candidate["symbol"]
+            )
+        else:
+            logging.info(
+                "Sinal %s cancelado: janela de confirmação não está mais disponível.",
                 candidate["symbol"]
             )
             return False
 
-        if not verify_intrabar(connector, settings, candidate):
-            logging.info(
-                "Sinal %s cancelado antes do fechamento: o pré-sinal desapareceu ou mudou.",
-                candidate["symbol"]
-            )
-            return False
-
-        logging.info(
-            "PRÉ-SINAL %s %s mantido faltando %.2fs. "
-            "Aguardando a vela fechar; ainda não existe entrada.",
-            candidate["symbol"], candidate["direction"], seconds_remaining
-        )
-        now = wait_until(connector, close_timestamp)
-        if now is None:
-            return False
+        if now < close_timestamp:
+            now = wait_until(connector, close_timestamp)
+            if now is None:
+                return False
 
         # Aguarda a corretora publicar a vela concluída, por no máximo 0,75s.
         if wait_for_closed_confirmation(
