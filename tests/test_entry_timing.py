@@ -1,46 +1,48 @@
 import unittest
+from pathlib import Path
 
 from entry_timing import (
-    closed_signal_entry_mode,
+    can_add_pending_signal,
     filter_market_assets,
-    is_intrabar_entry_window,
     is_candle_still_open,
+    is_close_confirmation_window,
 )
 
 
-class EntryTimingTests(unittest.TestCase):
-    def test_intrabar_window_accepts_three_and_two_seconds(self):
-        self.assertTrue(is_intrabar_entry_window(3.0))
-        self.assertTrue(is_intrabar_entry_window(2.0))
-        self.assertTrue(is_intrabar_entry_window(2.5))
-
-    def test_intrabar_signal_is_pending_until_candle_closes(self):
+class CandleCloseTests(unittest.TestCase):
+    def test_intrabar_signal_waits_for_candle_close(self):
         self.assertTrue(is_candle_still_open(30.0))
-        self.assertTrue(is_candle_still_open(2.5))
+        self.assertTrue(is_candle_still_open(0.1))
         self.assertFalse(is_candle_still_open(0.0))
         self.assertFalse(is_candle_still_open(-0.1))
         self.assertFalse(is_candle_still_open(None))
 
-    def test_intrabar_window_rejects_outside_boundaries(self):
-        self.assertFalse(is_intrabar_entry_window(3.01))
-        self.assertFalse(is_intrabar_entry_window(1.99))
-        self.assertFalse(is_intrabar_entry_window(10.0))
-        self.assertFalse(is_intrabar_entry_window(None))
+    def test_only_immediate_close_confirmation_is_allowed(self):
+        self.assertTrue(is_close_confirmation_window(0.0))
+        self.assertTrue(is_close_confirmation_window(0.5))
+        self.assertTrue(is_close_confirmation_window(0.75))
+        self.assertFalse(is_close_confirmation_window(0.76))
+        self.assertFalse(is_close_confirmation_window(5.0))
+        self.assertFalse(is_close_confirmation_window(-0.1))
 
 
-class ClosedSignalEntryTests(unittest.TestCase):
-    def test_closed_signal_can_enter_at_close(self):
-        self.assertEqual(closed_signal_entry_mode(0.0), "CLOSE")
-        self.assertEqual(closed_signal_entry_mode(0.75), "CLOSE")
+class MainSyntaxTests(unittest.TestCase):
+    def test_main_module_compiles_without_importing_broker_dependencies(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+        compile(source, "main.py", "exec")
 
-    def test_closed_signal_can_enter_within_five_seconds(self):
-        self.assertEqual(closed_signal_entry_mode(0.76), "NEXT_CANDLE")
-        self.assertEqual(closed_signal_entry_mode(2.0), "NEXT_CANDLE")
-        self.assertEqual(closed_signal_entry_mode(5.0), "NEXT_CANDLE")
 
-    def test_late_closed_signal_is_rejected_after_five_seconds(self):
-        self.assertIsNone(closed_signal_entry_mode(5.01))
-        self.assertIsNone(closed_signal_entry_mode(-0.1))
+class MultiplePendingSignalTests(unittest.TestCase):
+    def test_allows_up_to_three_pending_signals(self):
+        self.assertTrue(can_add_pending_signal(0))
+        self.assertTrue(can_add_pending_signal(1))
+        self.assertTrue(can_add_pending_signal(2))
+        self.assertFalse(can_add_pending_signal(3))
+        self.assertFalse(can_add_pending_signal(4))
+
+    def test_pending_limit_can_be_configured_for_two(self):
+        self.assertTrue(can_add_pending_signal(1, 2))
+        self.assertFalse(can_add_pending_signal(2, 2))
 
 
 class AssetDiscoveryTests(unittest.TestCase):

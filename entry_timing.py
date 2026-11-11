@@ -1,13 +1,20 @@
-"""Pure helpers for DEMEX entry timing and payout-free market selection."""
+"""Pure helpers for DEMEX candle-close confirmation and payout-free market selection."""
 
 
-def is_intrabar_entry_window(seconds_remaining):
-    """True only from 3.0 through 2.0 seconds before the M1 candle closes."""
+def is_candle_still_open(seconds_remaining):
+    """True while the signal candle is forming; never authorizes an order."""
     try:
-        remaining = float(seconds_remaining)
+        return float(seconds_remaining) > 0.0
     except (TypeError, ValueError):
         return False
-    return 2.0 <= remaining <= 3.0
+
+
+def can_add_pending_signal(pending_count, maximum=3):
+    """Limits simultaneous provisional signals without blocking market scanning."""
+    try:
+        return int(pending_count) < int(maximum)
+    except (TypeError, ValueError):
+        return False
 
 
 def filter_market_assets(assets, mode="OTC"):
@@ -22,22 +29,11 @@ def filter_market_assets(assets, mode="OTC"):
     return selected
 
 
-def closed_signal_entry_mode(seconds_after_close):
-    """Choose close entry, up-to-5-second next-candle window, or reject late signal."""
+def is_close_confirmation_window(seconds_after_close, max_delay=0.75):
+    """Allows only a tiny feed-publication delay, never a next-candle entry window."""
     try:
         elapsed = float(seconds_after_close)
-    except (TypeError, ValueError):
-        return None
-    if 0.0 <= elapsed <= 0.75:
-        return "CLOSE"
-    if 0.75 < elapsed <= 5.0:
-        return "NEXT_CANDLE"
-    return None
-
-
-def is_candle_still_open(seconds_remaining):
-    """True while the signal candle is still forming; never authorizes an order."""
-    try:
-        return float(seconds_remaining) > 0.0
+        limit = float(max_delay)
     except (TypeError, ValueError):
         return False
+    return 0.0 <= elapsed <= limit
