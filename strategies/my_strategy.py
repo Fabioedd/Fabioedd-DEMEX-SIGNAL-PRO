@@ -8,8 +8,8 @@ CALL somente quando, no mesmo candle FECHADO:
 
 PUT aplica as condições inversas.
 A última vela recebida pelo conector é descartada por estar em formação.
-O seletor Lua inputs.titles com índice 5 corresponde a HLC4:
-(high + low + close) / 3? Não: HLC4 é (high + low + close + close) / 4.
+O seletor Lua inputs.titles com índice 5 foi mantido como HLC4:
+(high + low + close + close) / 4.
 Integração DEMEX: get_signal(candles, config).
 """
 
@@ -138,7 +138,7 @@ def get_signal(candles, config):
     lows = [float(candle["low"]) for candle in closed]
     closes = [float(candle["close"]) for candle in closed]
 
-    # Lua inputs.titles[5]: HLC4 (High + Low + Close + Close) / 4.
+    # Lua inputs.titles[5]: HLC4 conforme o seletor usado no indicador.
     prices = [
         (high + low + close + close) / 4.0
         for high, low, close in zip(highs, lows, closes)
