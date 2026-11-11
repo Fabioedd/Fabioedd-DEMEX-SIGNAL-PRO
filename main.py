@@ -44,7 +44,7 @@ def signal_is_in_next_candle(connector, signal):
         return False
     try:
         signal_ts=float(raw_ts)
-        server_ts=float(connector.client.get_server_timestamp())
+        server_ts=float(connector.get_server_timestamp())
     except (TypeError,ValueError,AttributeError) as exc:
         logging.error("Não foi possível validar o horário do sinal: %s",exc)
         raise RuntimeError("Horário do servidor/candle inválido; entrada bloqueada.") from exc
@@ -221,6 +221,7 @@ def scan_once(connector,settings):
     return candidates
 
 def main():
+    refresh_thread=None
     load_dotenv()
     settings=load_settings()
     trading=settings.get("trading",{})
@@ -328,6 +329,8 @@ def main():
         print("\\nRobô encerrado pelo usuário.")
     finally:
         _refresh_stop.set()
+        if refresh_thread is not None and refresh_thread.is_alive():
+            refresh_thread.join(timeout=5)
         connector.close()
 
 if __name__=="__main__": main()
