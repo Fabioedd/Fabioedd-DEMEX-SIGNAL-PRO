@@ -1,171 +1,208 @@
-"""Harami_GO / CONF_TRIPLA — tradução fiel da lógica Lua para Python.
+"""DEMEX ALFA + GO 2024 CONFLUENCIA — tradução da lógica Lua para Python.
 
-Confluência obrigatória no ÚLTIMO candle FECHADO:
-1) Harami nos candles fechados [2] e [1], como no Lua original.
-2) Cruzamento GO original no candle fechado atual: SMA(1) - SMA(34), WMA(5).
-3) Fechamento atual acima/abaixo da EMA(200), na direção do sinal.
-O offset visual -1 do Lua posiciona a seta sobre o candle [1]; ele não
-altera o candle em que o cruzamento GO é confirmado.
+CALL somente quando, no mesmo candle FECHADO:
+- MACD DEMEX: EMA(7) - EMA(25) cruza acima da WMA(5) do MACD;
+- RSI(11) acima de 50;
+- candle de alta (close > open);
+- GO 2024: SMA(1)-SMA(34) cruza acima da WMA(5) do buffer.
 
+PUT aplica as condições inversas.
 A última vela recebida pelo conector é descartada por estar em formação.
-Integração com o DEMEX: get_signal(candles, config).
+O seletor Lua inputs.titles com índice 5 corresponde a HLC4:
+(high + low + close) / 3? Não: HLC4 é (high + low + close + close) / 4.
+Integração DEMEX: get_signal(candles, config).
 """
 
-SMA_FAST_PERIOD = 1
-SMA_SLOW_PERIOD = 34
-GO_SIGNAL_PERIOD = 5
-TREND_PERIOD = 200
+
+ALFA_FAST = 7
+ALFA_SLOW = 25
+ALFA_SIGNAL = 5
+ALFA_RSI = 11
+GO_FAST = 1
+GO_SLOW = 34
+GO_SIGNAL = 5
 
 
 def _sma_series(values, period):
-    """SMA alinhada ao índice original; None durante o aquecimento."""
     result = [None] * len(values)
     if len(values) < period:
         return result
     running = sum(values[:period])
     result[period - 1] = running / period
-    for index in range(period, len(values)):
-        running += values[index] - values[index - period]
-        result[index] = running / period
+    for i in range(period, len(values)):
+        running += values[i] - values[i - period]
+        result[i] = running / period
     return result
 
 
 def _ema_series(values, period):
-    """EMA inicializada pela média simples dos primeiros valores."""
     result = [None] * len(values)
     if len(values) < period:
         return result
     current = sum(values[:period]) / period
     result[period - 1] = current
     alpha = 2.0 / (period + 1.0)
-    for index in range(period, len(values)):
-        current = alpha * values[index] + (1.0 - alpha) * current
-        result[index] = current
+    for i in range(period, len(values)):
+        current = alpha * values[i] + (1.0 - alpha) * current
+        result[i] = current
     return result
 
 
 def _wma_series(values, period):
-    """WMA com pesos crescentes, igual à suavização do GO."""
     result = [None] * len(values)
     if len(values) < period:
         return result
     denominator = period * (period + 1) / 2.0
-    for index in range(period - 1, len(values)):
-        window = values[index - period + 1:index + 1]
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1:i + 1]
         if any(value is None for value in window):
             continue
-        result[index] = sum(
+        result[i] = sum(
             value * weight
             for weight, value in enumerate(window, start=1)
         ) / denominator
     return result
 
 
-def _harami_direction(parent, child):
-    """Retorna CALL/PUT somente quando o corpo do candle filho fica dentro do pai."""
-    parent_open = float(parent["open"])
-    parent_close = float(parent["close"])
-    child_open = float(child["open"])
-    child_close = float(child["close"])
+def _rsi_series(values, period):
+    """RSI de Wilder, com inicialização pela média dos ganhos/perdas."""
+    result = [None] * len(values)
+    if len(values) <= period:
+        return result
 
-    bullish_harami = (
-        parent_open > parent_close
-        and child_open < child_close
-        and child_open > parent_close
-        and child_close < parent_open
-    )
-    bearish_harami = (
-        parent_open < parent_close
-        and child_open > child_close
-        and child_open < parent_close
-        and child_close > parent_open
+    gains = []
+    losses = []
+    for i in range(1, period + 1):
+        change = values[i] - values[i - 1]
+        gains.append(max(change, 0.0))
+        losses.append(max(-change, 0.0))
+
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+
+    def rsi_value(gain, loss):
+        if loss == 0:
+            return 100.0 if gain > 0 else 50.0
+        if gain == 0:
+            return 0.0
+        return 100.0 - 100.0 / (1.0 + gain / loss)
+
+    result[period] = rsi_value(avg_gain, avg_loss)
+    for i in range(period + 1, len(values)):
+        change = values[i] - values[i - 1]
+        gain = max(change, 0.0)
+        loss = max(-change, 0.0)
+        avg_gain = ((avg_gain * (period - 1)) + gain) / period
+        avg_loss = ((avg_loss * (period - 1)) + loss) / period
+        result[i] = rsi_value(avg_gain, avg_loss)
+
+    return result
+
+
+def _cross_up(line, signal, index):
+    previous = index - 1
+    return (
+        line[index] is not None
+        and signal[index] is not None
+        and line[previous] is not None
+        and signal[previous] is not None
+        and line[index] > signal[index]
+        and line[previous] < signal[previous]
     )
 
-    if bullish_harami:
-        return "CALL"
-    if bearish_harami:
-        return "PUT"
-    return None
+
+def _cross_down(line, signal, index):
+    previous = index - 1
+    return (
+        line[index] is not None
+        and signal[index] is not None
+        and line[previous] is not None
+        and signal[previous] is not None
+        and line[index] < signal[index]
+        and line[previous] > signal[previous]
+    )
 
 
 def get_signal(candles, config):
-    """Analisa candles fechados e devolve sinal no formato esperado pelo DEMEX."""
-    # O conector inclui a vela atual, ainda em formação: nunca a usamos.
-    if not candles or len(candles) < TREND_PERIOD + 3:
+    """Devolve CALL/PUT apenas com confluência simultânea no candle fechado."""
+    if not candles or len(candles) < 40:
         return None
 
+    # O último candle do conector ainda está em formação: descartá-lo.
     closed = candles[:-1]
+    if len(closed) < GO_SLOW + GO_SIGNAL + 2:
+        return None
+
+    opens = [float(candle["open"]) for candle in closed]
+    highs = [float(candle["high"]) for candle in closed]
+    lows = [float(candle["low"]) for candle in closed]
     closes = [float(candle["close"]) for candle in closed]
-    if len(closed) < TREND_PERIOD + 2:
-        return None
 
-    # Reproduz os índices Lua: Harami em [2]/[1]; GO e EMA no candle atual [0].
-    # A seta do indicador Lua usa offset -1 e aparece sobre o candle [1].
-    parent = closed[-3]
-    child = closed[-2]
-    pattern = _harami_direction(parent, child)
-    if pattern is None:
-        return None
-
-    # GO 2024 original: SMA rápida 1, SMA lenta 34 e WMA do buffer 5.
-    sma_fast = _sma_series(closes, SMA_FAST_PERIOD)
-    sma_slow = _sma_series(closes, SMA_SLOW_PERIOD)
-    buffer1 = [
-        (fast - slow) if fast is not None and slow is not None else None
-        for fast, slow in zip(sma_fast, sma_slow)
+    # Lua inputs.titles[5]: HLC4 (High + Low + Close + Close) / 4.
+    prices = [
+        (high + low + close + close) / 4.0
+        for high, low, close in zip(highs, lows, closes)
     ]
-    buffer2 = _wma_series(buffer1, GO_SIGNAL_PERIOD)
 
-    current_index = len(closed) - 1
-    previous_index = current_index - 1
-    current_buffer1 = buffer1[current_index]
-    previous_buffer1 = buffer1[previous_index]
-    current_buffer2 = buffer2[current_index]
-    previous_buffer2 = buffer2[previous_index]
+    index = len(closed) - 1
 
-    if any(value is None for value in (
-        current_buffer1, previous_buffer1,
-        current_buffer2, previous_buffer2,
-    )):
-        return None
+    # DEMEX ALFA: MACD EMA 7/25 com WMA 5 como linha de sinal.
+    alfa_fast = _ema_series(prices, ALFA_FAST)
+    alfa_slow = _ema_series(prices, ALFA_SLOW)
+    alfa_macd = [
+        fast - slow if fast is not None and slow is not None else None
+        for fast, slow in zip(alfa_fast, alfa_slow)
+    ]
+    alfa_signal = _wma_series(alfa_macd, ALFA_SIGNAL)
+    alfa_rsi = _rsi_series(prices, ALFA_RSI)
 
-    buy_cross = (
-        current_buffer1 > current_buffer2
-        and previous_buffer1 <= previous_buffer2
+    alfa_buy = (
+        _cross_up(alfa_macd, alfa_signal, index)
+        and alfa_rsi[index] is not None
+        and alfa_rsi[index] > 50
+        and closes[index] > opens[index]
     )
-    sell_cross = (
-        current_buffer1 < current_buffer2
-        and previous_buffer1 >= previous_buffer2
+    alfa_sell = (
+        _cross_down(alfa_macd, alfa_signal, index)
+        and alfa_rsi[index] is not None
+        and alfa_rsi[index] < 50
+        and closes[index] < opens[index]
     )
 
-    # Filtro de tendência EMA 200 no fechamento do candle do padrão.
-    ema200 = _ema_series(closes, TREND_PERIOD)[current_index]
-    if ema200 is None:
-        return None
+    # GO 2024: SMA 1/34; WMA 5 aplicada à diferença das médias.
+    go_fast = _sma_series(prices, GO_FAST)
+    go_slow = _sma_series(prices, GO_SLOW)
+    go_buffer1 = [
+        fast - slow if fast is not None and slow is not None else None
+        for fast, slow in zip(go_fast, go_slow)
+    ]
+    go_buffer2 = _wma_series(go_buffer1, GO_SIGNAL)
 
-    last_close = closes[current_index]
-    trend_up = last_close > ema200
-    trend_down = last_close < ema200
+    go_buy = _cross_up(go_buffer1, go_buffer2, index)
+    go_sell = _cross_down(go_buffer1, go_buffer2, index)
 
-    if pattern == "CALL" and buy_cross and trend_up:
+    # Os dois indicadores precisam cruzar na mesma direção no mesmo candle.
+    if alfa_buy and go_buy:
         return {
             "direction": "CALL",
             "confidence": 100,
             "reasons": [
-                "Harami de alta confirmado nos candles anteriores [2]/[1]",
-                "GO 2024: cruzamento de alta da SMA(1)-SMA(34) com WMA(5)",
-                "Filtro de tendência: fechamento acima da EMA 200",
+                "DEMEX ALFA: cruzamento de alta MACD EMA 7/25 + WMA 5",
+                "DEMEX ALFA: RSI 11 acima de 50 e candle de alta",
+                "GO 2024: cruzamento de alta SMA 1/34 + WMA 5",
+                "Confluência simultânea confirmada em candle fechado",
             ],
         }
 
-    if pattern == "PUT" and sell_cross and trend_down:
+    if alfa_sell and go_sell:
         return {
             "direction": "PUT",
             "confidence": 100,
             "reasons": [
-                "Harami de baixa confirmado nos candles anteriores [2]/[1]",
-                "GO 2024: cruzamento de baixa da SMA(1)-SMA(34) com WMA(5)",
-                "Filtro de tendência: fechamento abaixo da EMA 200",
+                "DEMEX ALFA: cruzamento de baixa MACD EMA 7/25 + WMA 5",
+                "DEMEX ALFA: RSI 11 abaixo de 50 e candle de baixa",
+                "GO 2024: cruzamento de baixa SMA 1/34 + WMA 5",
+                "Confluência simultânea confirmada em candle fechado",
             ],
         }
 
