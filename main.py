@@ -10,7 +10,11 @@ from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
 from strategies.my_strategy import get_intrabar_signal
 from trade_manager import DemoTrader
-from entry_timing import filter_market_assets, is_intrabar_entry_window
+from entry_timing import (
+    closed_signal_entry_mode,
+    filter_market_assets,
+    is_intrabar_entry_window,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
@@ -208,12 +212,22 @@ def prepare_entry(connector, settings, candidate):
                      candidate["symbol"])
         return False
 
-    # Sinal percebido somente após o fechamento: aguarda 3s da vela seguinte.
-    next_candle_entry = close_timestamp + 3.0
-    if now > next_candle_entry:
-        logging.info("Sinal %s descartado: detectado depois da janela de 3s da vela seguinte.",
+    # Sinal percebido no fechamento: entra no fechamento se capturado imediatamente;
+    # caso a leitura venha um pouco depois, permite a entrada exatamente em +3s.
+    elapsed = now - close_timestamp
+    mode = closed_signal_entry_mode(elapsed)
+    if mode == "CLOSE":
+        if verify_closed(connector, settings, candidate):
+            logging.info("ENTRADA LIBERADA no fechamento da vela M1.")
+            return True
+        logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
+        return False
+    if mode != "NEXT_CANDLE_DELAY":
+        logging.info("Sinal %s descartado: fechamento detectado fora da janela permitida.",
                      candidate["symbol"])
         return False
+
+    next_candle_entry = close_timestamp + 3.0
     now = wait_until(connector, next_candle_entry)
     if now is None:
         return False
