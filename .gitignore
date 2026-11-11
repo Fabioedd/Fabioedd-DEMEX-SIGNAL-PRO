@@ -3,3 +3,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.demex-agent.pid
+.demex-agent.log
+.demex-agent.lock/
+.demex-agent-test.*/
+.demex-agent-backups/
