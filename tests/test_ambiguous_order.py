@@ -3,6 +3,16 @@ import os
 import tempfile
 import threading
 import unittest
+import sys
+import types
+
+# The connector's external Bullex client is not needed in these isolated tests.
+bullexapi_stub = types.ModuleType("bullexapi")
+stable_api_stub = types.ModuleType("bullexapi.stable_api")
+stable_api_stub.Bullex = object
+bullexapi_stub.stable_api = stable_api_stub
+sys.modules.setdefault("bullexapi", bullexapi_stub)
+sys.modules.setdefault("bullexapi.stable_api", stable_api_stub)
 
 from bullex_connector import BullexReadOnlyConnector
 
