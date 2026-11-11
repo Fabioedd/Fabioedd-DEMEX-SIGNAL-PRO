@@ -6,5 +6,12 @@ __pycache__/
 .demex-agent.pid
 .demex-agent.log
 .demex-agent.lock/
-.demex-agent-test.*/
+.demex-agent-test.*
 .demex-agent-backups/
+*.log
+*.pid
+.demex_stop
+vendor/
+*.backup*
+*.bak*
+-la .envpython main.py .demex_stop demex_teste.pid
