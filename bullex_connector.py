@@ -1,6 +1,6 @@
 """Bullex adapter with market-data reads and guarded PRACTICE-only orders."""
 from __future__ import annotations
-import logging, os, time
+import logging, os, time, threading
 from dataclasses import dataclass
 from typing import Any
 from bullexapi.stable_api import Bullex
@@ -27,6 +27,7 @@ class BullexReadOnlyConnector:
         self.client=Bullex(config.email,config.password,active_account_type=config.account_type)
         self.connected=False
         self.account_mode=None
+        self.api_lock=threading.RLock()
     def connect(self):
         status,detail=self.client.connect()
         if not status: return {"connected":False,"reason":str(detail or "connection_failed"),"requires_2fa":detail=="2FA"}
@@ -69,27 +70,30 @@ class BullexReadOnlyConnector:
             delay=min(delay*2,30)
 
     def get_assets(self):
-        self._require_connection()
-        return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
+        with self.api_lock:
+            self._require_connection()
+            return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
     def get_candles(self,symbol,timeframe_seconds,count=100):
-        self._require_connection()
-        if timeframe_seconds not in (60,300): raise ValueError("Somente M1 e M5.")
-        if not 10<=count<=1000: raise ValueError("count deve ficar entre 10 e 1000.")
-        if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo não encontrado: {symbol}")
-        raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.client.get_server_timestamp()))
-        return [{"timestamp":c.get("from",c.get("timestamp")),"open":c.get("open"),"high":c.get("max",c.get("high")),"low":c.get("min",c.get("low")),"close":c.get("close"),"volume":c.get("volume"),"raw":c} for c in (raw or []) if isinstance(c,dict)]
+        with self.api_lock:
+            self._require_connection()
+            if timeframe_seconds not in (60,300): raise ValueError("Somente M1 e M5.")
+            if not 10<=count<=1000: raise ValueError("count deve ficar entre 10 e 1000.")
+            if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo não encontrado: {symbol}")
+            raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.client.get_server_timestamp()))
+            return [{"timestamp":c.get("from",c.get("timestamp")),"open":c.get("open"),"high":c.get("max",c.get("high")),"low":c.get("min",c.get("low")),"close":c.get("close"),"volume":c.get("volume"),"raw":c} for c in (raw or []) if isinstance(c,dict)]
     def get_payouts(self):
-        self._require_connection()
-        raw=self.client.get_all_profit()
-        result={}
-        for symbol,types in (raw.items() if isinstance(raw,dict) else []):
-            if not isinstance(types,dict): continue
-            result[str(symbol)]={}
-            for typ,value in types.items():
-                try:
-                    n=float(value); result[str(symbol)][str(typ)]=n*100 if n<=1 else n
-                except (TypeError,ValueError): pass
-        return result
+        with self.api_lock:
+            self._require_connection()
+            raw=self.client.get_all_profit()
+            result={}
+            for symbol,types in (raw.items() if isinstance(raw,dict) else []):
+                if not isinstance(types,dict): continue
+                result[str(symbol)]={}
+                for typ,value in types.items():
+                    try:
+                        n=float(value); result[str(symbol)][str(typ)]=n*100 if n<=1 else n
+                    except (TypeError,ValueError): pass
+            return result
     def get_open_assets(self,minimum_payout_percent=85.0,maximum_payout_percent=90.0):
         """Retorna ativos somente pelo payout BINÁRIO, nunca pelo payout de Blitz/Turbo."""
         minimum=float(minimum_payout_percent)
