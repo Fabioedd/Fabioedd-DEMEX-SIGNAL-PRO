@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
-from strategies.my_strategy import get_intrabar_signal, get_signal
+from strategies.my_strategy import get_intrabar_signal, get_signal, backtest_strategy
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from entry_timing import (
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 300
-MAX_PENDING_SIGNALS = 3
+MAX_PENDING_SIGNALS = 2
 ENTRY_CONFIRMATION_SECONDS = 5.0
 _scan_pass_number = 0
 
@@ -74,7 +74,7 @@ def get_market_assets(connector, settings):
     return filter_market_assets(available, "OTC")
 
 
-def scan_once(connector, settings, assets):
+def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS):
     """Detecta pré-sinais na vela M1 atual; nunca envia ordens nesta etapa."""
     global _scan_pass_number
     _scan_pass_number += 1
@@ -109,7 +109,11 @@ def scan_once(connector, settings, assets):
                     "signal_timestamp": candles[-1].get("timestamp"),
                     "close_timestamp": signal_ts + 60,
                     "stage": "PENDING_CLOSE",
+                    "_backtest_candles": candles,
                 })
+                if len(candidates) >= max_candidates:
+                    logging.info("LIMITE DE %d sinais pendentes atingido; pausando a varredura.", max_candidates)
+                    break
         except ConnectionError:
             raise
         except Exception as exc:
@@ -204,9 +208,10 @@ def main():
             initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
         )
 
-        # Guarda no máximo três pré-sinais e só os confirma após o fechamento.
+        # No máximo dois ativos ficam pendentes; com dois, a varredura é pausada.
         pending = {}
         processed = set()
+        preferred_key = None
 
         while not trader.stopped:
             if STOP_FILE.exists():
@@ -235,7 +240,14 @@ def main():
                     next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
 
             try:
-                candidates = scan_once(connector, settings, assets)
+                if len(pending) >= MAX_PENDING_SIGNALS:
+                    logging.info("DOIS ATIVOS PENDENTES: varredura pausada; acompanhando somente os dois sinais.")
+                    candidates = []
+                else:
+                    candidates = scan_once(
+                        connector, settings, assets,
+                        max_candidates=MAX_PENDING_SIGNALS - len(pending)
+                    )
             except ConnectionError as exc:
                 logging.warning("Conexão perdida durante a análise: %s", exc)
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
@@ -259,6 +271,32 @@ def main():
                         candidate["symbol"], candidate["direction"],
                         candidate["signal_timestamp"]
                     )
+
+            # Assim que o segundo sinal entra, compara os dois usando o histórico
+            # de candles_count (250 por configuração), sem alterar a estratégia.
+            if len(pending) == MAX_PENDING_SIGNALS and preferred_key is None:
+                for pending_key, pending_candidate in pending.items():
+                    stats = backtest_strategy(
+                        pending_candidate.pop("_backtest_candles", []), settings
+                    )
+                    pending_candidate["backtest"] = stats
+                    logging.info(
+                        "BACKTEST %s: %d sinais | %d WIN | %d LOSS | %d TIE | assertividade %.2f%%",
+                        pending_candidate["symbol"], stats["signals"], stats["wins"],
+                        stats["losses"], stats["ties"], stats["accuracy"]
+                    )
+                preferred_key = max(
+                    pending,
+                    key=lambda item: (
+                        pending[item].get("backtest", {}).get("accuracy", 0.0),
+                        -normalize_timestamp(pending[item].get("close_timestamp") or 0)
+                    )
+                )
+                logging.info(
+                    "PREFERÊNCIA PELO BACKTEST: %s | assertividade %.2f%%",
+                    pending[preferred_key]["symbol"],
+                    pending[preferred_key].get("backtest", {}).get("accuracy", 0.0)
+                )
 
             try:
                 server_now = normalize_timestamp(connector.get_server_timestamp())
@@ -330,18 +368,30 @@ def main():
 
                 ready.append((close_ts, key, confirmed))
 
-            if ready:
-                ready.sort(key=lambda item: item[0])
-                _, selected_key, candidate = ready[0]
-                pending.pop(selected_key, None)
-                processed.add(selected_key)
+            # Se o ativo preferido ainda está aguardando seu fechamento, não
+            # antecipamos a entrada no segundo. Se o preferido for descartado,
+            # o segundo passa a ser a alternativa, desde que sua janela siga válida.
+            if preferred_key not in pending:
+                preferred_key = None
+                if pending:
+                    preferred_key = max(
+                        pending,
+                        key=lambda item: pending[item].get("backtest", {}).get("accuracy", 0.0)
+                    )
+            ready_by_key = {item[1]: item for item in ready}
+            if preferred_key in ready_by_key:
+                _, selected_key, candidate = ready_by_key[preferred_key]
                 logging.info(
-                    "ENTRADA AUTORIZADA: %s %s | vela fechada | até 5 segundos após o fechamento.",
-                    candidate["symbol"], candidate["direction"]
+                    "ENTRADA AUTORIZADA PELO BACKTEST: %s %s | assertividade histórica %.2f%%.",
+                    candidate["symbol"], candidate["direction"],
+                    candidate.get("backtest", {}).get("accuracy", 0.0)
                 )
-                for _, other_key, _ in ready[1:]:
+                for other_key in list(pending):
+                    if other_key != selected_key:
+                        processed.add(other_key)
                     pending.pop(other_key, None)
-                    processed.add(other_key)
+                processed.add(selected_key)
+                preferred_key = None
 
                 try:
                     if STOP_FILE.exists():
@@ -394,7 +444,9 @@ def main():
                     logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
                     trader.stopped = True
             else:
-                time.sleep(scan_delay(settings))
+                # Enquanto há pendências, acompanha os candles sem iniciar outra
+                # varredura completa. A varredura normal continua em 2 segundos.
+                time.sleep(0.25 if pending else scan_delay(settings))
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
