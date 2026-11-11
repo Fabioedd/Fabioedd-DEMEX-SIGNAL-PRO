@@ -168,11 +168,11 @@ def wait_for_closed_confirmation(connector, settings, candidate, deadline):
     """Espera a corretora publicar a vela fechada e confirma o mesmo sinal."""
     while not STOP_FILE.exists():
         now = normalize_timestamp(connector.get_server_timestamp())
+        if now > deadline:
+            return False
         if now >= candidate_close_timestamp(candidate):
             if verify_closed(connector, settings, candidate):
                 return True
-        if now > deadline:
-            return False
         time.sleep(0.10)
     return False
 
