@@ -1,8 +1,8 @@
 {
   "market_mode": "OTC",
   "trade_type": "binary",
-  "timeframe": "M5",
-  "expiry_minutes": 5,
+  "timeframe": "M1",
+  "expiry_minutes": 1,
   "minimum_payout_percent": 87,
   "minimum_confidence": 70,
   "scan_interval_seconds": 2,
