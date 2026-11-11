@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(mess
 # Sinal de parada solicitado pelo comando demex.sh parar.
 STOP_FILE = Path(".demex_stop")
 _priority_symbols = []
+_scan_cycle = 0
 
 
 def scan_delay(settings):
@@ -150,7 +151,8 @@ def signal_still_present_intrabar(connector, settings, candidate):
     return True
 
 def scan_once(connector,settings):
-    global _priority_symbols
+    global _priority_symbols, _scan_cycle
+    _scan_cycle += 1
     tf=settings.get("timeframe","M1").upper()
     if tf != "M1": raise ValueError("Este teste do DEMEX está limitado ao timeframe M1.")
     seconds=60
@@ -163,6 +165,11 @@ def scan_once(connector,settings):
     assets=[a for a in assets if market_matches(a["symbol"],settings.get("market_mode","OTC"))]
     logging.info("Ativos com payout >= %.1f%% no filtro %s: %d",min_payout,settings.get("market_mode"),len(assets))
     priority_rank={symbol:index for index,symbol in enumerate(_priority_symbols)}
+    if _priority_symbols and _scan_cycle % 10 != 0:
+        priority_assets=[a for a in assets if a["symbol"] in priority_rank]
+        if priority_assets:
+            assets=priority_assets
+            logging.info("Monitoramento prioritário: acompanhando %d ativo(s) com pré-sinal.",len(assets))
     assets.sort(key=lambda item: priority_rank.get(item["symbol"],len(priority_rank)+1))
     candidates=[]
     pre_signals=[]
@@ -177,7 +184,10 @@ def scan_once(connector,settings):
             # O sinal e a entrada pertencem à vela M1 ainda em formação.
             signal_ts=candles[-1].get("timestamp")
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
-            candidates.append(candidate)
+            # Não continuar varrendo: revalidar e tentar a entrada imediatamente na vela do sinal.
+            _priority_symbols=list(dict.fromkeys([asset["symbol"]]+[item["symbol"] for item in pre_signals]))
+            logging.info("CONFLUÊNCIA INTRABAR %s em %s; interrompendo varredura para validar a entrada na mesma vela.",result["direction"],asset["symbol"])
+            return [candidate]
         except ConnectionError:
             raise
         except Exception as exc: logging.warning("Falha ao analisar %s: %s",asset["symbol"],exc)
@@ -188,7 +198,7 @@ def scan_once(connector,settings):
         logging.info("PRÉ-SINAIS encontrados: %d | Prioridade: %s",len(pre_signals),preview)
     else:
         logging.info("Nenhum pré-sinal ativo nesta varredura.")
-    # Nesta etapa, apenas sinais em candle fechado continuam elegíveis para execução.
+    # Sem confluência confirmada, conservar a fila de pré-sinais para o próximo ciclo.
     candidates.sort(key=lambda item: (item["confidence"], item["payout_percent"]), reverse=True)
     return candidates
 
