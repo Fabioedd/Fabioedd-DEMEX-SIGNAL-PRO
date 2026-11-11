@@ -18,7 +18,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
 - Stop da sessão: -R$ 15,00; take da sessão: +R$ 30,00.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
-- Payout exigido: mínimo de 84% no contrato binário. Antes de liberar um ativo, o DEMEX testa os últimos 100 candles M1 e exige pelo menos 5 operações históricas com taxa de acerto estritamente acima de 70%. A lista é atualizada a cada 30 minutos sem interromper as varreduras. Uma ordem por sinal/vela, uma operação em andamento por vez.
+- Payout exigido: mínimo de 84% no contrato binário. Antes de liberar um ativo, o DEMEX testa os últimos 100 candles M1 e exige pelo menos 1 operação decisiva e taxa de acerto estritamente acima de 70%; não há quantidade mínima de operações históricas. A lista é atualizada a cada 30 minutos. Cada varredura completa substitui a lista anterior, inclusive por uma lista vazia; uma varredura interrompida preserva a lista anterior. Uma ordem por sinal/vela, uma operação em andamento por vez.
 
 ## Trava de segurança
 
@@ -49,3 +49,8 @@ Inicie com `python main.py`. A execução automática está habilitada em `setti
 - Os testes de SCRIPT AHORA verificam a tradução das condições de compra/venda e a reconstrução da M15 a partir de quinze candles M1.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
+
+
+## Atualização automática no Termux
+
+O script `demex-auto-update.sh` consulta a branch `main` do GitHub a cada 60 segundos. Ele só aplica atualizações quando o robô está parado, a branch local é `main`, o histórico permite avanço rápido e não há alterações locais em arquivos rastreados. Arquivos locais não rastreados, como `.env`, são preservados. Se dependências mudarem, instala `requirements.txt`; depois valida a sintaxe e executa os testes. Se a validação falhar, reverte o código para o commit anterior. O atualizador nunca inicia, para ou reinicia o robô. Consulte o status com `bash ~/.demex-auto-update.sh status`.
