@@ -13,6 +13,10 @@ class DemoTrader:
         self.stop=money(cfg["stop_loss_brl"])
         self.take=money(cfg["take_profit_brl"])
         self.net=Decimal("0.00")
+        self.total_entries=0
+        self.wins=0
+        self.losses=0
+        self.ties=0
         self.next_entry=self.base
         self.soros_step=0
         self.last_signal_key=None
@@ -49,6 +53,12 @@ class DemoTrader:
                     log.warning("Conexão caiu aguardando resultado da ordem %s; reconectando para consultar a mesma ordem.",order_id)
                     self.connector.reconnect_forever()
             pnl=money(pnl_raw); self.net=money(self.net+pnl)
+            self.total_entries += 1
+            if result == "WIN": self.wins += 1
+            elif result == "LOSS": self.losses += 1
+            else: self.ties += 1
+            decisive = self.wins + self.losses
+            win_rate = (100.0 * self.wins / decisive) if decisive else 0.0
             # Soros nível 1: apenas uma recuperação após WIN; depois reinicia.
             if result=="WIN" and self.soros_step==0:
                 self.next_entry=money(self.base+pnl); self.soros_step=1
@@ -65,7 +75,8 @@ class DemoTrader:
             summary={"order_id":order_id,"symbol":signal["symbol"],"direction":signal["direction"],
                      "entry":float(amount),"expiry_minutes":self.expiry,"result":result,
                      "pnl":float(pnl),"session_net":float(self.net),"next_entry":float(self.next_entry),
-                     "stopped":self.stopped,"stop_reason":reason}
+                     "stopped":self.stopped,"stop_reason":reason,"total_entries":self.total_entries,
+                     "wins":self.wins,"losses":self.losses,"ties":self.ties,"win_rate":round(win_rate,2)}
             log.info("RESULTADO %s | P&L R$ %.2f | acumulado R$ %.2f | próxima entrada R$ %.2f",
                      result,pnl,self.net,self.next_entry)
             if self.stopped: log.warning("ROBÔ PARADO: %s",reason)

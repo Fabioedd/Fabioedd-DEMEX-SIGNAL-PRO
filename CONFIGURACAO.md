@@ -1,12 +1,16 @@
-# Configuração do DEMEX Signal Scanner
+# Configuração do DEMEX Signal PRO
 
-Edite `settings.json` para escolher OTC/Mercado aberto, M1/M5, expiração, payout mínimo, confiança mínima, padrões e indicadores.
+O `settings.json` controla o scanner e o robô automático PRACTICE.
 
-- **Payout mínimo**: só considera ativos cujo payout retornado pela biblioteca seja >= 80%. O payout é o valor informado pelo feed no momento da consulta e pode mudar.
-- **Confiança**: é a concordância/confluência entre regras selecionadas, não é probabilidade estatística de vitória.
-- **Sinais**: somente alertas informativos; não há execução de ordens.
-- **Ativos abertos**: a biblioteca de terceiros não garante status oficial de negociação. O scanner usa a lista de ativos e payout disponível; indisponibilidade ou ausência de payout exclui o ativo.
+- **Mercado:** `market_mode` aceita OTC ou mercado aberto.
+- **Payout:** `minimum_payout_percent` define o mínimo (padrão 84%) e `maximum_payout_percent` o teto (padrão 100%). Somente payout da modalidade binária é considerado; Blitz/Turbo não libera ativo.
+- **Backtest:** `backtest_candles` define o histórico M1 (100 candles) e `backtest_min_trades` exige ao menos 5 operações históricas decisivas. O ativo só é aprovado com taxa estritamente maior que 70%; 70% exatos são bloqueados. Empates não entram no cálculo da taxa.
+- **Atualização:** a lista de ativos aprovados é recalculada na inicialização e a cada 30 minutos, enquanto o scanner continua trabalhando entre as atualizações.
+- **Entrada:** o sinal é calculado na vela M1 fechada; a entrada ocorre somente nos primeiros 5 segundos da vela imediatamente seguinte, com expiração de 1 minuto.
+- **Execução:** somente opções binárias em conta PRACTICE/DEMO, com confirmação dupla da conta. A conta REAL é bloqueada.
+
+A taxa histórica é apenas um filtro estatístico sobre uma amostra curta; não representa probabilidade garantida de vitória e não garante lucro. Faça a primeira validação observando a conta PRACTICE.
 
 ## Script personalizado
 
-Defina `strategy_mode` como `custom_script` e crie `strategies/my_strategy.py` com uma função `get_signal(candles, config)` que devolva `CALL`, `PUT` ou `None`. Só use scripts seus e confiáveis: scripts Python executam código no aparelho/servidor onde rodam.
+O modo `custom_script` usa `strategies/my_strategy.py`. O script atual é SCRIPT AHORA; preserve suas regras se for alterá-lo. Scripts Python executam código no aparelho onde rodam.

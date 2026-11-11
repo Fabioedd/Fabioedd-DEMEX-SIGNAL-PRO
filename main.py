@@ -1,11 +1,12 @@
 """DEMEX automatic signal trader — PRACTICE/DEMO only."""
-import json, logging, subprocess, time
+import json, logging, subprocess, time, threading
 from pathlib import Path
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
 from strategies.my_strategy import get_pre_signal
 from trade_manager import DemoTrader
+from backtest_filter import evaluate_backtest
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
 
@@ -13,6 +14,9 @@ logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(mess
 STOP_FILE = Path(".demex_stop")
 _priority_symbols = []
 _scan_cycle = 0
+_approved_assets = []
+_approved_lock = threading.RLock()
+_refresh_stop = threading.Event()
 
 
 def scan_delay(settings):
@@ -40,7 +44,7 @@ def signal_is_in_next_candle(connector, signal):
         return False
     try:
         signal_ts=float(raw_ts)
-        server_ts=float(connector.client.get_server_timestamp())
+        server_ts=float(connector.get_server_timestamp())
     except (TypeError,ValueError,AttributeError) as exc:
         logging.error("Não foi possível validar o horário do sinal: %s",exc)
         raise RuntimeError("Horário do servidor/candle inválido; entrada bloqueada.") from exc
@@ -116,6 +120,56 @@ def signal_still_present(connector, settings, candidate):
 
 
 
+
+def refresh_approved_assets(connector, settings):
+    """Backtesta os ultimos 100 candles M1 dos ativos com payout binario >=84%."""
+    global _approved_assets
+    minimum_trades = int(settings.get("backtest_min_trades", 5))
+    market_mode = settings.get("market_mode", "OTC")
+    min_payout = float(settings.get("minimum_payout_percent", 84))
+    max_payout = float(settings.get("maximum_payout_percent", 100))
+    assets = connector.get_open_assets(min_payout, max_payout)
+    assets = [a for a in assets if market_matches(a["symbol"], market_mode)]
+    approved = []
+    logging.info("BACKTEST: avaliando %d ativos com payout binario entre %.1f%% e %.1f%%; janela de 100 candles M1.",
+                 len(assets), min_payout, max_payout)
+    for index, asset in enumerate(assets, 1):
+        if _refresh_stop.is_set():
+            break
+        try:
+            candles = connector.get_candles(
+                asset["symbol"], 60, int(settings.get("backtest_candles", 100)) + 1
+            )
+            result = evaluate_backtest(candles, minimum_trades)
+            logging.info("BACKTEST %d/%d | %s | payout %.1f%% | sinais %d | WIN %d | LOSS %d | acerto %.2f%% | %s",
+                         index, len(assets), asset["symbol"], asset["payout_percent"],
+                         result["trades"], result["wins"], result["losses"],
+                         result["win_rate"], result["reason"])
+            if result["approved"]:
+                approved.append({**asset, "backtest": result})
+        except ConnectionError:
+            raise
+        except Exception as exc:
+            logging.warning("BACKTEST ignorou %s: %s", asset["symbol"], exc)
+    approved.sort(key=lambda a: (a["backtest"]["win_rate"],
+                                 a["backtest"]["trades"],
+                                 a["payout_percent"]), reverse=True)
+    with _approved_lock:
+        _approved_assets = approved
+    logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados (minimo %d operacoes historicas e acerto >70%%).",
+                 len(approved), len(assets), minimum_trades)
+    return approved
+
+
+def refresh_worker(connector, settings):
+    """Atualiza a lista aprovada a cada 30 minutos sem parar o loop de sinais."""
+    while not _refresh_stop.wait(1800):
+        try:
+            refresh_approved_assets(connector, settings)
+        except Exception as exc:
+            logging.exception("Falha na atualizacao do backtest; mantendo a ultima lista aprovada: %s", exc)
+
+
 def scan_once(connector,settings):
     global _priority_symbols, _scan_cycle
     _scan_cycle += 1
@@ -127,13 +181,14 @@ def scan_once(connector,settings):
     expiry=1
     settings["timeframe"]="M1"
     settings["expiry_minutes"]=1
-    min_payout=87.0
-    max_payout=87.0
     settings["minimum_confidence"]=float(settings.get("minimum_confidence",70))
-    assets=connector.get_open_assets(min_payout,max_payout)
-    assets=[a for a in assets if market_matches(a["symbol"],settings.get("market_mode","OTC"))]
-    logging.info("Filtro rígido de payout: somente ativos com payout EXATAMENTE %.0f%% (%s). Ativos com qualquer outro payout são ignorados.",
-                 min_payout,settings.get("market_mode"))
+    with _approved_lock:
+        assets=list(_approved_assets)
+    if not assets:
+        logging.info("Nenhum ativo aprovado no backtest atual. Aguardando a proxima atualizacao.")
+        return []
+    logging.info("Ativos liberados pelo backtest: %d | payout binario >=84%% | acerto historico >70%%.",
+                 len(assets))
     priority_rank={symbol:index for index,symbol in enumerate(_priority_symbols)}
     # Todos os ativos dentro da faixa continuam sendo observados; pré-sinais só alteram a ordem.
     assets.sort(key=lambda item: priority_rank.get(item["symbol"],len(priority_rank)+1))
@@ -168,6 +223,7 @@ def scan_once(connector,settings):
     return candidates
 
 def main():
+    refresh_thread=None
     load_dotenv()
     settings=load_settings()
     trading=settings.get("trading",{})
@@ -188,7 +244,11 @@ def main():
         if connector.client.get_balance_mode()!="PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
         trader=DemoTrader(connector,settings)
-        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | SCRIPT AHORA (níveis M15 anteriores + candles M1) | payout BINÁRIO EXATAMENTE 87%.")
+        print("Iniciando backtest dos ultimos 100 candles M1 em todos os ativos com payout binario >=84%...")
+        refresh_approved_assets(connector, settings)
+        refresh_thread=threading.Thread(target=refresh_worker,args=(connector,settings),daemon=True)
+        refresh_thread.start()
+        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | SCRIPT AHORA | payout binário >=84% | backtest >70% a cada 30 minutos.")
         print("Entrada inicial R$ %.2f | Soros 1 | Stop R$ %.2f | Take R$ %.2f" %
               (trader.base,trader.stop,trader.take))
         while not trader.stopped:
@@ -231,8 +291,10 @@ def main():
                         summary=trader.execute_and_settle(candidate)
                         if summary:
                             order_accepted_or_settled=True
-                            print("OPERAÇÃO {result} | Entrada R$ {entry:.2f} | Resultado R$ {pnl:+.2f} | "
-                                  "Acumulado R$ {session_net:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
+                            print("PLACAR | Entradas {total_entries} | WIN {wins} | LOSS {losses} | TIE {ties} | "
+                                  "Aproveitamento {win_rate:.2f}% | P&L R$ {session_net:+.2f}".format(**summary))
+                            print("OPERAÇÃO {result} | {symbol} {direction} | Entrada R$ {entry:.2f} | "
+                                  "Resultado R$ {pnl:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
                             if summary["stopped"]: print("ROBÔ ENCERRADO: "+str(summary["stop_reason"]))
                             break
                         # Sinal duplicado ou operação não iniciada: não insistir nele.
@@ -268,6 +330,9 @@ def main():
     except KeyboardInterrupt:
         print("\\nRobô encerrado pelo usuário.")
     finally:
+        _refresh_stop.set()
+        if refresh_thread is not None and refresh_thread.is_alive():
+            refresh_thread.join(timeout=5)
         connector.close()
 
 if __name__=="__main__": main()
