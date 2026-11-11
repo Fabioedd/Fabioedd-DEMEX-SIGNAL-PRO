@@ -116,41 +116,6 @@ def signal_still_present(connector, settings, candidate):
 
 
 
-def signal_is_in_signal_candle(connector, signal):
-    """Autoriza somente nos últimos 3 a 1 segundos da própria vela do sinal."""
-    candle_ts=normalize_timestamp(signal.get("signal_timestamp"))
-    if candle_ts is None:
-        logging.warning("Sinal %s descartado: timestamp da vela atual ausente.",signal.get("symbol","?"))
-        return False
-    server_ts=normalize_timestamp(connector.client.get_server_timestamp())
-    if server_ts is None:
-        return False
-    remaining=(candle_ts+60.0)-server_ts
-    if not (1.0 <= remaining <= 3.0):
-        logging.info("Sinal %s descartado: fora da janela da própria vela (faltam %.3fs).",
-                     signal.get("symbol","?"),remaining)
-        return False
-    return True
-
-
-def signal_still_present_intrabar(connector, settings, candidate):
-    """Reconsulta a vela em formação e exige a mesma confluência e direção."""
-    candles=connector.get_candles(candidate["symbol"],60,int(settings.get("candles_count",120)))
-    if len(candles)<2:
-        return False
-    current_ts=normalize_timestamp(candles[-1].get("timestamp"))
-    original_ts=normalize_timestamp(candidate.get("signal_timestamp"))
-    if current_ts is None or original_ts is None or current_ts != original_ts:
-        logging.info("Sinal %s descartado: a vela do sinal já mudou.",candidate["symbol"])
-        return False
-    current=get_intrabar_signal(candles,settings)
-    if not current or current.get("direction") != candidate.get("direction"):
-        logging.info("Sinal %s descartado: confluência intrabar não permanece confirmada.",candidate["symbol"])
-        return False
-    candidate.update(current)
-    candidate["signal_timestamp"]=candles[-1].get("timestamp")
-    return True
-
 def scan_once(connector,settings):
     global _priority_symbols, _scan_cycle
     _scan_cycle += 1
