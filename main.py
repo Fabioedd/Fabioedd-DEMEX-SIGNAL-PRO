@@ -257,6 +257,7 @@ def main():
                 try:
                     assets = get_market_assets(connector, settings)
                     logging.info("LISTA OTC ATUALIZADA: %d ativos disponíveis para análise.", len(assets))
+                    next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida durante a atualização dos ativos OTC: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
@@ -266,7 +267,7 @@ def main():
                     # Falha na leitura: não usa uma lista possivelmente desatualizada.
                     logging.error("Não foi possível confirmar a disponibilidade OTC; análise pausada: %s", exc)
                     assets = []
-                next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
+                    next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
             try:
                 candidates = scan_once(connector, settings, assets)
             except ConnectionError as exc:
