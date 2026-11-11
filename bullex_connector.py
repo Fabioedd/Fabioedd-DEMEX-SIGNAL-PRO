@@ -90,11 +90,18 @@ class BullexReadOnlyConnector:
                     n=float(value); result[str(symbol)][str(typ)]=n*100 if n<=1 else n
                 except (TypeError,ValueError): pass
         return result
-    def get_open_assets(self,minimum_payout_percent=80.0):
+    def get_open_assets(self,minimum_payout_percent=85.0,maximum_payout_percent=90.0):
+        """Retorna apenas ativos cujo melhor payout esteja no intervalo inclusivo configurado."""
+        minimum=float(minimum_payout_percent)
+        maximum=float(maximum_payout_percent)
+        if minimum > maximum:
+            raise ValueError("Payout mínimo não pode ser maior que o máximo.")
         payouts=self.get_payouts(); available=[]
         for asset in self.get_assets():
-            rates=payouts.get(asset["symbol"],{}); best=max(rates.values(),default=0.0)
-            if best>minimum_payout_percent: available.append({**asset,"payout_percent":round(best,2),"payout_types":rates})
+            rates=payouts.get(asset["symbol"],{})
+            best=max(rates.values(),default=0.0)
+            if minimum <= best <= maximum:
+                available.append({**asset,"payout_percent":round(best,2),"payout_types":rates})
         return available
     def place_practice_order(self,symbol,direction,amount,expiry_minutes):
         self._require_connection()
