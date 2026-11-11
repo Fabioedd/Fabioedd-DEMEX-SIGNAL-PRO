@@ -241,6 +241,8 @@ def main():
                     logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
+                    pending.clear()
+                    preferred_key = None
                     next_asset_refresh = 0.0
                 except Exception as exc:
                     logging.error(
@@ -263,6 +265,8 @@ def main():
                 logging.warning("Conexão perdida durante a análise: %s", exc)
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
                 assets = []
+                pending.clear()
+                preferred_key = None
                 next_asset_refresh = 0.0
                 continue
 
