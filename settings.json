@@ -6,6 +6,7 @@
   "minimum_payout_percent": 84,
   "minimum_confidence": 70,
   "scan_interval_seconds": 2,
+  "entry_confirmation_window_seconds": 10,
   "candles_count": 250,
   "strategy_mode": "custom_script",
   "enabled_patterns": [
