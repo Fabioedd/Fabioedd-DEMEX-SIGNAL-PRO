@@ -3,7 +3,8 @@
 # Nao inicia, para ou reinicia o robô DEMEX.
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+ROOT="${DEMEX_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 cd "$ROOT"
 REMOTE="${DEMEX_GIT_REMOTE:-origin}"
 MAIN_BRANCH="${DEMEX_MAIN_BRANCH:-main}"
@@ -127,6 +128,15 @@ push_pending_agent_commits() {
   log "Tentando reenviar commits locais pendentes para $sync_branch."
   git push "$REMOTE" "HEAD:refs/heads/$sync_branch"
 }
+refresh_agent_copy() {
+  if [ -f "$ROOT/demex-agent.sh" ] && [ "$SCRIPT_PATH" != "$ROOT/demex-agent.sh" ]; then
+    cp "$ROOT/demex-agent.sh" "$ROOT/.demex-agent.sh.new"
+    chmod 700 "$ROOT/.demex-agent.sh.new"
+    mv "$ROOT/.demex-agent.sh.new" "$ROOT/.demex-agent.sh"
+    log "Copia local do agente atualizada; a nova versao sera usada no proximo reinicio do agente."
+  fi
+}
+
 test_remote_candidate() {
   local tmp
   tmp="$(mktemp -d "$ROOT/.demex-agent-test.XXXXXX")"
@@ -185,6 +195,7 @@ sync_once() {
 
   backup_incoming_changes
   git merge --ff-only "refs/remotes/$REMOTE/$MAIN_BRANCH"
+  refresh_agent_copy
   log "Atualizacao instalada localmente. O processo do robô nao foi reiniciado."
 }
 
@@ -217,7 +228,7 @@ case "${1:-}" in
       exit 0
     fi
     rm -f "$PID_FILE"
-    nohup bash "$ROOT/demex-agent.sh" _run >> "$LOG_FILE" 2>&1 &
+    nohup bash "$SCRIPT_PATH" _run >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 1
     if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
