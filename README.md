@@ -7,13 +7,13 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Estratégia personalizada: `strategies/my_strategy.py` (`get_signal`, `get_pre_signal`, `get_intrabar_signal`).
 - Estratégia atual: cruzamento GO 2024 (SMA 1/34 + WMA 5), filtrado por `buffer1` acima/abaixo de zero, RSI 14 acima/abaixo de 50 e preço acima/abaixo da EMA 21.
 - Fonte de preço do GO: HLC4 como hipótese para o seletor Lua `inputs.titles = 5`; confirme se corresponde à seleção da plataforma.
-- Universo de ativos: somente payout entre 85% e 90%, inclusive. Ativos fora dessa faixa não entram na análise de candles. Ativos com pré-sinal ficam no início da fila, mas os demais ativos dentro da faixa continuam sendo monitorados.
-- Timeframe configurado: M1; expiração: 1 minuto.
+- Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
+- Timeframe configurado: M5 (candles de 300 segundos); expiração: 5 minutos, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
 - Stop da sessão: -R$ 15,00; take da sessão: +R$ 30,00.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
-- Uma ordem por sinal/vela, uma operação em andamento por vez.
+- Payout exigido: exatamente 87% no contrato binário. Uma ordem por sinal/vela, uma operação em andamento por vez.
 
 ## Trava de segurança
 
@@ -36,7 +36,7 @@ BULLEX_PASSWORD=sua_senha
 BULLEX_ACCOUNT_TYPE=PRACTICE
 ```
 
-Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia ordens após conexão e confirmação da conta PRACTICE.
+Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia ordens binárias após conexão e confirmação da conta PRACTICE.
 
 ## Testes e limitações
 
