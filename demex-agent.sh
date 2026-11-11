@@ -34,7 +34,18 @@ require_repo() {
     return 1
   }
 }
-working_tree_clean() { [ -z "$(git status --porcelain)" ]; }
+working_tree_clean() {
+  git diff --quiet && git diff --cached --quiet || return 1
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      .env|.venv/*|__pycache__/*|vendor/*|*.log|*.pid|.demex_stop|*.backup*|*.bak*|"-la .envpython main.py .demex_stop demex_teste.pid"|".envpython main.py") ;;
+      *) log "Arquivo local nao rastreado bloqueia atualizacao: $path"; return 1 ;;
+    esac
+  done < <(git ls-files --others --exclude-standard)
+  return 0
+}
 
 backup_incoming_changes() {
   local changed=()
