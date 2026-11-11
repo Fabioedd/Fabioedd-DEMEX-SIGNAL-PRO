@@ -74,7 +74,7 @@ def get_market_assets(connector, settings):
     return filter_market_assets(available, "OTC")
 
 
-def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS):
+def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, excluded_keys=None):
     """Detecta pré-sinais na vela M1 atual; nunca envia ordens nesta etapa."""
     global _scan_pass_number
     _scan_pass_number += 1
@@ -84,7 +84,10 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS):
         raise ValueError("Este robô está bloqueado para operar somente opções BINÁRIAS.")
 
     candidates = []
+    analyzed_count = 0
+    excluded_keys = excluded_keys or set()
     for asset in assets:
+        analyzed_count += 1
         try:
             candles = connector.get_candles(
                 asset["symbol"], 60, int(settings.get("candles_count", 250))
@@ -101,7 +104,7 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS):
                 continue
             seconds_remaining = signal_ts + 60 - server_ts
             if is_candle_still_open(seconds_remaining):
-                candidates.append({
+                candidate = {
                     **asset,
                     **provisional,
                     "timeframe": "M1",
@@ -110,7 +113,14 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS):
                     "close_timestamp": signal_ts + 60,
                     "stage": "PENDING_CLOSE",
                     "_backtest_candles": candles,
-                })
+                }
+                key = "{}|{}|{}".format(
+                    candidate.get("symbol"), candidate.get("direction"),
+                    candidate.get("signal_timestamp")
+                )
+                if key in excluded_keys:
+                    continue
+                candidates.append(candidate)
                 if len(candidates) >= max_candidates:
                     logging.info("LIMITE DE %d sinais pendentes atingido; pausando a varredura.", max_candidates)
                     break
@@ -121,7 +131,7 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS):
 
     logging.info(
         "VARREDURA %d: %d ativos analisados; %d pré-sinais encontrados.",
-        _scan_pass_number, len(assets), len(candidates)
+        _scan_pass_number, analyzed_count, len(candidates)
     )
     return candidates
 
@@ -194,7 +204,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT AHORA RSI EXHAUSTION | RSI({}) | sem payout/backtest/varredura de 30 minutos."
+            "SCRIPT AHORA RSI EXHAUSTION | RSI({}) | backtest histórico para desempate dos dois pendentes | sem filtro de payout."
             .format(settings.get("rsi_period", 14))
         )
         print(
@@ -246,7 +256,8 @@ def main():
                 else:
                     candidates = scan_once(
                         connector, settings, assets,
-                        max_candidates=MAX_PENDING_SIGNALS - len(pending)
+                        max_candidates=MAX_PENDING_SIGNALS - len(pending),
+                        excluded_keys=set(pending)
                     )
             except ConnectionError as exc:
                 logging.warning("Conexão perdida durante a análise: %s", exc)
