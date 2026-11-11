@@ -120,23 +120,25 @@ class BullexReadOnlyConnector:
                 })
         return available
     def place_practice_order(self,symbol,direction,amount,expiry_minutes):
-        self._require_connection()
-        if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
-            raise PermissionError("ORDEM BLOQUEADA: a corretora não confirmou conta PRACTICE/DEMO.")
-        if direction not in {"CALL","PUT"}: raise ValueError("Direção inválida.")
-        if expiry_minutes not in {1,5}: raise ValueError("Expiração permitida: 1 ou 5 minutos.")
-        if float(amount)<=0: raise ValueError("Valor de entrada inválido.")
-        if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo indisponível: {symbol}")
-        ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
-        if not ok or not order_id: raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
-        return int(order_id)
+        with self.api_lock:
+            self._require_connection()
+            if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
+                raise PermissionError("ORDEM BLOQUEADA: a corretora não confirmou conta PRACTICE/DEMO.")
+            if direction not in {"CALL","PUT"}: raise ValueError("Direção inválida.")
+            if expiry_minutes not in {1,5}: raise ValueError("Expiração permitida: 1 ou 5 minutos.")
+            if float(amount)<=0: raise ValueError("Valor de entrada inválido.")
+            if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo indisponível: {symbol}")
+            ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
+            if not ok or not order_id: raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
+            return int(order_id)
     def wait_practice_result(self,order_id):
-        self._require_connection()
-        if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
-            raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-        state,pnl=self.client.check_win_v4(int(order_id))
-        state=str(state).lower()
-        return ("WIN" if state=="win" else "LOSS" if state=="loose" else "TIE",round(float(pnl),2))
+        with self.api_lock:
+            self._require_connection()
+            if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
+                raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
+            state,pnl=self.client.check_win_v4(int(order_id))
+            state=str(state).lower()
+            return ("WIN" if state=="win" else "LOSS" if state=="loose" else "TIE",round(float(pnl),2))
     def _require_connection(self):
         if not self.connected or not self.client.check_connect():
             self.connected=False
