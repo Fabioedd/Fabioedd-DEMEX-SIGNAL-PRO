@@ -15,7 +15,7 @@ from entry_timing import filter_market_assets, is_candle_still_open, is_intrabar
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 STOP_FILE = Path(".demex_stop")
-ASSET_REFRESH_INTERVAL_SECONDS = 300
+ASSET_REFRESH_INTERVAL_SECONDS = 900
 _scan_pass_number = 0
 
 
