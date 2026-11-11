@@ -42,14 +42,15 @@ class ScriptAhoraTests(unittest.TestCase):
         self.assertEqual(result["direction"], "CALL")
 
     def test_no_signal_when_previous_m15_is_incomplete(self):
-        candles = [
+        incomplete_history = [
+            candle(9600, 9.0, 9.5, 8.5, 9.0),
             self.previous_m15[1],
             self.previous_m15[2],
             candle(10800, 11.0, 12.2, 11.2, 11.8),
             candle(11100, 11.8, 12.0, 11.5, 11.7),
         ]
 
-        self.assertIsNone(get_signal(candles))
+        self.assertIsNone(get_signal(incomplete_history))
 
     def test_intrabar_uses_current_candle(self):
         current = candle(10800, 11.0, 12.2, 11.2, 11.8)
