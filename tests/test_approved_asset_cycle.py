@@ -40,7 +40,7 @@ class ApprovedAssetCycleTests(unittest.TestCase):
             main._approved_assets = self.previous_assets
         main._refresh_stop.clear()
 
-    def test_empty_new_backtest_preserves_last_valid_approved_list(self):
+    def test_empty_new_backtest_replaces_previous_list_with_empty_list(self):
         previous = [{"symbol": "EURUSD-OTC", "payout_percent": 90,
                      "backtest": {"win_rate": 75}}]
         with main._approved_lock:
@@ -57,8 +57,8 @@ class ApprovedAssetCycleTests(unittest.TestCase):
                     "trades": 10, "wins": 6, "losses": 4, "win_rate": 60}
         with patch.object(main, "evaluate_backtest", return_value=rejected):
             active = main.refresh_approved_assets(connector, settings)
-        self.assertEqual(active, previous)
-        self.assertEqual(main._approved_assets, previous)
+        self.assertEqual(active, [])
+        self.assertEqual(main._approved_assets, [])
 
     def test_each_scan_only_visits_the_approved_assets_and_can_repeat(self):
         approved = [
