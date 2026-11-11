@@ -1,0 +1,108 @@
+"""Optional Telegram notifications for DEMEX; uses only the Python standard library."""
+import html
+import json
+import logging
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+
+log = logging.getLogger(__name__)
+
+
+class TelegramNotifier:
+    """Sends concise session and settled-trade updates without affecting trading."""
+
+    API_BASE = "https://api.telegram.org"
+
+    def __init__(self, bot_token="", chat_id="", timeout=8):
+        self.bot_token = (bot_token or "").strip()
+        self.chat_id = (chat_id or "").strip()
+        self.timeout = timeout
+
+    @classmethod
+    def from_env(cls):
+        return cls(os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID"))
+
+    @property
+    def enabled(self):
+        return bool(self.bot_token and self.chat_id)
+
+    def send(self, message):
+        if not self.enabled:
+            return False
+        url = "{}/bot{}/sendMessage".format(self.API_BASE, self.bot_token)
+        payload = json.dumps({
+            "chat_id": self.chat_id,
+            "text": message,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            if not result.get("ok"):
+                log.warning("Telegram recusou uma notificação do DEMEX.")
+                return False
+            return True
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError) as exc:
+            # A falha do Telegram nunca deve interromper nem repetir uma ordem.
+            log.warning("Não foi possível enviar notificação ao Telegram: %s", exc)
+            return False
+
+    def send_session_start(self, account, market, timeframe, expiry_minutes,
+                            assets_count, initial_entry, stop_loss, take_profit):
+        text = (
+            "🟦 <b>DEMEX INICIADO</b>\n"
+            "Conta: <b>{}</b>\nMercado: <b>{}</b>\n"
+            "Período: <b>{}</b> | Expiração: <b>{} min</b>\n"
+            "Ativos monitorados: <b>{}</b>\nEntrada inicial: <b>R$ {:.2f}</b>\n"
+            "Stop Loss: <b>R$ {:.2f}</b> | Take Profit: <b>R$ {:.2f}</b>"
+        ).format(html.escape(str(account)), html.escape(str(market)),
+                 html.escape(str(timeframe)), int(expiry_minutes), int(assets_count),
+                 float(initial_entry), float(stop_loss), float(take_profit))
+        return self.send(text)
+
+    def send_trade_result(self, summary):
+        result = str(summary.get("result", "RESULTADO")).upper()
+        emoji = {"WIN": "🟢", "LOSS": "🔴", "TIE": "🟡"}.get(result, "⚪")
+        symbol = html.escape(str(summary.get("symbol", "—")))
+        direction = html.escape(str(summary.get("direction", "—")))
+        total = int(summary.get("total_entries", 0))
+        wins = int(summary.get("wins", 0))
+        losses = int(summary.get("losses", 0))
+        ties = int(summary.get("ties", 0))
+        pnl = float(summary.get("pnl", 0))
+        net = float(summary.get("session_net", 0))
+        entry = float(summary.get("entry", 0))
+        win_rate = float(summary.get("win_rate", 0))
+        next_entry = float(summary.get("next_entry", 0))
+        text = (
+            "📊 <b>DEMEX — RESULTADO DA OPERAÇÃO</b>\n\n"
+            "Ativo: <b>{}</b>\nDireção: <b>{}</b>\n"
+            "Entrada: <b>R$ {:.2f}</b>\n"
+            "Resultado: {} <b>{}</b> | <b>{:+.2f} BRL</b>\n\n"
+            "📈 <b>PLACAR ATUALIZADO</b>\n"
+            "WIN: <b>{}</b> | LOSS: <b>{}</b> | TIE: <b>{}</b>\n"
+            "Operações: <b>{}</b> | Aproveitamento: <b>{:.2f}%</b>\n"
+            "Resultado desta sessão: <b>{:+.2f} BRL</b>\n"
+            "Próxima entrada: <b>R$ {:.2f}</b>"
+        ).format(symbol, direction, entry, emoji, result, pnl, wins, losses, ties,
+                 total, win_rate, net, next_entry)
+        if summary.get("stopped"):
+            reason = html.escape(str(summary.get("stop_reason") or "Limite da sessão atingido"))
+            text += "\n\n⛔ <b>SESSÃO ENCERRADA:</b> " + reason
+        return self.send(text)
+
+    def send_session_end(self, reason, total_entries, wins, losses, ties, session_net):
+        text = (
+            "⛔ <b>DEMEX — SESSÃO ENCERRADA</b>\n"
+            "Motivo: <b>{}</b>\n"
+            "Operações: <b>{}</b> | WIN: <b>{}</b> | LOSS: <b>{}</b> | TIE: <b>{}</b>\n"
+            "Resultado acumulado: <b>{:+.2f} BRL</b>"
+        ).format(html.escape(str(reason)), int(total_entries), int(wins), int(losses),
+                 int(ties), float(session_net))
+        return self.send(text)
