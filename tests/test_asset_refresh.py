@@ -1,24 +1,17 @@
-import importlib.util
 import sys
 import types
 import unittest
 from unittest.mock import patch
 
-# main imports the broker SDK and dotenv at module load. The refresh tests use
-# a fake connector, so provide import-only stubs when those optional packages
-# are not installed in the lightweight GitHub Actions test environment.
-if importlib.util.find_spec("bullexapi") is None:
-    package = types.ModuleType("bullexapi")
-    package.__path__ = []
-    stable_api = types.ModuleType("bullexapi.stable_api")
-    stable_api.Bullex = object
-    sys.modules.setdefault("bullexapi", package)
-    sys.modules.setdefault("bullexapi.stable_api", stable_api)
-
-if importlib.util.find_spec("dotenv") is None:
-    dotenv = types.ModuleType("dotenv")
-    dotenv.load_dotenv = lambda: None
-    sys.modules.setdefault("dotenv", dotenv)
+# These tests use a fake connector; no live broker SDK or dotenv is needed.
+dotenv = types.ModuleType("dotenv")
+dotenv.load_dotenv = lambda: None
+sys.modules.setdefault("dotenv", dotenv)
+bullexapi = types.ModuleType("bullexapi")
+stable_api = types.ModuleType("bullexapi.stable_api")
+stable_api.Bullex = object
+sys.modules.setdefault("bullexapi", bullexapi)
+sys.modules.setdefault("bullexapi.stable_api", stable_api)
 
 import main
 
