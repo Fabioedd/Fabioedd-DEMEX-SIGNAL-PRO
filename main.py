@@ -260,6 +260,10 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida durante a atualização dos ativos OTC: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
+                    assets = []
+                    next_asset_refresh = 0.0
                     assets = []
                 except Exception as exc:
                     # Falha na leitura: não usa uma lista possivelmente desatualizada.
@@ -271,6 +275,8 @@ def main():
             except ConnectionError as exc:
                 logging.warning("Conexão perdida durante a análise: %s", exc)
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
                 continue
 
             if STOP_FILE.exists():
@@ -303,6 +309,10 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
+                    assets = []
+                    next_asset_refresh = 0.0
                     connection_lost = True
                     break
 
@@ -315,6 +325,8 @@ def main():
             except ConnectionError as exc:
                 logging.warning("Conexão perdida ao consultar horário da corretora: %s", exc)
                 connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
                 continue
             for key, candidate in list(pending.items()):
                 close_ts = candidate_close_timestamp(candidate)
@@ -355,6 +367,10 @@ def main():
                     logging.warning("Conexão perdida ao confirmar pendência %s: %s",
                                     candidate["symbol"], exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
+                    assets = []
+                    next_asset_refresh = 0.0
                     pending.clear()
                     connection_lost = True
                     break
@@ -408,6 +424,10 @@ def main():
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida antes da ordem: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                assets = []
+                next_asset_refresh = 0.0
+                    assets = []
+                    next_asset_refresh = 0.0
                 except RuntimeError as exc:
                     error_text = str(exc).lower()
                     if ("cannot purchase an option (the asset is not available at the moment)" in error_text
