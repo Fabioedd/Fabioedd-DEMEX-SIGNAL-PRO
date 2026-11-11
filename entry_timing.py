@@ -65,3 +65,8 @@ def is_binary_active_open(active, now_timestamp):
         except (TypeError, ValueError):
             continue
     return False
+
+
+def is_intrabar_entry(stage):
+    """Autoriza execução imediata somente para sinal detectado na vela atual em formação."""
+    return str(stage).upper() == "INTRABAR"
