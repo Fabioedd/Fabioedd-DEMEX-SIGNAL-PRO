@@ -287,3 +287,71 @@ def get_pre_signal(candles, config=None):
             "Pré-sinal informativo; não autoriza entrada",
         ],
     }
+
+
+def get_intrabar_signal(candles, config=None):
+    """Confirma confluência na vela M1 ainda aberta; pode mudar até o fechamento."""
+    if not candles or len(candles) < 40:
+        return None
+
+    opens = [float(candle["open"]) for candle in candles]
+    highs = [float(candle["high"]) for candle in candles]
+    lows = [float(candle["low"]) for candle in candles]
+    closes = [float(candle["close"]) for candle in candles]
+    prices = [
+        (high + low + close + close) / 4.0
+        for high, low, close in zip(highs, lows, closes)
+    ]
+    index = len(candles) - 1
+
+    alfa_fast = _ema_series(prices, ALFA_FAST)
+    alfa_slow = _ema_series(prices, ALFA_SLOW)
+    alfa_macd = [
+        fast - slow if fast is not None and slow is not None else None
+        for fast, slow in zip(alfa_fast, alfa_slow)
+    ]
+    alfa_signal = _wma_series(alfa_macd, ALFA_SIGNAL)
+    alfa_rsi = _rsi_series(prices, ALFA_RSI)
+
+    go_fast = _sma_series(prices, GO_FAST)
+    go_slow = _sma_series(prices, GO_SLOW)
+    go_buffer1 = [
+        fast - slow if fast is not None and slow is not None else None
+        for fast, slow in zip(go_fast, go_slow)
+    ]
+    go_buffer2 = _wma_series(go_buffer1, GO_SIGNAL)
+
+    alfa_buy = (
+        _cross_up(alfa_macd, alfa_signal, index)
+        and alfa_rsi[index] is not None and alfa_rsi[index] > 50
+        and closes[index] > opens[index]
+    )
+    alfa_sell = (
+        _cross_down(alfa_macd, alfa_signal, index)
+        and alfa_rsi[index] is not None and alfa_rsi[index] < 50
+        and closes[index] < opens[index]
+    )
+    go_buy = _cross_up(go_buffer1, go_buffer2, index)
+    go_sell = _cross_down(go_buffer1, go_buffer2, index)
+
+    if alfa_buy and go_buy:
+        return {
+            "direction": "CALL", "confidence": 100, "stage": "INTRABAR_CONFIRMED",
+            "reasons": [
+                "DEMEX ALFA: cruzamento de alta na vela em formação",
+                "RSI 11 acima de 50 e candle em formação de alta",
+                "GO 2024: cruzamento de alta na vela em formação",
+                "Confluência intrabar; ainda sujeita a mudança até o fechamento",
+            ],
+        }
+    if alfa_sell and go_sell:
+        return {
+            "direction": "PUT", "confidence": 100, "stage": "INTRABAR_CONFIRMED",
+            "reasons": [
+                "DEMEX ALFA: cruzamento de baixa na vela em formação",
+                "RSI 11 abaixo de 50 e candle em formação de baixa",
+                "GO 2024: cruzamento de baixa na vela em formação",
+                "Confluência intrabar; ainda sujeita a mudança até o fechamento",
+            ],
+        }
+    return None
