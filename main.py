@@ -159,17 +159,15 @@ def scan_once(connector,settings):
     expiry=1
     settings["timeframe"]="M1"
     settings["expiry_minutes"]=1
-    min_payout=float(settings.get("minimum_payout_percent",80))
+    min_payout=float(settings.get("minimum_payout_percent",85))
+    max_payout=float(settings.get("maximum_payout_percent",90))
     settings["minimum_confidence"]=float(settings.get("minimum_confidence",70))
-    assets=connector.get_open_assets(min_payout)
+    assets=connector.get_open_assets(min_payout,max_payout)
     assets=[a for a in assets if market_matches(a["symbol"],settings.get("market_mode","OTC"))]
-    logging.info("Ativos com payout >= %.1f%% no filtro %s: %d",min_payout,settings.get("market_mode"),len(assets))
+    logging.info("Pré-análise concluída: %d ativo(s) no intervalo de payout %.1f%%–%.1f%% (%s). Ativos fora da faixa excluídos.",
+                 len(assets),min_payout,max_payout,settings.get("market_mode"))
     priority_rank={symbol:index for index,symbol in enumerate(_priority_symbols)}
-    if _priority_symbols and _scan_cycle % 10 != 0:
-        priority_assets=[a for a in assets if a["symbol"] in priority_rank]
-        if priority_assets:
-            assets=priority_assets
-            logging.info("Monitoramento prioritário: acompanhando %d ativo(s) com pré-sinal.",len(assets))
+    # Todos os ativos dentro da faixa continuam sendo observados; pré-sinais só alteram a ordem.
     assets.sort(key=lambda item: priority_rank.get(item["symbol"],len(priority_rank)+1))
     candidates=[]
     pre_signals=[]
