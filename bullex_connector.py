@@ -28,13 +28,16 @@ class BullexReadOnlyConnector:
         self.connected=False
         self.account_mode=None
         self.api_lock=threading.RLock()
+        self._active_symbols=set()
     def connect(self):
         status,detail=self.client.connect()
         if not status: return {"connected":False,"reason":str(detail or "connection_failed"),"requires_2fa":detail=="2FA"}
         self.connected=bool(self.client.check_connect())
         if self.connected:
-            try: self.account_mode=self.client.get_balance_mode()
-            except Exception as exc: logger.warning("Falha ao confirmar conta: %s",exc)
+            try:
+                self.account_mode=self.client.get_balance_mode()
+                self._active_symbols=set(self.client.get_all_ACTIVES_OPCODE())
+            except Exception as exc: logger.warning("Falha ao confirmar conta/ativos: %s",exc)
         return {"connected":self.connected,"account_type":self.account_mode or self.config.account_type}
     def reconnect_forever(self, stop_check=None):
         """Reconecta continuamente e só retorna após confirmar a conta PRACTICE."""
@@ -59,6 +62,7 @@ class BullexReadOnlyConnector:
                             raise PermissionError("Reconexão recusada: conta PRACTICE não confirmada.")
                         self.connected=True
                         self.account_mode=mode
+                        self._active_symbols=set(self.client.get_all_ACTIVES_OPCODE())
                         logger.info("Conexão Bullex restabelecida em PRACTICE.")
                         return True
                     self.connected=False
@@ -73,14 +77,19 @@ class BullexReadOnlyConnector:
     def get_assets(self):
         with self.api_lock:
             self._require_connection()
-            return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
-    def get_candles(self,symbol,timeframe_seconds,count=100):
+            mapping=self.client.get_all_ACTIVES_OPCODE()
+            self._active_symbols=set(mapping)
+            return [{"symbol":str(s),"active_id":int(i)} for s,i in mapping.items()]
+    def get_candles(self,symbol,timeframe_seconds,count=100,server_timestamp=None):
         with self.api_lock:
             self._require_connection()
             if timeframe_seconds not in (60,300): raise ValueError("Somente M1 e M5.")
             if not 10<=count<=1000: raise ValueError("count deve ficar entre 10 e 1000.")
-            if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo não encontrado: {symbol}")
-            raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.client.get_server_timestamp()))
+            if not self._active_symbols:
+                self._active_symbols=set(self.client.get_all_ACTIVES_OPCODE())
+            if symbol not in self._active_symbols: raise ValueError(f"Ativo não encontrado: {symbol}")
+            endtime=int(server_timestamp if server_timestamp is not None else self.client.get_server_timestamp())
+            raw=self.client.get_candles(symbol,timeframe_seconds,count,endtime)
             return [{"timestamp":c.get("from",c.get("timestamp")),"open":c.get("open"),"high":c.get("max",c.get("high")),"low":c.get("min",c.get("low")),"close":c.get("close"),"volume":c.get("volume"),"raw":c} for c in (raw or []) if isinstance(c,dict)]
     def get_payouts(self):
         with self.api_lock:
@@ -129,7 +138,9 @@ class BullexReadOnlyConnector:
             if direction not in {"CALL","PUT"}: raise ValueError("Direção inválida.")
             if expiry_minutes not in {1,5}: raise ValueError("Expiração permitida: 1 ou 5 minutos.")
             if float(amount)<=0: raise ValueError("Valor de entrada inválido.")
-            if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo indisponível: {symbol}")
+            if not self._active_symbols:
+                self._active_symbols=set(self.client.get_all_ACTIVES_OPCODE())
+            if symbol not in self._active_symbols: raise ValueError(f"Ativo indisponível: {symbol}")
             ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
             if not ok or not order_id: raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
             return int(order_id)
