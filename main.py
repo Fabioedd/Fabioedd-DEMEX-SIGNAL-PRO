@@ -10,6 +10,7 @@ from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
 from strategies.my_strategy import get_intrabar_signal
 from trade_manager import DemoTrader
+from entry_timing import filter_market_assets, is_intrabar_entry_window
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
@@ -36,11 +37,6 @@ def alert(message, enabled=True):
             pass
 
 
-def market_matches(symbol, mode):
-    otc = "OTC" in symbol.upper()
-    return otc if mode.upper() == "OTC" else not otc
-
-
 def normalize_timestamp(value):
     if value is None:
         return None
@@ -48,16 +44,10 @@ def normalize_timestamp(value):
     return ts / 1000.0 if ts > 10_000_000_000 else ts
 
 
-def intrabar_entry_window(seconds_remaining):
-    """Verdadeiro apenas quando faltam de 3 a 2 segundos para fechar a M1."""
-    return 2.0 <= float(seconds_remaining) <= 3.0
-
-
 def get_market_assets(connector, settings):
     """Carrega os ativos do mercado escolhido sem consultar payout ou backtest."""
     mode = settings.get("market_mode", "OTC")
-    assets = [asset for asset in connector.get_assets()
-              if market_matches(asset["symbol"], mode)]
+    assets = filter_market_assets(connector.get_assets(), mode)
     logging.info("ATIVOS CARREGADOS: %d ativos do mercado %s; sem filtro de payout/backtest.",
                  len(assets), mode)
     return assets
@@ -91,7 +81,7 @@ def scan_once(connector, settings, assets):
                     seconds_remaining = signal_ts + 60 - server_ts
                     # Não bloqueia a varredura esperando uma vela terminar:
                     # só seleciona o sinal quando faltam entre 3 e 2 segundos.
-                    if intrabar_entry_window(seconds_remaining):
+                    if is_intrabar_entry_window(seconds_remaining):
                         candidate = {
                             **provisional, **asset, "timeframe": "M1",
                             "expiry_minutes": 1,
