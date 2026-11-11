@@ -38,7 +38,8 @@ class ReconnectStopTests(unittest.TestCase):
         with patch("bullex_connector.time.monotonic", side_effect=[10.0, 10.0, 10.3]):
             with patch("bullex_connector.time.sleep") as sleep:
                 connector._wait_for_retry(0.2, lambda: False)
-        sleep.assert_called_once_with(0.2)
+        sleep.assert_called_once()
+        self.assertAlmostEqual(sleep.call_args.args[0], 0.2, places=10)
 
     def test_reconnect_stops_before_another_attempt(self):
         connector = BullexReadOnlyConnector.__new__(BullexReadOnlyConnector)
