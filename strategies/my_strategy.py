@@ -1,14 +1,10 @@
-"""SCRIPT AHORA — tradução fiel do indicador Lua para Python/DEMEX.
+"""SCRIPT AHORA RSI EXHAUSTION — tradução fiel do indicador Lua para Python/DEMEX.
 
-Regras originais preservadas:
-- VENDA (PUT): candle verde toca/cruza a máxima C1 da vela M15 anterior.
-- COMPRA (CALL): candle vermelho toca/cruza a mínima C2 da vela M15 anterior.
-- "Tocar" mantém a condição original: high >= nível e low <= nível.
-- Sem EMA, RSI, filtro de corpo ou filtros extras.
-
-O DEMEX recebe candles M1. C1/C2 são reconstruídas agrupando os quinze
-candles M1 completos da vela M15 anterior. Sinais para ordens usam
-somente o último candle M1 fechado.
+Regras:
+- PUT: candle verde toca C1 (máxima da vela M15 anterior) e RSI >= sobrecompra.
+- CALL: candle vermelho toca C2 (mínima da vela M15 anterior) e RSI <= sobrevenda.
+- RSI padrão 14, sobrecompra 70 e sobrevenda 30; parâmetros configuráveis.
+- Sinais fechados usam apenas candles concluídos; pré-sinal intrabar é separado.
 """
 from __future__ import annotations
 
@@ -17,7 +13,6 @@ M15_SECONDS = 900
 
 
 def _timestamp_seconds(candle):
-    """Lê timestamp Unix em segundos; também aceita milissegundos."""
     raw = candle.get("timestamp")
     if raw is None:
         return None
@@ -31,42 +26,59 @@ def _timestamp_seconds(candle):
 
 
 def _previous_m15_levels(candles, signal_index):
-    """Retorna (C1, C2) da M15 imediatamente anterior ao candle do sinal."""
+    """C1/C2 são a máxima/mínima dos 15 candles M1 da M15 anterior."""
     if signal_index < 0 or signal_index >= len(candles):
         return None
     signal_ts = _timestamp_seconds(candles[signal_index])
     if signal_ts is None:
         return None
-
     current_m15_start = (signal_ts // M15_SECONDS) * M15_SECONDS
     previous_m15_start = current_m15_start - M15_SECONDS
-    expected_starts = {
-        previous_m15_start + offset * M1_SECONDS for offset in range(15)
-    }
-    previous_candles = {}
+    expected = {previous_m15_start + i * M1_SECONDS for i in range(15)}
+    previous = {}
     for candle in candles[:signal_index]:
         ts = _timestamp_seconds(candle)
-        if ts in expected_starts:
-            previous_candles[ts] = candle
-    if set(previous_candles) != expected_starts:
+        if ts in expected:
+            previous[ts] = candle
+    if set(previous) != expected:
         return None
     try:
-        highs = [float(candle.get("high")) for candle in previous_candles.values()]
-        lows = [float(candle.get("low")) for candle in previous_candles.values()]
-    except (TypeError, ValueError):
+        highs = [float(previous[ts]["high"]) for ts in expected]
+        lows = [float(previous[ts]["low"]) for ts in expected]
+    except (KeyError, TypeError, ValueError):
         return None
     return max(highs), min(lows)
 
 
-def _signal_at(candles, signal_index, stage):
+def _rsi_wilder(closes, period):
+    """RSI padrão com suavização de Wilder, calculado até o candle avaliado."""
+    if period < 2 or len(closes) <= period:
+        return None
+    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(change, 0.0) for change in changes]
+    losses = [max(-change, 0.0) for change in changes]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = ((period - 1) * avg_gain + gains[i]) / period
+        avg_loss = ((period - 1) * avg_loss + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    if avg_gain == 0:
+        return 0.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _signal_at(candles, signal_index, config, stage):
     if not candles or signal_index < 0 or signal_index >= len(candles):
         return None
     levels = _previous_m15_levels(candles, signal_index)
     if levels is None:
         return None
-    c1, c2 = levels
-    candle = candles[signal_index]
     try:
+        closes = [float(candle["close"]) for candle in candles[:signal_index + 1]]
+        candle = candles[signal_index]
         open_price = float(candle["open"])
         high = float(candle["high"])
         low = float(candle["low"])
@@ -74,49 +86,60 @@ def _signal_at(candles, signal_index, stage):
     except (KeyError, TypeError, ValueError):
         return None
 
+    period = int(config.get("rsi_period", 14))
+    overbought = float(config.get("rsi_overbought", 70))
+    oversold = float(config.get("rsi_oversold", 30))
+    rsi_value = _rsi_wilder(closes, period)
+    if rsi_value is None:
+        return None
+
+    c1, c2 = levels
     is_green = close > open_price
     is_red = close < open_price
     touched_c1 = high >= c1 and low <= c1
     touched_c2 = high >= c2 and low <= c2
 
-    if is_green and touched_c1:
+    if is_green and touched_c1 and rsi_value >= overbought:
         return {
             "direction": "PUT",
             "confidence": 100,
             "stage": stage,
+            "rsi": round(rsi_value, 2),
             "reasons": [
-                "SCRIPT AHORA: candle verde tocou a máxima C1 da M15 anterior",
-                "C1 reconstruída pelos quinze candles M1 completos anteriores",
+                "SCRIPT AHORA RSI: candle verde tocou C1 da M15 anterior",
+                "RSI em sobrecompra ({:.2f} >= {:.2f})".format(rsi_value, overbought),
             ],
         }
-    if is_red and touched_c2:
+    if is_red and touched_c2 and rsi_value <= oversold:
         return {
             "direction": "CALL",
             "confidence": 100,
             "stage": stage,
+            "rsi": round(rsi_value, 2),
             "reasons": [
-                "SCRIPT AHORA: candle vermelho tocou a mínima C2 da M15 anterior",
-                "C2 reconstruída pelos quinze candles M1 completos anteriores",
+                "SCRIPT AHORA RSI: candle vermelho tocou C2 da M15 anterior",
+                "RSI em sobrevenda ({:.2f} <= {:.2f})".format(rsi_value, oversold),
             ],
         }
     return None
 
 
 def get_signal(candles, config=None):
-    """Sinal confirmado no último candle M1 fechado; ignora o candle em formação."""
+    """Sinal na última vela M1 fechada; descarta a vela atual em formação."""
+    config = config or {}
     if not candles or len(candles) < 17:
         return None
     closed = candles[:-1]
-    return _signal_at(closed, len(closed) - 1, "CLOSED")
+    return _signal_at(closed, len(closed) - 1, config, "CLOSED")
 
 
 def get_intrabar_signal(candles, config=None):
-    """Diagnóstico opcional no candle M1 atual; pode mudar antes do fechamento."""
+    """Sinal provisório na vela M1 atual; usado para entrada perto do fechamento."""
+    config = config or {}
     if not candles:
         return None
-    return _signal_at(candles, len(candles) - 1, "INTRABAR")
+    return _signal_at(candles, len(candles) - 1, config, "INTRABAR")
 
 
 def get_pre_signal(candles, config=None):
-    """SCRIPT AHORA não define pré-sinal; não inventa gatilhos antecipados."""
     return None
