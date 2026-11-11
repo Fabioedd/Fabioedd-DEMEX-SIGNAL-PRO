@@ -7,16 +7,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
-from signal_engine import analyze
 from strategies.my_strategy import get_intrabar_signal
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
-from entry_timing import (
-    can_add_pending_signal,
-    filter_market_assets,
-    is_candle_still_open,
-    is_close_confirmation_window,
-)
+from entry_timing import filter_market_assets, is_candle_still_open, is_intrabar_entry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
@@ -106,18 +100,6 @@ def scan_once(connector, settings, assets):
                         })
                         continue
 
-            # Também detecta sinais que já estavam na última vela concluída.
-            result = analyze(candles, settings)
-            if result:
-                closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-                if closed_ts is None:
-                    continue
-                candidates.append({
-                    **result, **asset, "timeframe": "M1",
-                    "expiry_minutes": 1,
-                    "signal_timestamp": candles[-2].get("timestamp"),
-                    "stage": "CLOSED",
-                })
         except ConnectionError:
             raise
         except Exception as exc:
@@ -243,10 +225,8 @@ def main():
             initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
         )
 
-        # Mantém até três sinais provisórios enquanto continua varrendo os demais ativos.
-        pending = {}
+        # Cada sinal intrabar é processado uma única vez, na vela em formação.
         processed = set()
-        max_pending = 3
 
         while not trader.stopped:
             if STOP_FILE.exists():
@@ -283,94 +263,18 @@ def main():
                 break
 
             confirmed = []
-            connection_lost = False
-            # Guarda os sinais intrabar sem interromper a análise dos outros ativos.
+            # Executa o sinal assim que ele é detectado na vela M1 ainda aberta.
+            # Não aguarda fechamento, confirmação posterior nem entrada na vela seguinte.
             for candidate in candidates:
                 key = candidate_key(candidate)
-                if key in processed or key in pending:
+                if key in processed or not is_intrabar_entry(candidate.get("stage")):
                     continue
-                if candidate.get("stage") == "INTRABAR":
-                    if can_add_pending_signal(len(pending), max_pending):
-                        pending[key] = candidate
-                        logging.info(
-                            "SINAL PENDENTE %s %s: aguardando fechamento; "
-                            "outros ativos continuam sendo analisados (%d/%d).",
-                            candidate["symbol"], candidate["direction"],
-                            len(pending), max_pending
-                        )
-                    continue
-                # Sinais já fechados também precisam ser confirmados no candle encerrado.
                 processed.add(key)
-                try:
-                    if verify_closed(connector, settings, candidate):
-                        confirmed.append(candidate)
-                except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
-                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                    assets = []
-                    next_asset_refresh = 0.0
-                    connection_lost = True
-                    break
-
-            if connection_lost:
-                continue
-
-            # Reavalia todos os sinais pendentes cujo candle já deveria ter fechado.
-            try:
-                now = normalize_timestamp(connector.get_server_timestamp())
-            except ConnectionError as exc:
-                logging.warning("Conexão perdida ao consultar horário da corretora: %s", exc)
-                connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                assets = []
-                next_asset_refresh = 0.0
-                continue
-            for key, candidate in list(pending.items()):
-                close_ts = candidate_close_timestamp(candidate)
-                if close_ts is None or now < close_ts:
-                    continue
-                try:
-                    candles = connector.get_candles(
-                        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-                    )
-                    latest_ts = (
-                        normalize_timestamp(candles[-1].get("timestamp"))
-                        if candles else None
-                    )
-                    if latest_ts is not None and latest_ts > normalize_timestamp(candidate["signal_timestamp"]):
-                        processed.add(key)
-                        if verify_closed(connector, settings, candidate):
-                            confirmed.append(candidate)
-                            logging.info(
-                                "SINAL CONFIRMADO NO FECHAMENTO: %s %s.",
-                                candidate["symbol"], candidate["direction"]
-                            )
-                        else:
-                            logging.info(
-                                "SINAL CANCELADO: %s não permaneceu válido no fechamento.",
-                                candidate["symbol"]
-                            )
-                        del pending[key]
-                    elif now > close_ts + 0.75:
-                        # Margem máxima de 0,75s apenas para a corretora publicar o candle;
-                        # não existe tolerância para entrar na vela seguinte.
-                        processed.add(key)
-                        del pending[key]
-                        logging.warning(
-                            "SINAL DESCARTADO: dados de fechamento de %s não chegaram a tempo.",
-                            candidate["symbol"]
-                        )
-                except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao confirmar pendência %s: %s",
-                                    candidate["symbol"], exc)
-                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                    assets = []
-                    next_asset_refresh = 0.0
-                    pending.clear()
-                    connection_lost = True
-                    break
-
-            if connection_lost:
-                continue
+                confirmed.append(candidate)
+                logging.info(
+                    "SINAL INTRABAR DETECTADO: %s %s; entrada imediata na vela atual.",
+                    candidate["symbol"], candidate["direction"]
+                )
 
             if confirmed:
                 # Uma única entrada: escolhe o sinal confirmado mais antigo; os demais são descartados.
@@ -378,9 +282,6 @@ def main():
                 candidate = confirmed[0]
                 for item in confirmed[1:]:
                     processed.add(candidate_key(item))
-                for key in list(pending):
-                    processed.add(key)
-                    del pending[key]
                 logging.info(
                     "SELEÇÃO ÚNICA: %s %s. Outros sinais confirmados não serão operados.",
                     candidate["symbol"], candidate["direction"]
