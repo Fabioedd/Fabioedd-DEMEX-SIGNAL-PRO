@@ -33,3 +33,11 @@ def closed_signal_entry_mode(seconds_after_close):
     if 0.75 < elapsed <= 3.0:
         return "NEXT_CANDLE_DELAY"
     return None
+
+
+def is_candle_still_open(seconds_remaining):
+    """True while the signal candle is still forming; never authorizes an order."""
+    try:
+        return float(seconds_remaining) > 0.0
+    except (TypeError, ValueError):
+        return False
