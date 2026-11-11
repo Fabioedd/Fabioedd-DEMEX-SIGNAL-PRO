@@ -27,18 +27,15 @@ class BacktestFilterTests(unittest.TestCase):
         self.assertEqual(result["reason"], "amostra_insuficiente")
 
     def test_blocks_rate_equal_to_70_percent(self):
-        candles = [candle(i * 60, 1.0, 1.1) for i in range(23)]
-        # All six signals are CALL; make four entry candles bullish and two bearish.
-        candles[17] = candle(17 * 60, 1.0, 1.1)
-        candles[18] = candle(18 * 60, 1.0, 1.1)
-        candles[19] = candle(19 * 60, 1.0, 1.1)
-        candles[20] = candle(20 * 60, 1.0, 1.1)
-        candles[21] = candle(21 * 60, 1.1, 1.0)
-        candles[22] = candle(22 * 60, 1.1, 1.0)
+        candles = [candle(i * 60, 1.0, 1.1) for i in range(27)]
+        # Ten signals: exactly seven wins and three losses = 70%, which must be blocked.
+        for index in (23, 24, 25):
+            candles[index] = candle(index * 60, 1.1, 1.0)
         with patch("backtest_filter.get_signal", return_value={"direction": "CALL"}):
             result = evaluate_backtest(candles, minimum_trades=5)
         self.assertFalse(result["approved"])
-        self.assertEqual(result["win_rate"], 66.67)
+        self.assertEqual(result["trades"], 10)
+        self.assertEqual(result["win_rate"], 70.0)
 
 
 if __name__ == "__main__":
