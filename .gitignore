@@ -18,3 +18,4 @@ vendor/
 
 .demex-agent.sh
 .demex-agent.sh.new
+.demex-telegram-control.lock
