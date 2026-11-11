@@ -4,12 +4,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
+from strategies.my_strategy import get_pre_signal
 from trade_manager import DemoTrader
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
 
 # Sinal de parada solicitado pelo comando demex.sh parar.
 STOP_FILE = Path(".demex_stop")
+_priority_symbols = []
 
 
 def scan_delay(settings):
@@ -123,10 +125,16 @@ def scan_once(connector,settings):
     assets=connector.get_open_assets(min_payout)
     assets=[a for a in assets if market_matches(a["symbol"],settings.get("market_mode","OTC"))]
     logging.info("Ativos com payout >= %.1f%% no filtro %s: %d",min_payout,settings.get("market_mode"),len(assets))
+    priority_rank={symbol:index for index,symbol in enumerate(_priority_symbols)}
+    assets.sort(key=lambda item: priority_rank.get(item["symbol"],len(priority_rank)+1))
     candidates=[]
+    pre_signals=[]
     for asset in assets:
         try:
             candles=connector.get_candles(asset["symbol"],seconds,int(settings.get("candles_count",120)))
+            pre=get_pre_signal(candles,settings)
+            if pre:
+                pre_signals.append({**pre,**asset})
             result=analyze(candles,settings)
             if not result or result["confidence"] < settings["minimum_confidence"]: continue
             # Estratégia ignora a última vela (em formação); identificar a vela fechada que gerou o sinal.
@@ -136,7 +144,15 @@ def scan_once(connector,settings):
         except ConnectionError:
             raise
         except Exception as exc: logging.warning("Falha ao analisar %s: %s",asset["symbol"],exc)
-    # Tenta primeiro os sinais com maior confiança e payout.
+    pre_signals.sort(key=lambda item: (item["proximity"],item["payout_percent"]), reverse=True)
+    global _priority_symbols
+    _priority_symbols=[item["symbol"] for item in pre_signals]
+    if pre_signals:
+        preview=", ".join("{} {} ({:.0%})".format(item["symbol"],item["direction"],item["proximity"]) for item in pre_signals[:10])
+        logging.info("PRÉ-SINAIS encontrados: %d | Prioridade: %s",len(pre_signals),preview)
+    else:
+        logging.info("Nenhum pré-sinal ativo nesta varredura.")
+    # Nesta etapa, apenas sinais em candle fechado continuam elegíveis para execução.
     candidates.sort(key=lambda item: (item["confidence"], item["payout_percent"]), reverse=True)
     return candidates
 
