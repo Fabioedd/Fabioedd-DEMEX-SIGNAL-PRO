@@ -52,7 +52,7 @@ def signal_is_in_next_candle(connector, signal):
         server_ts /= 1000.0
 
     next_candle_start=signal_ts+60
-    # Janela estrita: somente os primeiros 5 segundos da vela M5 vizinha.
+    # Janela estrita: somente os primeiros 5 segundos da vela M1 vizinha.
     entry_deadline=next_candle_start+5.0
     if not (next_candle_start <= server_ts < entry_deadline):
         logging.info(
@@ -119,7 +119,7 @@ def signal_still_present(connector, settings, candidate):
 def scan_once(connector,settings):
     global _priority_symbols, _scan_cycle
     _scan_cycle += 1
-    tf=settings.get("timeframe","M5").upper()
+    tf=settings.get("timeframe","M1").upper()
     if tf != "M1": raise ValueError("Este robô está configurado exclusivamente para timeframe M1.")
     if settings.get("trade_type","binary").lower() != "binary":
         raise ValueError("Este robô está bloqueado para operar somente opções BINÁRIAS.")
