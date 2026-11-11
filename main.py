@@ -21,6 +21,7 @@ from entry_timing import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 STOP_FILE = Path(".demex_stop")
+ASSET_REFRESH_INTERVAL_SECONDS = 300
 _scan_pass_number = 0
 
 
@@ -51,12 +52,22 @@ def normalize_timestamp(value):
 
 
 def get_market_assets(connector, settings):
-    """Carrega os ativos do mercado escolhido sem consultar payout ou backtest."""
-    mode = settings.get("market_mode", "OTC")
-    assets = filter_market_assets(connector.get_assets(), mode)
-    logging.info("ATIVOS CARREGADOS: %d ativos do mercado %s; sem filtro de payout/backtest.",
-                 len(assets), mode)
-    return assets
+    """Retorna somente OTC BINÁRIOS que a corretora informa estarem abertos."""
+    mode = str(settings.get("market_mode", "OTC")).upper()
+    if mode != "OTC":
+        raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
+    availability = connector.get_otc_asset_availability()
+    available = [
+        {"symbol": item["symbol"], "active_id": item["active_id"]}
+        for item in availability if item.get("available") is True
+    ]
+    unavailable_count = len(availability) - len(available)
+    logging.info(
+        "DISPONIBILIDADE OTC: %d abertos/disponíveis; %d fechados ou suspensos. "
+        "A lista será atualizada a cada %d minutos.",
+        len(available), unavailable_count, ASSET_REFRESH_INTERVAL_SECONDS // 60
+    )
+    return available
 
 
 def scan_once(connector, settings, assets):
@@ -216,8 +227,7 @@ def main():
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
 
         assets = get_market_assets(connector, settings)
-        if not assets:
-            raise RuntimeError("Nenhum ativo foi encontrado no mercado configurado.")
+        next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
         trader = DemoTrader(connector, settings)
         telegram = TelegramNotifier.from_env()
         print(
@@ -225,7 +235,7 @@ def main():
             "SCRIPT AHORA RSI EXHAUSTION | RSI({}) | sem payout/backtest/varredura de 30 minutos."
             .format(settings.get("rsi_period", 14))
         )
-        print("Ativos monitorados: {} | Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
+        print("Ativos OTC disponíveis: {} | Atualização a cada 5 minutos | Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
               .format(len(assets), trader.base, trader.stop, trader.take))
         telegram.send_session_start(
             account="PRACTICE/DEMO", market=settings.get("market_mode", "OTC"),
@@ -243,6 +253,19 @@ def main():
                 trader.stopped = True
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
+            if time.monotonic() >= next_asset_refresh:
+                try:
+                    assets = get_market_assets(connector, settings)
+                    logging.info("LISTA OTC ATUALIZADA: %d ativos disponíveis para análise.", len(assets))
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida durante a atualização dos ativos OTC: %s", exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                except Exception as exc:
+                    # Falha na leitura: não usa uma lista possivelmente desatualizada.
+                    logging.error("Não foi possível confirmar a disponibilidade OTC; análise pausada: %s", exc)
+                    assets = []
+                next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
             try:
                 candidates = scan_once(connector, settings, assets)
             except ConnectionError as exc:
