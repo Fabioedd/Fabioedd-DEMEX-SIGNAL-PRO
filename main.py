@@ -154,9 +154,15 @@ def main():
                             break
                         # Sinal duplicado ou operação não iniciada: não insistir nele.
                     except RuntimeError as exc:
-                        if "Cannot purchase an option (the asset is not available at the moment)" in str(exc):
+                        error_text=str(exc).lower()
+                        if ("cannot purchase an option (the asset is not available at the moment)" in error_text
+                                or "cannot purchase an option (active is suspended)" in error_text):
                             unavailable_assets.add(candidate["symbol"])
-                            logging.warning("Ativo %s indisponível para entrada. Procurando o próximo sinal...",candidate["symbol"])
+                            logging.warning(
+                                "Ativo %s indisponível/suspenso para entrada (%s). "
+                                "Descartando este ativo e procurando o próximo sinal válido...",
+                                candidate["symbol"],exc
+                            )
                             continue
                         logging.exception("Falha na execução; robô interrompido por segurança.")
                         trader.stopped=True
