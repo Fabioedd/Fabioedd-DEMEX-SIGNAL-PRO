@@ -136,15 +136,15 @@ def main():
                         trader.stopped=True
                         print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                         break
-                    msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
-                         f"expiração {candidate['expiry_minutes']} min | confiança técnica {candidate['confidence']}% | "
-                         f"payout {candidate['payout_percent']:.1f}%")
-                    alert(msg,bool(settings.get("sound_alert",True)))
-                    print("Confirmações: "+", ".join(candidate["reasons"]))
                     try:
-                        # Validar imediatamente antes do envio: só vale a vela M1 seguinte ao sinal.
+                        # Validar antes de anunciar ou enviar: sinal vencido não gera alerta nem ordem.
                         if not signal_is_in_next_candle(connector,candidate):
                             continue
+                        msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
+                             f"expiração {candidate['expiry_minutes']} min | confiança técnica {candidate['confidence']}% | "
+                             f"payout {candidate['payout_percent']:.1f}%")
+                        alert(msg,bool(settings.get("sound_alert",True)))
+                        print("Confirmações: "+", ".join(candidate["reasons"]))
                         summary=trader.execute_and_settle(candidate)
                         if summary:
                             order_accepted_or_settled=True
