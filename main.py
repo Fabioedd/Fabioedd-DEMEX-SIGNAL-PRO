@@ -250,12 +250,11 @@ def main():
                         print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                         break
                     try:
-                        # Reconsultar o ativo: a mesma confluência deve continuar válida
-                        # na mesma vela M1 ainda em formação.
-                        if not signal_still_present_intrabar(connector,settings,candidate):
+                        # Reconsultar e confirmar o mesmo sinal na mesma vela já fechada.
+                        if not signal_still_present(connector,settings,candidate):
                             continue
-                        # Entrada na própria vela do sinal, somente faltando 1 a 3 segundos.
-                        if not signal_is_in_signal_candle(connector,candidate):
+                        # Entrada somente na vela M1 imediatamente seguinte, até 5s após abrir.
+                        if not signal_is_in_next_candle(connector,candidate):
                             continue
                         msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
                              f"expiração {candidate['expiry_minutes']} min | confiança técnica {candidate['confidence']}% | "
