@@ -1,6 +1,7 @@
 """Bullex adapter with market-data reads and guarded PRACTICE-only orders."""
 from __future__ import annotations
-import logging, os, time, threading
+import logging, os, time, threading, json
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 from bullexapi.stable_api import Bullex
@@ -142,7 +143,40 @@ class BullexReadOnlyConnector:
                 self._active_symbols=set(self.client.get_all_ACTIVES_OPCODE())
             if symbol not in self._active_symbols: raise ValueError(f"Ativo indisponível: {symbol}")
             ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
-            if not ok or not order_id: raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
+            if not ok or not order_id:
+                if order_id is None:
+                    # buy() pode expirar sua espera de confirmação após 5s mesmo
+                    # que a solicitação já tenha chegado à corretora. Persistir
+                    # o estado impede uma nova sessão automática sem conciliação.
+                    record={
+                        "created_at":time.time(),
+                        "symbol":str(symbol),
+                        "direction":str(direction),
+                        "amount":float(amount),
+                        "expiry_minutes":int(expiry_minutes),
+                        "account_type":"PRACTICE",
+                        "status":"AMBIGUOUS_SUBMISSION_REQUIRES_MANUAL_RECONCILIATION"
+                    }
+                    marker=Path(".demex_pending_order.json")
+                    temp=marker.with_suffix(".json.tmp")
+                    try:
+                        with temp.open("w",encoding="utf-8") as f:
+                            json.dump(record,f,ensure_ascii=False,indent=2)
+                            f.flush()
+                            os.fsync(f.fileno())
+                        os.replace(temp,marker)
+                    except OSError as exc:
+                        logger.critical("Não foi possível persistir o bloqueio de ordem ambígua: %s",exc)
+                        raise RuntimeError(
+                            "SUBMISSÃO AMBÍGUA: buy() não confirmou ID e falhou a gravação do bloqueio local. "
+                            "Robô interrompido; confira imediatamente o histórico PRACTICE."
+                        ) from exc
+                    raise RuntimeError(
+                        "SUBMISSÃO AMBÍGUA: buy() não confirmou ID em 5s. "
+                        "Robô bloqueado pelo arquivo .demex_pending_order.json; "
+                        "confira o histórico PRACTICE antes de qualquer reinício."
+                    )
+                raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
             return int(order_id)
     def wait_practice_result(self,order_id):
         with self.api_lock:
