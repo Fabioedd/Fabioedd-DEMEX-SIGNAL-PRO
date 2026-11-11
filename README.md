@@ -4,7 +4,10 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 
 ## Estratégia e operação
 
-- Estratégia personalizada: `strategies/my_strategy.py` (`get_signal(candles, config)`).
+- Estratégia personalizada: `strategies/my_strategy.py` (`get_signal`, `get_pre_signal`, `get_intrabar_signal`).
+- Estratégia atual: cruzamento GO 2024 (SMA 1/34 + WMA 5), filtrado por `buffer1` acima/abaixo de zero, RSI 14 acima/abaixo de 50 e preço acima/abaixo da EMA 21.
+- Fonte de preço do GO: HLC4 como hipótese para o seletor Lua `inputs.titles = 5`; confirme se corresponde à seleção da plataforma.
+- Universo de ativos: somente payout entre 85% e 90%, inclusive. Ativos fora dessa faixa não entram na análise de candles. Ativos com pré-sinal ficam no início da fila, mas os demais ativos dentro da faixa continuam sendo monitorados.
 - Timeframe configurado: M1; expiração: 1 minuto.
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
