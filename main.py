@@ -188,7 +188,7 @@ def main():
         if connector.client.get_balance_mode()!="PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
         trader=DemoTrader(connector,settings)
-        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | GO 2024 + RSI 14 + EMA 21 (filtros) | payout BINÁRIO EXATAMENTE 87%.")
+        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | SCRIPT AHORA (níveis M15 anteriores + candles M1) | payout BINÁRIO EXATAMENTE 87%.")
         print("Entrada inicial R$ %.2f | Soros 1 | Stop R$ %.2f | Take R$ %.2f" %
               (trader.base,trader.stop,trader.take))
         while not trader.stopped:
