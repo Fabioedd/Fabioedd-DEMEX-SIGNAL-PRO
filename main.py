@@ -272,10 +272,16 @@ def main():
                         candidate["signal_timestamp"]
                     )
 
+            # Se uma pendência caiu, a próxima dupla será comparada novamente.
+            if len(pending) < MAX_PENDING_SIGNALS:
+                preferred_key = None
+
             # Assim que o segundo sinal entra, compara os dois usando o histórico
             # de candles_count (250 por configuração), sem alterar a estratégia.
             if len(pending) == MAX_PENDING_SIGNALS and preferred_key is None:
                 for pending_key, pending_candidate in pending.items():
+                    if "backtest" in pending_candidate:
+                        continue
                     stats = backtest_strategy(
                         pending_candidate.pop("_backtest_candles", []), settings
                     )
@@ -446,7 +452,7 @@ def main():
             else:
                 # Enquanto há pendências, acompanha os candles sem iniciar outra
                 # varredura completa. A varredura normal continua em 2 segundos.
-                time.sleep(0.25 if pending else scan_delay(settings))
+                time.sleep(0.25 if len(pending) >= MAX_PENDING_SIGNALS else scan_delay(settings))
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
