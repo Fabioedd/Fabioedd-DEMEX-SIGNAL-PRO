@@ -1,6 +1,17 @@
+import sys
 import threading
+import types
 import unittest
 from unittest.mock import patch
+
+# The connector's retry-wait logic does not need the optional broker SDK.
+# Stub its import so these unit tests also run in CI without broker packages.
+if "bullexapi.stable_api" not in sys.modules:
+    package = sys.modules.setdefault("bullexapi", types.ModuleType("bullexapi"))
+    stable_api = types.ModuleType("bullexapi.stable_api")
+    stable_api.Bullex = object
+    package.stable_api = stable_api
+    sys.modules["bullexapi.stable_api"] = stable_api
 
 from bullex_connector import BullexReadOnlyConnector
 
