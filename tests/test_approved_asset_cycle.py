@@ -1,5 +1,18 @@
+import sys
+import types
 import unittest
 from unittest.mock import patch
+
+# The cycle tests exercise local logic only; no live broker client or dotenv is needed.
+dotenv_stub = types.ModuleType("dotenv")
+dotenv_stub.load_dotenv = lambda: None
+sys.modules.setdefault("dotenv", dotenv_stub)
+
+bullexapi_stub = types.ModuleType("bullexapi")
+stable_api_stub = types.ModuleType("bullexapi.stable_api")
+stable_api_stub.Bullex = object
+sys.modules.setdefault("bullexapi", bullexapi_stub)
+sys.modules.setdefault("bullexapi.stable_api", stable_api_stub)
 
 import main
 
@@ -63,7 +76,7 @@ class ApprovedAssetCycleTests(unittest.TestCase):
             "scan_interval_seconds": 2,
             "candles_count": 20,
         }
-        with patch.object(main, "get_pre_signal", return_value=None), \
+        with patch.object(main, "get_pre_signal", return_value=None), \\
              patch.object(main, "analyze", return_value=None):
             self.assertEqual(main.scan_once(connector, settings), [])
             first_pass = list(connector.candle_requests)
