@@ -207,3 +207,83 @@ def get_signal(candles, config):
         }
 
     return None
+
+
+def get_pre_signal(candles, config=None):
+    """Detecta aproximação intrabar dos cruzamentos ALFA e GO; nunca autoriza ordem."""
+    if not candles or len(candles) < 40:
+        return None
+
+    opens = [float(candle["open"]) for candle in candles]
+    highs = [float(candle["high"]) for candle in candles]
+    lows = [float(candle["low"]) for candle in candles]
+    closes = [float(candle["close"]) for candle in candles]
+    prices = [
+        (high + low + close + close) / 4.0
+        for high, low, close in zip(highs, lows, closes)
+    ]
+    index = len(candles) - 1
+    previous = index - 1
+
+    alfa_fast = _ema_series(prices, ALFA_FAST)
+    alfa_slow = _ema_series(prices, ALFA_SLOW)
+    alfa_macd = [
+        fast - slow if fast is not None and slow is not None else None
+        for fast, slow in zip(alfa_fast, alfa_slow)
+    ]
+    alfa_signal = _wma_series(alfa_macd, ALFA_SIGNAL)
+    alfa_rsi = _rsi_series(prices, ALFA_RSI)
+
+    go_fast = _sma_series(prices, GO_FAST)
+    go_slow = _sma_series(prices, GO_SLOW)
+    go_buffer1 = [
+        fast - slow if fast is not None and slow is not None else None
+        for fast, slow in zip(go_fast, go_slow)
+    ]
+    go_buffer2 = _wma_series(go_buffer1, GO_SIGNAL)
+
+    values = (
+        (alfa_macd, alfa_signal),
+        (go_buffer1, go_buffer2),
+    )
+    if any(
+        line[index] is None or signal[index] is None
+        or line[previous] is None or signal[previous] is None
+        for line, signal in values
+    ):
+        return None
+
+    gaps = [(line[previous] - signal[previous], line[index] - signal[index])
+            for line, signal in values]
+
+    # CALL: ambos gaps ainda negativos, mas avançando em direção a zero.
+    call_approach = all(old < 0 and old < new < 0 for old, new in gaps)
+    # PUT: ambos gaps ainda positivos, mas recuando em direção a zero.
+    put_approach = all(old > 0 and old > new > 0 for old, new in gaps)
+
+    direction = "CALL" if call_approach else "PUT" if put_approach else None
+    if direction is None:
+        return None
+
+    # Filtros de direção do ALFA observados na vela em formação.
+    if direction == "CALL":
+        if alfa_rsi[index] is None or alfa_rsi[index] <= 50 or closes[index] <= opens[index]:
+            return None
+    else:
+        if alfa_rsi[index] is None or alfa_rsi[index] >= 50 or closes[index] >= opens[index]:
+            return None
+
+    # Quanto menor o valor, mais perto os dois cruzamentos estão de zero.
+    ratios = [abs(new) / max(abs(old), 1e-12) for old, new in gaps]
+    proximity = round(max(0.0, min(1.0, 1.0 - sum(ratios) / len(ratios))), 4)
+    return {
+        "direction": direction,
+        "stage": "PRE_SIGNAL",
+        "proximity": proximity,
+        "confidence": 0,
+        "reasons": [
+            "DEMEX ALFA: cruzamento se aproximando na vela em formação",
+            "GO 2024: cruzamento se aproximando na vela em formação",
+            "Pré-sinal informativo; não autoriza entrada",
+        ],
+    }
