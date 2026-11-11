@@ -288,8 +288,10 @@ def main():
                         summary=trader.execute_and_settle(candidate)
                         if summary:
                             order_accepted_or_settled=True
-                            print("OPERAÇÃO {result} | Entrada R$ {entry:.2f} | Resultado R$ {pnl:+.2f} | "
-                                  "Acumulado R$ {session_net:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
+                            print("PLACAR | Entradas {total_entries} | WIN {wins} | LOSS {losses} | TIE {ties} | "
+                                  "Aproveitamento {win_rate:.2f}% | P&L R$ {session_net:+.2f}".format(**summary))
+                            print("OPERAÇÃO {result} | {symbol} {direction} | Entrada R$ {entry:.2f} | "
+                                  "Resultado R$ {pnl:+.2f} | Próxima entrada R$ {next_entry:.2f}".format(**summary))
                             if summary["stopped"]: print("ROBÔ ENCERRADO: "+str(summary["stop_reason"]))
                             break
                         # Sinal duplicado ou operação não iniciada: não insistir nele.
