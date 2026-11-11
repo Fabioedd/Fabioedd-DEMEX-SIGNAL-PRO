@@ -125,7 +125,6 @@ def signal_still_present(connector, settings, candidate):
 def refresh_approved_assets(connector, settings):
     """Backtesta os ultimos 100 candles M1 dos ativos com payout binario >=84%."""
     global _approved_assets
-    minimum_trades = int(settings.get("backtest_min_trades", 5))
     market_mode = settings.get("market_mode", "OTC")
     min_payout = float(settings.get("minimum_payout_percent", 84))
     max_payout = float(settings.get("maximum_payout_percent", 100))
@@ -141,7 +140,7 @@ def refresh_approved_assets(connector, settings):
             candles = connector.get_candles(
                 asset["symbol"], 60, int(settings.get("backtest_candles", 100)) + 1
             )
-            result = evaluate_backtest(candles, minimum_trades)
+            result = evaluate_backtest(candles)
             logging.info("BACKTEST %d/%d | %s | payout %.1f%% | sinais %d | WIN %d | LOSS %d | acerto %.2f%% | %s",
                          index, len(assets), asset["symbol"], asset["payout_percent"],
                          result["trades"], result["wins"], result["losses"],
@@ -171,8 +170,8 @@ def refresh_approved_assets(connector, settings):
                 )
             else:
                 logging.warning("BACKTEST SEM APROVADOS e sem lista anterior; aguardando nova avaliacao.")
-    logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados nesta rodada (minimo %d operacoes historicas e acerto >70%%). Lista ativa: %d.",
-                 len(approved), len(assets), minimum_trades, len(active_assets))
+    logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados nesta rodada (assertividade >70%% e payout binario >=84%%; sem minimo de operacoes historicas). Lista ativa: %d.",
+                 len(approved), len(assets), len(active_assets))
     return active_assets
 
 
