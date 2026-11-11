@@ -28,7 +28,7 @@ def is_candle_still_open(seconds_remaining):
         return False
 
 
-def can_add_pending_signal(pending_count, maximum=3):
+def can_add_pending_signal(pending_count, maximum=2):
     """Limita a fila de pré-sinais sem bloquear a varredura dos ativos."""
     try:
         return int(pending_count) < int(maximum)

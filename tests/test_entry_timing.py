@@ -30,7 +30,7 @@ class CandleEntryTimingTests(unittest.TestCase):
     def test_pending_signal_limit(self):
         self.assertTrue(can_add_pending_signal(0))
         self.assertTrue(can_add_pending_signal(1))
-        self.assertTrue(can_add_pending_signal(2))
+        self.assertFalse(can_add_pending_signal(2))
         self.assertFalse(can_add_pending_signal(3))
         self.assertTrue(can_add_pending_signal(1, 2))
         self.assertFalse(can_add_pending_signal(2, 2))
