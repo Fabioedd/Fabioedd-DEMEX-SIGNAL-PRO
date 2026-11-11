@@ -26,6 +26,26 @@ class CandleCloseTests(unittest.TestCase):
         self.assertFalse(is_close_confirmation_window(-0.1))
 
 
+class AssetAvailabilityTests(unittest.TestCase):
+    def test_binary_asset_requires_enabled_and_not_suspended(self):
+        from entry_timing import is_binary_active_open
+        self.assertTrue(is_binary_active_open({"enabled": True, "is_suspended": False}, 100))
+        self.assertFalse(is_binary_active_open({"enabled": False, "is_suspended": False}, 100))
+        self.assertFalse(is_binary_active_open({"enabled": True, "is_suspended": True}, 100))
+
+    def test_binary_asset_schedule_controls_open_state(self):
+        from entry_timing import is_binary_active_open
+        active = {"enabled": True, "is_suspended": False, "schedule": [{"open": 100, "close": 200}]}
+        self.assertTrue(is_binary_active_open(active, 150))
+        self.assertFalse(is_binary_active_open(active, 99))
+        self.assertFalse(is_binary_active_open(active, 201))
+
+    def test_binary_asset_supports_pair_schedule_format(self):
+        from entry_timing import is_binary_active_open
+        active = {"enabled": True, "is_suspended": False, "schedule": [[100, 200]]}
+        self.assertTrue(is_binary_active_open(active, 150))
+
+
 class MainSyntaxTests(unittest.TestCase):
     def test_main_module_compiles_without_importing_broker_dependencies(self):
         source = Path("main.py").read_text(encoding="utf-8")
