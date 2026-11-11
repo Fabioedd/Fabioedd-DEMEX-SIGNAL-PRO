@@ -132,7 +132,7 @@ def refresh_approved_assets(connector, settings):
     assets = [a for a in assets if market_matches(a["symbol"], market_mode)]
     approved = []
     logging.info("BACKTEST: avaliando %d ativos com payout binario entre %.1f%% e %.1f%%; janela de 100 candles M1.",
-                 min_payout, max_payout)
+                 len(assets), min_payout, max_payout)
     for index, asset in enumerate(assets, 1):
         if _refresh_stop.is_set():
             break
