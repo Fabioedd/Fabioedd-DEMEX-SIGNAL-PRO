@@ -14,6 +14,7 @@ from entry_timing import (
     can_add_pending_signal,
     filter_market_assets,
     is_candle_still_open,
+    is_close_confirmation_window,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -169,6 +170,9 @@ def verify_closed(connector, settings, candidate):
         return False
     if current_ts <= original_ts or closed_ts != original_ts:
         return False
+    elapsed = normalize_timestamp(connector.get_server_timestamp()) - (original_ts + 60)
+    if not is_close_confirmation_window(elapsed):
+        return False
     current = analyze(candles, settings)
     return bool(current and current.get("direction") == candidate.get("direction"))
 
@@ -308,8 +312,8 @@ def main():
                                 candidate["symbol"]
                             )
                         del pending[key]
-                    elif now > close_ts + 2.0:
-                        # Expira apenas se a corretora não publicar a vela fechada;
+                    elif now > close_ts + 0.75:
+                        # Margem máxima de 0,75s apenas para a corretora publicar o candle;
                         # não existe tolerância para entrar na vela seguinte.
                         processed.add(key)
                         del pending[key]
