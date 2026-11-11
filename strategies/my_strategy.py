@@ -1,272 +1,144 @@
-"""GO 2024 + RSI 14 + EMA 21 — tradução do indicador Lua para Python.
+"""SCRIPT AHORA — tradução fiel do indicador Lua para Python/DEMEX.
 
-O cruzamento GO 2024 é o único gatilho. RSI, EMA 21 e linha zero são filtros.
-O GO usa HLC4 (hipótese correspondente ao seletor Lua inputs.titles = 5).
-RSI e EMA são calculados sobre o fechamento, conforme o script solicitado.
+Regras originais preservadas:
+- VENDA (PUT): candle verde toca/cruza a máxima C1 da vela M15 anterior.
+- COMPRA (CALL): candle vermelho toca/cruza a mínima C2 da vela M15 anterior.
+- "Tocar" mantém a condição original: high >= nível e low <= nível.
+- Sem EMA, RSI, filtro de corpo ou filtros extras.
+
+O DEMEX atualmente recebe candles M5. Por isso, C1/C2 são reconstruídas
+agrupando os três candles M5 completos da vela M15 anterior. Sinais para
+ordens usam somente o último candle fechado.
 """
+from __future__ import annotations
 
-GO_FAST = 1
-GO_SLOW = 34
-GO_SIGNAL = 5
-RSI_PERIOD = 14
-EMA_PERIOD = 21
-RSI_MIDLINE = 50.0
+from math import floor
 
-
-def _sma_series(values, period):
-    result = [None] * len(values)
-    if len(values) < period:
-        return result
-    total = sum(values[:period])
-    result[period - 1] = total / period
-    for i in range(period, len(values)):
-        total += values[i] - values[i - period]
-        result[i] = total / period
-    return result
+M5_SECONDS = 300
+M15_SECONDS = 900
 
 
-def _ema_series(values, period):
-    result = [None] * len(values)
-    if len(values) < period:
-        return result
-    current = sum(values[:period]) / period
-    result[period - 1] = current
-    alpha = 2.0 / (period + 1.0)
-    for i in range(period, len(values)):
-        current = alpha * values[i] + (1.0 - alpha) * current
-        result[i] = current
-    return result
+def _timestamp_seconds(candle):
+    """Lê timestamp Unix em segundos; também aceita milissegundos."""
+    raw = candle.get("timestamp")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value > 10_000_000_000:
+        value /= 1000.0
+    return int(value)
 
 
-def _wma_series(values, period):
-    result = [None] * len(values)
-    if len(values) < period:
-        return result
-    denominator = period * (period + 1) / 2.0
-    for i in range(period - 1, len(values)):
-        window = values[i - period + 1:i + 1]
-        if any(value is None for value in window):
-            continue
-        result[i] = sum(
-            value * weight
-            for weight, value in enumerate(window, start=1)
-        ) / denominator
-    return result
+def _previous_m15_levels(candles, signal_index):
+    """Retorna (C1, C2) da M15 imediatamente anterior ao candle do sinal.
 
-
-def _rsi_wilder_series(values, period):
-    result = [None] * len(values)
-    if len(values) <= period:
-        return result
-
-    gains = []
-    losses = []
-    for i in range(1, period + 1):
-        change = values[i] - values[i - 1]
-        gains.append(max(change, 0.0))
-        losses.append(max(-change, 0.0))
-
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-
-    def value_for(gain, loss):
-        if loss == 0:
-            return 100.0 if gain > 0 else 50.0
-        if gain == 0:
-            return 0.0
-        rs = gain / loss
-        return 100.0 - (100.0 / (1.0 + rs))
-
-    result[period] = value_for(avg_gain, avg_loss)
-    for i in range(period + 1, len(values)):
-        change = values[i] - values[i - 1]
-        gain = max(change, 0.0)
-        loss = max(-change, 0.0)
-        avg_gain = ((avg_gain * (period - 1)) + gain) / period
-        avg_loss = ((avg_loss * (period - 1)) + loss) / period
-        result[i] = value_for(avg_gain, avg_loss)
-    return result
-
-
-def _cross_up(line, signal, index):
-    previous = index - 1
-    return (
-        index > 0
-        and line[index] is not None
-        and signal[index] is not None
-        and line[previous] is not None
-        and signal[previous] is not None
-        and line[index] > signal[index]
-        and line[previous] < signal[previous]
-    )
-
-
-def _cross_down(line, signal, index):
-    previous = index - 1
-    return (
-        index > 0
-        and line[index] is not None
-        and signal[index] is not None
-        and line[previous] is not None
-        and signal[previous] is not None
-        and line[index] < signal[index]
-        and line[previous] > signal[previous]
-    )
-
-
-def _calculate(candles):
-    if not candles:
+    O histórico recebido pelo DEMEX é M5. Exige os três candles M5 que
+    compõem a M15 anterior, evitando calcular níveis com dados incompletos.
+    """
+    if signal_index < 0 or signal_index >= len(candles):
         return None
 
-    opens = [float(c["open"]) for c in candles]
-    highs = [float(c["high"]) for c in candles]
-    lows = [float(c["low"]) for c in candles]
-    closes = [float(c["close"]) for c in candles]
+    signal_ts = _timestamp_seconds(candles[signal_index])
+    if signal_ts is None:
+        return None
 
-    # O índice 5 do seletor de preço da versão Lua foi tratado como HLC4.
-    go_prices = [
-        (high + low + close + close) / 4.0
-        for high, low, close in zip(highs, lows, closes)
-    ]
-
-    fast = _sma_series(go_prices, GO_FAST)
-    slow = _sma_series(go_prices, GO_SLOW)
-    buffer1 = [
-        a - b if a is not None and b is not None else None
-        for a, b in zip(fast, slow)
-    ]
-    buffer2 = _wma_series(buffer1, GO_SIGNAL)
-
-    rsi_values = _rsi_wilder_series(closes, RSI_PERIOD)
-    ema_values = _ema_series(closes, EMA_PERIOD)
-
-    return {
-        "opens": opens,
-        "closes": closes,
-        "buffer1": buffer1,
-        "buffer2": buffer2,
-        "rsi": rsi_values,
-        "ema21": ema_values,
+    current_m15_start = (signal_ts // M15_SECONDS) * M15_SECONDS
+    previous_m15_start = current_m15_start - M15_SECONDS
+    expected_starts = {
+        previous_m15_start,
+        previous_m15_start + M5_SECONDS,
+        previous_m15_start + 2 * M5_SECONDS,
     }
 
+    previous_candles = {}
+    for candle in candles[:signal_index]:
+        ts = _timestamp_seconds(candle)
+        if ts in expected_starts:
+            previous_candles[ts] = candle
 
-def _signal_at(candles, index, stage):
-    data = _calculate(candles)
-    if data is None or index < 1:
+    if set(previous_candles) != expected_starts:
         return None
 
-    line = data["buffer1"]
-    signal_line = data["buffer2"]
-    rsi_value = data["rsi"][index]
-    ema_value = data["ema21"][index]
-    close = data["closes"][index]
-
-    if (
-        line[index] is None
-        or signal_line[index] is None
-        or rsi_value is None
-        or ema_value is None
-    ):
+    try:
+        highs = [float(candle.get("high")) for candle in previous_candles.values()]
+        lows = [float(candle.get("low")) for candle in previous_candles.values()]
+    except (TypeError, ValueError):
         return None
 
-    # GO é o gatilho. Os três critérios abaixo apenas filtram o cruzamento.
-    call = (
-        _cross_up(line, signal_line, index)
-        and line[index] > 0.0
-        and rsi_value > RSI_MIDLINE
-        and close > ema_value
-    )
-    put = (
-        _cross_down(line, signal_line, index)
-        and line[index] < 0.0
-        and rsi_value < RSI_MIDLINE
-        and close < ema_value
-    )
+    return max(highs), min(lows)
 
-    if call:
-        return {
-            "direction": "CALL",
-            "confidence": 100,
-            "stage": stage,
-            "reasons": [
-                "GO 2024: cruzamento de alta SMA 1/34 + WMA 5",
-                "GO 2024: buffer1 acima da linha zero",
-                "Filtro RSI 14 acima de 50",
-                "Filtro de tendência: fechamento acima da EMA 21",
-            ],
-        }
-    if put:
+
+def _signal_at(candles, signal_index, stage):
+    if not candles or signal_index < 0 or signal_index >= len(candles):
+        return None
+
+    levels = _previous_m15_levels(candles, signal_index)
+    if levels is None:
+        return None
+
+    c1, c2 = levels
+    candle = candles[signal_index]
+
+    try:
+        open_price = float(candle["open"])
+        high = float(candle["high"])
+        low = float(candle["low"])
+        close = float(candle["close"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    # Condições originais do SCRIPT AHORA — sem filtros adicionais.
+    is_green = close > open_price
+    is_red = close < open_price
+
+    touched_c1 = high >= c1 and low <= c1
+    touched_c2 = high >= c2 and low <= c2
+
+    # No indicador Lua original, vela VERDE tocando C1 gera VENDA.
+    if is_green and touched_c1:
         return {
             "direction": "PUT",
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "GO 2024: cruzamento de baixa SMA 1/34 + WMA 5",
-                "GO 2024: buffer1 abaixo da linha zero",
-                "Filtro RSI 14 abaixo de 50",
-                "Filtro de tendência: fechamento abaixo da EMA 21",
+                "SCRIPT AHORA: candle verde tocou a máxima C1 da M15 anterior",
+                "C1 reconstruída pelos três candles M5 completos anteriores",
             ],
         }
+
+    # No indicador Lua original, vela VERMELHA tocando C2 gera COMPRA.
+    if is_red and touched_c2:
+        return {
+            "direction": "CALL",
+            "confidence": 100,
+            "stage": stage,
+            "reasons": [
+                "SCRIPT AHORA: candle vermelho tocou a mínima C2 da M15 anterior",
+                "C2 reconstruída pelos três candles M5 completos anteriores",
+            ],
+        }
+
     return None
 
 
 def get_signal(candles, config=None):
-    """Sinal confirmado na última vela fechada; a última recebida é descartada."""
-    if not candles or len(candles) < 60:
+    """Sinal confirmado no último candle fechado; descarta o candle em formação."""
+    if not candles or len(candles) < 5:
         return None
     closed = candles[:-1]
-    if len(closed) < 40:
-        return None
     return _signal_at(closed, len(closed) - 1, "CLOSED")
 
 
 def get_intrabar_signal(candles, config=None):
-    """Sinal na vela M1 em formação; pode desaparecer antes do fechamento."""
-    if not candles or len(candles) < 60:
+    """Diagnóstico opcional no candle atual; pode mudar antes do fechamento."""
+    if not candles:
         return None
-    return _signal_at(candles, len(candles) - 1, "INTRABAR_CONFIRMED")
+    return _signal_at(candles, len(candles) - 1, "INTRABAR")
 
 
 def get_pre_signal(candles, config=None):
-    """Pré-sinal de aproximação do cruzamento; informativo, nunca autoriza ordem."""
-    if not candles or len(candles) < 60:
-        return None
-
-    data = _calculate(candles)
-    index = len(candles) - 1
-    previous = index - 1
-    line = data["buffer1"]
-    signal_line = data["buffer2"]
-    rsi_value = data["rsi"][index]
-    ema_value = data["ema21"][index]
-    close = data["closes"][index]
-
-    if any(
-        values[index] is None or values[previous] is None
-        for values in (line, signal_line)
-    ) or rsi_value is None or ema_value is None:
-        return None
-
-    old_gap = line[previous] - signal_line[previous]
-    new_gap = line[index] - signal_line[index]
-
-    # Antes do cruzamento: gap se aproximando de zero, sem já ter cruzado.
-    call_approach = old_gap < new_gap < 0 and rsi_value > RSI_MIDLINE and close > ema_value
-    put_approach = old_gap > new_gap > 0 and rsi_value < RSI_MIDLINE and close < ema_value
-
-    if not (call_approach or put_approach):
-        return None
-
-    direction = "CALL" if call_approach else "PUT"
-    proximity = max(0.0, min(1.0, 1.0 - abs(new_gap) / max(abs(old_gap), 1e-12)))
-    return {
-        "direction": direction,
-        "stage": "PRE_SIGNAL",
-        "proximity": round(proximity, 4),
-        "confidence": 0,
-        "reasons": [
-            "GO 2024: cruzamento se aproximando na vela em formação",
-            "Filtros RSI 14 e EMA 21 favoráveis",
-            "Pré-sinal informativo; não autoriza ordem",
-        ],
-    }
+    """SCRIPT AHORA não define pré-sinal; não inventa gatilhos antecipados."""
+    return None
