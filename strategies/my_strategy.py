@@ -1,37 +1,27 @@
-"""DEMEX ALFA + GO 2024 CONFLUENCIA — tradução da lógica Lua para Python.
+"""GO 2024 + RSI 14 + EMA 21 — tradução do indicador Lua para Python.
 
-CALL somente quando, no mesmo candle FECHADO:
-- MACD DEMEX: EMA(7) - EMA(25) cruza acima da WMA(5) do MACD;
-- RSI(11) acima de 50;
-- candle de alta (close > open);
-- GO 2024: SMA(1)-SMA(34) cruza acima da WMA(5) do buffer.
-
-PUT aplica as condições inversas.
-A última vela recebida pelo conector é descartada por estar em formação.
-O seletor Lua inputs.titles com índice 5 foi mantido como HLC4:
-(high + low + close + close) / 4.
-Integração DEMEX: get_signal(candles, config).
+O cruzamento GO 2024 é o único gatilho. RSI, EMA 21 e linha zero são filtros.
+O GO usa HLC4 (hipótese correspondente ao seletor Lua inputs.titles = 5).
+RSI e EMA são calculados sobre o fechamento, conforme o script solicitado.
 """
 
-
-ALFA_FAST = 7
-ALFA_SLOW = 25
-ALFA_SIGNAL = 5
-ALFA_RSI = 11
 GO_FAST = 1
 GO_SLOW = 34
 GO_SIGNAL = 5
+RSI_PERIOD = 14
+EMA_PERIOD = 21
+RSI_MIDLINE = 50.0
 
 
 def _sma_series(values, period):
     result = [None] * len(values)
     if len(values) < period:
         return result
-    running = sum(values[:period])
-    result[period - 1] = running / period
+    total = sum(values[:period])
+    result[period - 1] = total / period
     for i in range(period, len(values)):
-        running += values[i] - values[i - period]
-        result[i] = running / period
+        total += values[i] - values[i - period]
+        result[i] = total / period
     return result
 
 
@@ -64,8 +54,7 @@ def _wma_series(values, period):
     return result
 
 
-def _rsi_series(values, period):
-    """RSI de Wilder, com inicialização pela média dos ganhos/perdas."""
+def _rsi_wilder_series(values, period):
     result = [None] * len(values)
     if len(values) <= period:
         return result
@@ -80,29 +69,30 @@ def _rsi_series(values, period):
     avg_gain = sum(gains) / period
     avg_loss = sum(losses) / period
 
-    def rsi_value(gain, loss):
+    def value_for(gain, loss):
         if loss == 0:
             return 100.0 if gain > 0 else 50.0
         if gain == 0:
             return 0.0
-        return 100.0 - 100.0 / (1.0 + gain / loss)
+        rs = gain / loss
+        return 100.0 - (100.0 / (1.0 + rs))
 
-    result[period] = rsi_value(avg_gain, avg_loss)
+    result[period] = value_for(avg_gain, avg_loss)
     for i in range(period + 1, len(values)):
         change = values[i] - values[i - 1]
         gain = max(change, 0.0)
         loss = max(-change, 0.0)
         avg_gain = ((avg_gain * (period - 1)) + gain) / period
         avg_loss = ((avg_loss * (period - 1)) + loss) / period
-        result[i] = rsi_value(avg_gain, avg_loss)
-
+        result[i] = value_for(avg_gain, avg_loss)
     return result
 
 
 def _cross_up(line, signal, index):
     previous = index - 1
     return (
-        line[index] is not None
+        index > 0
+        and line[index] is not None
         and signal[index] is not None
         and line[previous] is not None
         and signal[previous] is not None
@@ -114,7 +104,8 @@ def _cross_up(line, signal, index):
 def _cross_down(line, signal, index):
     previous = index - 1
     return (
-        line[index] is not None
+        index > 0
+        and line[index] is not None
         and signal[index] is not None
         and line[previous] is not None
         and signal[previous] is not None
@@ -123,235 +114,159 @@ def _cross_down(line, signal, index):
     )
 
 
-def get_signal(candles, config):
-    """Devolve CALL/PUT apenas com confluência simultânea no candle fechado."""
-    if not candles or len(candles) < 40:
+def _calculate(candles):
+    if not candles:
         return None
 
-    # O último candle do conector ainda está em formação: descartá-lo.
-    closed = candles[:-1]
-    if len(closed) < GO_SLOW + GO_SIGNAL + 2:
-        return None
+    opens = [float(c["open"]) for c in candles]
+    highs = [float(c["high"]) for c in candles]
+    lows = [float(c["low"]) for c in candles]
+    closes = [float(c["close"]) for c in candles]
 
-    opens = [float(candle["open"]) for candle in closed]
-    highs = [float(candle["high"]) for candle in closed]
-    lows = [float(candle["low"]) for candle in closed]
-    closes = [float(candle["close"]) for candle in closed]
-
-    # Lua inputs.titles[5]: HLC4 conforme o seletor usado no indicador.
-    prices = [
+    # O índice 5 do seletor de preço da versão Lua foi tratado como HLC4.
+    go_prices = [
         (high + low + close + close) / 4.0
         for high, low, close in zip(highs, lows, closes)
     ]
 
-    index = len(closed) - 1
-
-    # DEMEX ALFA: MACD EMA 7/25 com WMA 5 como linha de sinal.
-    alfa_fast = _ema_series(prices, ALFA_FAST)
-    alfa_slow = _ema_series(prices, ALFA_SLOW)
-    alfa_macd = [
-        fast - slow if fast is not None and slow is not None else None
-        for fast, slow in zip(alfa_fast, alfa_slow)
+    fast = _sma_series(go_prices, GO_FAST)
+    slow = _sma_series(go_prices, GO_SLOW)
+    buffer1 = [
+        a - b if a is not None and b is not None else None
+        for a, b in zip(fast, slow)
     ]
-    alfa_signal = _wma_series(alfa_macd, ALFA_SIGNAL)
-    alfa_rsi = _rsi_series(prices, ALFA_RSI)
+    buffer2 = _wma_series(buffer1, GO_SIGNAL)
 
-    alfa_buy = (
-        _cross_up(alfa_macd, alfa_signal, index)
-        and alfa_rsi[index] is not None
-        and alfa_rsi[index] > 50
-        and closes[index] > opens[index]
-    )
-    alfa_sell = (
-        _cross_down(alfa_macd, alfa_signal, index)
-        and alfa_rsi[index] is not None
-        and alfa_rsi[index] < 50
-        and closes[index] < opens[index]
-    )
+    rsi_values = _rsi_wilder_series(closes, RSI_PERIOD)
+    ema_values = _ema_series(closes, EMA_PERIOD)
 
-    # GO 2024: SMA 1/34; WMA 5 aplicada à diferença das médias.
-    go_fast = _sma_series(prices, GO_FAST)
-    go_slow = _sma_series(prices, GO_SLOW)
-    go_buffer1 = [
-        fast - slow if fast is not None and slow is not None else None
-        for fast, slow in zip(go_fast, go_slow)
-    ]
-    go_buffer2 = _wma_series(go_buffer1, GO_SIGNAL)
-
-    go_buy = _cross_up(go_buffer1, go_buffer2, index)
-    go_sell = _cross_down(go_buffer1, go_buffer2, index)
-
-    # Os dois indicadores precisam cruzar na mesma direção no mesmo candle.
-    if alfa_buy and go_buy:
-        return {
-            "direction": "CALL",
-            "confidence": 100,
-            "reasons": [
-                "DEMEX ALFA: cruzamento de alta MACD EMA 7/25 + WMA 5",
-                "DEMEX ALFA: RSI 11 acima de 50 e candle de alta",
-                "GO 2024: cruzamento de alta SMA 1/34 + WMA 5",
-                "Confluência simultânea confirmada em candle fechado",
-            ],
-        }
-
-    if alfa_sell and go_sell:
-        return {
-            "direction": "PUT",
-            "confidence": 100,
-            "reasons": [
-                "DEMEX ALFA: cruzamento de baixa MACD EMA 7/25 + WMA 5",
-                "DEMEX ALFA: RSI 11 abaixo de 50 e candle de baixa",
-                "GO 2024: cruzamento de baixa SMA 1/34 + WMA 5",
-                "Confluência simultânea confirmada em candle fechado",
-            ],
-        }
-
-    return None
-
-
-def get_pre_signal(candles, config=None):
-    """Detecta aproximação intrabar dos cruzamentos ALFA e GO; nunca autoriza ordem."""
-    if not candles or len(candles) < 40:
-        return None
-
-    opens = [float(candle["open"]) for candle in candles]
-    highs = [float(candle["high"]) for candle in candles]
-    lows = [float(candle["low"]) for candle in candles]
-    closes = [float(candle["close"]) for candle in candles]
-    prices = [
-        (high + low + close + close) / 4.0
-        for high, low, close in zip(highs, lows, closes)
-    ]
-    index = len(candles) - 1
-    previous = index - 1
-
-    alfa_fast = _ema_series(prices, ALFA_FAST)
-    alfa_slow = _ema_series(prices, ALFA_SLOW)
-    alfa_macd = [
-        fast - slow if fast is not None and slow is not None else None
-        for fast, slow in zip(alfa_fast, alfa_slow)
-    ]
-    alfa_signal = _wma_series(alfa_macd, ALFA_SIGNAL)
-    alfa_rsi = _rsi_series(prices, ALFA_RSI)
-
-    go_fast = _sma_series(prices, GO_FAST)
-    go_slow = _sma_series(prices, GO_SLOW)
-    go_buffer1 = [
-        fast - slow if fast is not None and slow is not None else None
-        for fast, slow in zip(go_fast, go_slow)
-    ]
-    go_buffer2 = _wma_series(go_buffer1, GO_SIGNAL)
-
-    values = (
-        (alfa_macd, alfa_signal),
-        (go_buffer1, go_buffer2),
-    )
-    if any(
-        line[index] is None or signal[index] is None
-        or line[previous] is None or signal[previous] is None
-        for line, signal in values
-    ):
-        return None
-
-    gaps = [(line[previous] - signal[previous], line[index] - signal[index])
-            for line, signal in values]
-
-    # CALL: ambos gaps ainda negativos, mas avançando em direção a zero.
-    call_approach = all(old < 0 and old < new < 0 for old, new in gaps)
-    # PUT: ambos gaps ainda positivos, mas recuando em direção a zero.
-    put_approach = all(old > 0 and old > new > 0 for old, new in gaps)
-
-    direction = "CALL" if call_approach else "PUT" if put_approach else None
-    if direction is None:
-        return None
-
-    # Filtros de direção do ALFA observados na vela em formação.
-    if direction == "CALL":
-        if alfa_rsi[index] is None or alfa_rsi[index] <= 50 or closes[index] <= opens[index]:
-            return None
-    else:
-        if alfa_rsi[index] is None or alfa_rsi[index] >= 50 or closes[index] >= opens[index]:
-            return None
-
-    # Quanto menor o valor, mais perto os dois cruzamentos estão de zero.
-    ratios = [abs(new) / max(abs(old), 1e-12) for old, new in gaps]
-    proximity = round(max(0.0, min(1.0, 1.0 - sum(ratios) / len(ratios))), 4)
     return {
-        "direction": direction,
-        "stage": "PRE_SIGNAL",
-        "proximity": proximity,
-        "confidence": 0,
-        "reasons": [
-            "DEMEX ALFA: cruzamento se aproximando na vela em formação",
-            "GO 2024: cruzamento se aproximando na vela em formação",
-            "Pré-sinal informativo; não autoriza entrada",
-        ],
+        "opens": opens,
+        "closes": closes,
+        "buffer1": buffer1,
+        "buffer2": buffer2,
+        "rsi": rsi_values,
+        "ema21": ema_values,
     }
 
 
-def get_intrabar_signal(candles, config=None):
-    """Confirma confluência na vela M1 ainda aberta; pode mudar até o fechamento."""
-    if not candles or len(candles) < 40:
+def _signal_at(candles, index, stage):
+    data = _calculate(candles)
+    if data is None or index < 1:
         return None
 
-    opens = [float(candle["open"]) for candle in candles]
-    highs = [float(candle["high"]) for candle in candles]
-    lows = [float(candle["low"]) for candle in candles]
-    closes = [float(candle["close"]) for candle in candles]
-    prices = [
-        (high + low + close + close) / 4.0
-        for high, low, close in zip(highs, lows, closes)
-    ]
-    index = len(candles) - 1
+    line = data["buffer1"]
+    signal_line = data["buffer2"]
+    rsi_value = data["rsi"][index]
+    ema_value = data["ema21"][index]
+    close = data["closes"][index]
 
-    alfa_fast = _ema_series(prices, ALFA_FAST)
-    alfa_slow = _ema_series(prices, ALFA_SLOW)
-    alfa_macd = [
-        fast - slow if fast is not None and slow is not None else None
-        for fast, slow in zip(alfa_fast, alfa_slow)
-    ]
-    alfa_signal = _wma_series(alfa_macd, ALFA_SIGNAL)
-    alfa_rsi = _rsi_series(prices, ALFA_RSI)
+    if (
+        line[index] is None
+        or signal_line[index] is None
+        or rsi_value is None
+        or ema_value is None
+    ):
+        return None
 
-    go_fast = _sma_series(prices, GO_FAST)
-    go_slow = _sma_series(prices, GO_SLOW)
-    go_buffer1 = [
-        fast - slow if fast is not None and slow is not None else None
-        for fast, slow in zip(go_fast, go_slow)
-    ]
-    go_buffer2 = _wma_series(go_buffer1, GO_SIGNAL)
-
-    alfa_buy = (
-        _cross_up(alfa_macd, alfa_signal, index)
-        and alfa_rsi[index] is not None and alfa_rsi[index] > 50
-        and closes[index] > opens[index]
+    # GO é o gatilho. Os três critérios abaixo apenas filtram o cruzamento.
+    call = (
+        _cross_up(line, signal_line, index)
+        and line[index] > 0.0
+        and rsi_value > RSI_MIDLINE
+        and close > ema_value
     )
-    alfa_sell = (
-        _cross_down(alfa_macd, alfa_signal, index)
-        and alfa_rsi[index] is not None and alfa_rsi[index] < 50
-        and closes[index] < opens[index]
+    put = (
+        _cross_down(line, signal_line, index)
+        and line[index] < 0.0
+        and rsi_value < RSI_MIDLINE
+        and close < ema_value
     )
-    go_buy = _cross_up(go_buffer1, go_buffer2, index)
-    go_sell = _cross_down(go_buffer1, go_buffer2, index)
 
-    if alfa_buy and go_buy:
+    if call:
         return {
-            "direction": "CALL", "confidence": 100, "stage": "INTRABAR_CONFIRMED",
+            "direction": "CALL",
+            "confidence": 100,
+            "stage": stage,
             "reasons": [
-                "DEMEX ALFA: cruzamento de alta na vela em formação",
-                "RSI 11 acima de 50 e candle em formação de alta",
-                "GO 2024: cruzamento de alta na vela em formação",
-                "Confluência intrabar; ainda sujeita a mudança até o fechamento",
+                "GO 2024: cruzamento de alta SMA 1/34 + WMA 5",
+                "GO 2024: buffer1 acima da linha zero",
+                "Filtro RSI 14 acima de 50",
+                "Filtro de tendência: fechamento acima da EMA 21",
             ],
         }
-    if alfa_sell and go_sell:
+    if put:
         return {
-            "direction": "PUT", "confidence": 100, "stage": "INTRABAR_CONFIRMED",
+            "direction": "PUT",
+            "confidence": 100,
+            "stage": stage,
             "reasons": [
-                "DEMEX ALFA: cruzamento de baixa na vela em formação",
-                "RSI 11 abaixo de 50 e candle em formação de baixa",
-                "GO 2024: cruzamento de baixa na vela em formação",
-                "Confluência intrabar; ainda sujeita a mudança até o fechamento",
+                "GO 2024: cruzamento de baixa SMA 1/34 + WMA 5",
+                "GO 2024: buffer1 abaixo da linha zero",
+                "Filtro RSI 14 abaixo de 50",
+                "Filtro de tendência: fechamento abaixo da EMA 21",
             ],
         }
     return None
+
+
+def get_signal(candles, config=None):
+    """Sinal confirmado na última vela fechada; a última recebida é descartada."""
+    if not candles or len(candles) < 60:
+        return None
+    closed = candles[:-1]
+    if len(closed) < 40:
+        return None
+    return _signal_at(closed, len(closed) - 1, "CLOSED")
+
+
+def get_intrabar_signal(candles, config=None):
+    """Sinal na vela M1 em formação; pode desaparecer antes do fechamento."""
+    if not candles or len(candles) < 60:
+        return None
+    return _signal_at(candles, len(candles) - 1, "INTRABAR_CONFIRMED")
+
+
+def get_pre_signal(candles, config=None):
+    """Pré-sinal de aproximação do cruzamento; informativo, nunca autoriza ordem."""
+    if not candles or len(candles) < 60:
+        return None
+
+    data = _calculate(candles)
+    index = len(candles) - 1
+    previous = index - 1
+    line = data["buffer1"]
+    signal_line = data["buffer2"]
+    rsi_value = data["rsi"][index]
+    ema_value = data["ema21"][index]
+    close = data["closes"][index]
+
+    if any(
+        values[index] is None or values[previous] is None
+        for values in (line, signal_line)
+    ) or rsi_value is None or ema_value is None:
+        return None
+
+    old_gap = line[previous] - signal_line[previous]
+    new_gap = line[index] - signal_line[index]
+
+    # Antes do cruzamento: gap se aproximando de zero, sem já ter cruzado.
+    call_approach = old_gap < new_gap < 0 and rsi_value > RSI_MIDLINE and close > ema_value
+    put_approach = old_gap > new_gap > 0 and rsi_value < RSI_MIDLINE and close < ema_value
+
+    if not (call_approach or put_approach):
+        return None
+
+    direction = "CALL" if call_approach else "PUT"
+    proximity = max(0.0, min(1.0, 1.0 - abs(new_gap) / max(abs(old_gap), 1e-12)))
+    return {
+        "direction": direction,
+        "stage": "PRE_SIGNAL",
+        "proximity": round(proximity, 4),
+        "confidence": 0,
+        "reasons": [
+            "GO 2024: cruzamento se aproximando na vela em formação",
+            "Filtros RSI 14 e EMA 21 favoráveis",
+            "Pré-sinal informativo; não autoriza ordem",
+        ],
+    }
