@@ -327,7 +327,7 @@ def main():
                 continue
             except Exception as exc:
                 logging.warning("Não foi possível ler o relógio da corretora: %s", exc)
-                time.sleep(scan_delay(settings))
+                time.sleep(0.25 if len(pending) >= MAX_PENDING_SIGNALS else scan_delay(settings))
                 continue
 
             ready = []
@@ -349,7 +349,16 @@ def main():
                     processed.add(key)
                     continue
 
-                confirmed = verify_closed_signal(connector, settings, candidate)
+                try:
+                    confirmed = verify_closed_signal(connector, settings, candidate)
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    pending.clear()
+                    preferred_key = None
+                    next_asset_refresh = 0.0
+                    break
                 if not confirmed:
                     logging.info(
                         "SINAL DESCARTADO: não confirmou no fechamento | %s %s.",
@@ -370,6 +379,7 @@ def main():
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
                     pending.clear()
+                    preferred_key = None
                     next_asset_refresh = 0.0
                     break
                 final_elapsed = final_now - close_ts if final_now is not None else None
