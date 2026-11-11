@@ -75,7 +75,8 @@ class DemoTrader:
             summary={"order_id":order_id,"symbol":signal["symbol"],"direction":signal["direction"],
                      "entry":float(amount),"expiry_minutes":self.expiry,"result":result,
                      "pnl":float(pnl),"session_net":float(self.net),"next_entry":float(self.next_entry),
-                     "stopped":self.stopped,"stop_reason":reason,"total_entries":self.total_entries,\n                     "wins":self.wins,"losses":self.losses,"ties":self.ties,"win_rate":round(win_rate,2)}
+                     "stopped":self.stopped,"stop_reason":reason,"total_entries":self.total_entries,
+                     "wins":self.wins,"losses":self.losses,"ties":self.ties,"win_rate":round(win_rate,2)}
             log.info("RESULTADO %s | P&L R$ %.2f | acumulado R$ %.2f | próxima entrada R$ %.2f",
                      result,pnl,self.net,self.next_entry)
             if self.stopped: log.warning("ROBÔ PARADO: %s",reason)
