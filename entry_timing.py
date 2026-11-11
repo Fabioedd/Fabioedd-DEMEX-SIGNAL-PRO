@@ -31,7 +31,7 @@ def closed_signal_entry_mode(seconds_after_close):
     if 0.0 <= elapsed <= 0.75:
         return "CLOSE"
     if 0.75 < elapsed <= 5.0:
-        return "NEXT_CANDLE_DELAY"
+        return "NEXT_CANDLE"
     return None
 
 

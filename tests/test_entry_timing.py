@@ -34,9 +34,9 @@ class ClosedSignalEntryTests(unittest.TestCase):
         self.assertEqual(closed_signal_entry_mode(0.75), "CLOSE")
 
     def test_closed_signal_can_enter_within_five_seconds(self):
-        self.assertEqual(closed_signal_entry_mode(0.76), "NEXT_CANDLE_DELAY")
-        self.assertEqual(closed_signal_entry_mode(2.0), "NEXT_CANDLE_DELAY")
-        self.assertEqual(closed_signal_entry_mode(5.0), "NEXT_CANDLE_DELAY")
+        self.assertEqual(closed_signal_entry_mode(0.76), "NEXT_CANDLE")
+        self.assertEqual(closed_signal_entry_mode(2.0), "NEXT_CANDLE")
+        self.assertEqual(closed_signal_entry_mode(5.0), "NEXT_CANDLE")
 
     def test_late_closed_signal_is_rejected_after_five_seconds(self):
         self.assertIsNone(closed_signal_entry_mode(5.01))
