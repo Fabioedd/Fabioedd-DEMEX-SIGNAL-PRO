@@ -158,8 +158,14 @@ def scan_once(connector,settings):
             if not result: continue
             signal_ts=candles[-2].get("timestamp")
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
+            # Descarta sinais cuja janela da vela seguinte já venceu AQUI,
+            # antes de retornar ao executor. Assim um sinal antigo de um ativo
+            # não bloqueia a procura por sinais ainda válidos nos outros aprovados.
+            # O executor repete a checagem imediatamente antes do envio da ordem.
+            if not signal_is_in_next_candle(connector,candidate):
+                continue
             _priority_symbols=list(dict.fromkeys([asset["symbol"]]+[item["symbol"] for item in pre_signals]))
-            logging.info("SINAL CONFIRMADO NA VELA FECHADA: %s em %s; aguardando a próxima vela M1 (janela máxima de 5s).",result["direction"],asset["symbol"])
+            logging.info("SINAL CONFIRMADO E DENTRO DA JANELA: %s em %s; aguardando envio na vela M1 seguinte (janela máxima de 5s).",result["direction"],asset["symbol"])
             return [candidate]
         except ConnectionError:
             raise
