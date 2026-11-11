@@ -6,13 +6,13 @@ Regras originais preservadas:
 - "Tocar" mantém a condição original: high >= nível e low <= nível.
 - Sem EMA, RSI, filtro de corpo ou filtros extras.
 
-O DEMEX atualmente recebe candles M5. Por isso, C1/C2 são reconstruídas
-agrupando os três candles M5 completos da vela M15 anterior. Sinais para
-ordens usam somente o último candle fechado.
+O DEMEX recebe candles M1. C1/C2 são reconstruídas agrupando os quinze
+candles M1 completos da vela M15 anterior. Sinais para ordens usam
+somente o último candle M1 fechado.
 """
 from __future__ import annotations
 
-M5_SECONDS = 300
+M1_SECONDS = 60
 M15_SECONDS = 900
 
 
@@ -31,14 +31,9 @@ def _timestamp_seconds(candle):
 
 
 def _previous_m15_levels(candles, signal_index):
-    """Retorna (C1, C2) da M15 imediatamente anterior ao candle do sinal.
-
-    O histórico recebido pelo DEMEX é M5. Exige os três candles M5 que
-    compõem a M15 anterior, evitando calcular níveis com dados incompletos.
-    """
+    """Retorna (C1, C2) da M15 imediatamente anterior ao candle do sinal."""
     if signal_index < 0 or signal_index >= len(candles):
         return None
-
     signal_ts = _timestamp_seconds(candles[signal_index])
     if signal_ts is None:
         return None
@@ -46,40 +41,31 @@ def _previous_m15_levels(candles, signal_index):
     current_m15_start = (signal_ts // M15_SECONDS) * M15_SECONDS
     previous_m15_start = current_m15_start - M15_SECONDS
     expected_starts = {
-        previous_m15_start,
-        previous_m15_start + M5_SECONDS,
-        previous_m15_start + 2 * M5_SECONDS,
+        previous_m15_start + offset * M1_SECONDS for offset in range(15)
     }
-
     previous_candles = {}
     for candle in candles[:signal_index]:
         ts = _timestamp_seconds(candle)
         if ts in expected_starts:
             previous_candles[ts] = candle
-
     if set(previous_candles) != expected_starts:
         return None
-
     try:
         highs = [float(candle.get("high")) for candle in previous_candles.values()]
         lows = [float(candle.get("low")) for candle in previous_candles.values()]
     except (TypeError, ValueError):
         return None
-
     return max(highs), min(lows)
 
 
 def _signal_at(candles, signal_index, stage):
     if not candles or signal_index < 0 or signal_index >= len(candles):
         return None
-
     levels = _previous_m15_levels(candles, signal_index)
     if levels is None:
         return None
-
     c1, c2 = levels
     candle = candles[signal_index]
-
     try:
         open_price = float(candle["open"])
         high = float(candle["high"])
@@ -88,14 +74,11 @@ def _signal_at(candles, signal_index, stage):
     except (KeyError, TypeError, ValueError):
         return None
 
-    # Condições originais do SCRIPT AHORA — sem filtros adicionais.
     is_green = close > open_price
     is_red = close < open_price
-
     touched_c1 = high >= c1 and low <= c1
     touched_c2 = high >= c2 and low <= c2
 
-    # No indicador Lua original, vela VERDE tocando C1 gera VENDA.
     if is_green and touched_c1:
         return {
             "direction": "PUT",
@@ -103,11 +86,9 @@ def _signal_at(candles, signal_index, stage):
             "stage": stage,
             "reasons": [
                 "SCRIPT AHORA: candle verde tocou a máxima C1 da M15 anterior",
-                "C1 reconstruída pelos três candles M5 completos anteriores",
+                "C1 reconstruída pelos quinze candles M1 completos anteriores",
             ],
         }
-
-    # No indicador Lua original, vela VERMELHA tocando C2 gera COMPRA.
     if is_red and touched_c2:
         return {
             "direction": "CALL",
@@ -115,23 +96,22 @@ def _signal_at(candles, signal_index, stage):
             "stage": stage,
             "reasons": [
                 "SCRIPT AHORA: candle vermelho tocou a mínima C2 da M15 anterior",
-                "C2 reconstruída pelos três candles M5 completos anteriores",
+                "C2 reconstruída pelos quinze candles M1 completos anteriores",
             ],
         }
-
     return None
 
 
 def get_signal(candles, config=None):
-    """Sinal confirmado no último candle fechado; descarta o candle em formação."""
-    if not candles or len(candles) < 5:
+    """Sinal confirmado no último candle M1 fechado; ignora o candle em formação."""
+    if not candles or len(candles) < 17:
         return None
     closed = candles[:-1]
     return _signal_at(closed, len(closed) - 1, "CLOSED")
 
 
 def get_intrabar_signal(candles, config=None):
-    """Diagnóstico opcional no candle atual; pode mudar antes do fechamento."""
+    """Diagnóstico opcional no candle M1 atual; pode mudar antes do fechamento."""
     if not candles:
         return None
     return _signal_at(candles, len(candles) - 1, "INTRABAR")
