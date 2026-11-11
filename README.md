@@ -10,7 +10,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
   - **CALL/COMPRA:** candle vermelho toca ou atravessa a mínima C2 da vela M15 anterior.
   - O toque preserva a condição Lua original: `high >= nível and low <= nível`.
   - Não adiciona EMA, RSI, filtro de corpo ou outros filtros.
-- O DEMEX recebe candles M1. C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os quinze candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
+- O DEMEX recebe candles M1. O backtest simula a entrada na abertura da vela seguinte e o resultado no fechamento dessa vela, sem usar candles futuros para formar o sinal. C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os quinze candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
 - Sinais que autorizam ordens usam somente o último candle fechado; o método intrabar é apenas diagnóstico e não é chamado pelo fluxo normal de execução.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
@@ -18,7 +18,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
 - Stop da sessão: -R$ 15,00; take da sessão: +R$ 30,00.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
-- Payout exigido: exatamente 87% no contrato binário. Uma ordem por sinal/vela, uma operação em andamento por vez.
+- Payout exigido: mínimo de 84% no contrato binário. Antes de liberar um ativo, o DEMEX testa os últimos 100 candles M1 e exige pelo menos 5 operações históricas com taxa de acerto estritamente acima de 70%. A lista é atualizada a cada 30 minutos sem interromper as varreduras. Uma ordem por sinal/vela, uma operação em andamento por vez.
 
 ## Trava de segurança
 
