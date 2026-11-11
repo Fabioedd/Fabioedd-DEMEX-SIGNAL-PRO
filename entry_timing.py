@@ -37,3 +37,31 @@ def is_close_confirmation_window(seconds_after_close, max_delay=0.75):
     except (TypeError, ValueError):
         return False
     return 0.0 <= elapsed <= limit
+
+
+def is_binary_active_open(active, now_timestamp):
+    """Confirma disponibilidade binária por enabled, suspensão e agenda da corretora."""
+    if not isinstance(active, dict):
+        return False
+    if not bool(active.get("enabled")) or bool(active.get("is_suspended")):
+        return False
+    schedule = active.get("schedule")
+    if not isinstance(schedule, list) or not schedule:
+        return True
+    try:
+        now = float(now_timestamp)
+    except (TypeError, ValueError):
+        return False
+    for item in schedule:
+        try:
+            if isinstance(item, dict):
+                start, end = float(item.get("open", 0)), float(item.get("close", 0))
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                start, end = float(item[0]), float(item[1])
+            else:
+                continue
+            if start <= now <= end:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
