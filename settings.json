@@ -49,5 +49,5 @@
   },
   "maximum_payout_percent": 100,
   "payout_filter_inclusive": true,
-  "backtest_candles": 100,
+  "backtest_candles": 100
 }
