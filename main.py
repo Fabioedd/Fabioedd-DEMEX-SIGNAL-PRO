@@ -514,7 +514,21 @@ def main():
             except Exception:
                 logging.exception("Não foi possível enviar a confirmação final ao Telegram.")
     except KeyboardInterrupt:
-        print("\\nRobô encerrado pelo usuário.")
+        print("\\nInterrupção recebida no Termux. Registrando o encerramento no Telegram.", flush=True)
+        trader_instance = locals().get("trader")
+        telegram_instance = locals().get("telegram")
+        if trader_instance is not None and telegram_instance is not None:
+            try:
+                telegram_instance.send_session_end(
+                    reason="Interrupção recebida pelo Termux (Ctrl+C)",
+                    total_entries=trader_instance.total_entries,
+                    wins=trader_instance.wins,
+                    losses=trader_instance.losses,
+                    ties=trader_instance.ties,
+                    session_net=trader_instance.net,
+                )
+            except Exception:
+                logging.exception("Não foi possível enviar a confirmação de encerramento ao Telegram.")
     finally:
         connector.close()
 
