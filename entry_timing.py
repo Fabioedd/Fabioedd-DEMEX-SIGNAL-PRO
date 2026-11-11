@@ -27,3 +27,13 @@ def filter_market_assets(assets, mode="OTC"):
         if (mode == "OTC" and is_otc) or (mode != "OTC" and not is_otc):
             selected.append(asset)
     return selected
+
+
+def is_close_confirmation_window(seconds_after_close, max_delay=0.75):
+    """Allows only a tiny feed-publication delay, never a next-candle entry window."""
+    try:
+        elapsed = float(seconds_after_close)
+        limit = float(max_delay)
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= elapsed <= limit
