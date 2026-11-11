@@ -262,8 +262,8 @@ def prepare_entry(connector, settings, candidate):
         )
         return False
 
-    # Sinal percebido no fechamento: entra no fechamento se capturado imediatamente;
-    # caso a leitura venha depois, aceita até +5s e aguarda esse marco para entrar.
+    # Sinal percebido no fechamento: entra imediatamente após confirmar a vela fechada.
+    # Se a leitura atrasar, ainda aceita até +5s na vela seguinte e entra assim que validar.
     elapsed = now - close_timestamp
     mode = closed_signal_entry_mode(elapsed)
     if mode == "CLOSE":
@@ -272,19 +272,17 @@ def prepare_entry(connector, settings, candidate):
             return True
         logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
         return False
-    if mode != "NEXT_CANDLE_DELAY":
-        logging.info("Sinal %s descartado: fechamento detectado fora da janela permitida.",
-                     candidate["symbol"])
+    if mode == "NEXT_CANDLE":
+        if verify_closed(connector, settings, candidate):
+            logging.info(
+                "ENTRADA LIBERADA imediatamente: sinal confirmado %.2fs após a abertura da nova vela.",
+                elapsed
+            )
+            return True
+        logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
         return False
-
-    next_candle_entry = close_timestamp + 5.0
-    now = wait_until(connector, next_candle_entry)
-    if now is None:
-        return False
-    if verify_closed(connector, settings, candidate):
-        logging.info("ENTRADA LIBERADA aos 5s após abertura da nova vela.")
-        return True
-    logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
+    logging.info("Sinal %s descartado: fechamento detectado fora da janela de 5 segundos.",
+                 candidate["symbol"])
     return False
 
 
