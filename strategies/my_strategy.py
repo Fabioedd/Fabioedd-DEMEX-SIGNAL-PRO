@@ -12,8 +12,6 @@ ordens usam somente o último candle fechado.
 """
 from __future__ import annotations
 
-from math import floor
-
 M5_SECONDS = 300
 M15_SECONDS = 900
 
