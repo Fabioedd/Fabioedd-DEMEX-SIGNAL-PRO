@@ -10,6 +10,7 @@ from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
 from strategies.my_strategy import get_intrabar_signal
 from trade_manager import DemoTrader
+from telegram_notifier import TelegramNotifier
 from entry_timing import (
     can_add_pending_signal,
     filter_market_assets,
@@ -218,6 +219,7 @@ def main():
         if not assets:
             raise RuntimeError("Nenhum ativo foi encontrado no mercado configurado.")
         trader = DemoTrader(connector, settings)
+        telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
             "SCRIPT AHORA RSI EXHAUSTION | RSI({}) | sem payout/backtest/varredura de 30 minutos."
@@ -225,6 +227,11 @@ def main():
         )
         print("Ativos monitorados: {} | Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
               .format(len(assets), trader.base, trader.stop, trader.take))
+        telegram.send_session_start(
+            account="PRACTICE/DEMO", market=settings.get("market_mode", "OTC"),
+            timeframe="M1", expiry_minutes=trader.expiry, assets_count=len(assets),
+            initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
+        )
 
         # Mantém até três sinais provisórios enquanto continua varrendo os demais ativos.
         pending = {}
@@ -372,6 +379,7 @@ def main():
                                 summary["entry"], summary["pnl"], summary["next_entry"]
                             )
                         )
+                        telegram.send_trade_result(summary)
                         if summary["stopped"]:
                             print("ROBÔ ENCERRADO: " + str(summary["stop_reason"]))
                 except ConnectionError as exc:
@@ -394,6 +402,11 @@ def main():
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
+            telegram.send_session_end(
+                reason=getattr(trader, "stop_reason", None) or "Sessão encerrada",
+                total_entries=trader.total_entries, wins=trader.wins, losses=trader.losses,
+                ties=trader.ties, session_net=trader.net
+            )
     except KeyboardInterrupt:
         print("\\nRobô encerrado pelo usuário.")
     finally:

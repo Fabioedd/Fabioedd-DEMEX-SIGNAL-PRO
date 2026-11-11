@@ -22,6 +22,7 @@ class DemoTrader:
         self.last_signal_key=None
         self.busy=False
         self.stopped=False
+        self.stop_reason=None
     def execute_and_settle(self,signal):
         if self.busy or self.stopped: return None
         if self.connector.config.account_type!="PRACTICE" or self.connector.client.get_balance_mode()!="PRACTICE":
@@ -65,9 +66,9 @@ class DemoTrader:
             else:
                 self.next_entry=self.base; self.soros_step=0
             if self.net<=-self.stop:
-                self.stopped=True; reason="STOP LOSS atingido"
+                self.stopped=True; reason="STOP LOSS atingido"; self.stop_reason=reason
             elif self.net>=self.take:
-                self.stopped=True; reason="TAKE PROFIT atingido"
+                self.stopped=True; reason="TAKE PROFIT atingido"; self.stop_reason=reason
             else: reason=None
             # Cap next stake so a single loss cannot exceed the remaining stop budget.
             if not self.stopped:
