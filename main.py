@@ -487,6 +487,24 @@ def main():
                 total_entries=trader.total_entries, wins=trader.wins, losses=trader.losses,
                 ties=trader.ties, session_net=trader.net
             )
+    except InterruptedError as exc:
+        print("Parada solicitada: encerrando o DEMEX com segurança. {}".format(exc), flush=True)
+        trader_instance = locals().get("trader")
+        telegram_instance = locals().get("telegram")
+        if trader_instance is not None:
+            trader_instance.stopped = True
+        if trader_instance is not None and telegram_instance is not None:
+            try:
+                telegram_instance.send_session_end(
+                    reason="Parada solicitada durante a reconexão",
+                    total_entries=trader_instance.total_entries,
+                    wins=trader_instance.wins,
+                    losses=trader_instance.losses,
+                    ties=trader_instance.ties,
+                    session_net=trader_instance.net,
+                )
+            except Exception:
+                logging.exception("Não foi possível enviar a confirmação final ao Telegram.")
     except KeyboardInterrupt:
         print("\\nRobô encerrado pelo usuário.")
     finally:
