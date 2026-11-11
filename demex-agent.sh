@@ -97,6 +97,25 @@ publish_local_changes() {
   log "Alteracoes locais enviadas para GitHub/$sync_branch. Revise e integre por Pull Request."
 }
 
+push_pending_agent_commits() {
+  local remote_ref="$1"
+  local subject sync_branch host
+  local found=0
+  while IFS= read -r subject; do
+    [ -n "$subject" ] || continue
+    found=1
+    case "$subject" in
+      "DEMEX Termux: sincronizacao local "*) ;;
+      *) return 1 ;;
+    esac
+  done < <(git log --format=%s "$remote_ref..HEAD")
+  [ "$found" -eq 1 ] || return 1
+  host="$(hostname 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-24)"
+  [ -n "$host" ] || host="termux"
+  sync_branch="termux-sync-$host"
+  log "Tentando reenviar commits locais pendentes para $sync_branch."
+  git push "$REMOTE" "HEAD:refs/heads/$sync_branch"
+}
 test_remote_candidate() {
   local tmp
   tmp="$(mktemp -d "$ROOT/.demex-agent-test.XXXXXX")"
@@ -139,6 +158,10 @@ sync_once() {
   }
 
   if ! git merge-base --is-ancestor HEAD "refs/remotes/$REMOTE/$MAIN_BRANCH"; then
+    if working_tree_clean && push_pending_agent_commits "refs/remotes/$REMOTE/$MAIN_BRANCH"; then
+      log "Commits locais publicados na branch de sincronizacao; aguardando revisao/PR."
+      return 0
+    fi
     log "Atualizacao pausada: GitHub e Termux divergiram. Nenhum arquivo foi sobrescrito."
     return 1
   fi
