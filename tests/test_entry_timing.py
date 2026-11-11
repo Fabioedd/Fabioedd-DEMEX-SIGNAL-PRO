@@ -6,10 +6,17 @@ from entry_timing import (
     filter_market_assets,
     is_candle_still_open,
     is_close_confirmation_window,
+    is_intrabar_entry,
 )
 
 
-class CandleCloseTests(unittest.TestCase):
+class ImmediateEntryTests(unittest.TestCase):
+    def test_only_current_forming_candle_signal_authorizes_immediate_entry(self):
+        self.assertTrue(is_intrabar_entry("INTRABAR"))
+        self.assertTrue(is_intrabar_entry("intrabar"))
+        self.assertFalse(is_intrabar_entry("CLOSED"))
+        self.assertFalse(is_intrabar_entry(None))
+
     def test_intrabar_signal_waits_for_candle_close(self):
         self.assertTrue(is_candle_still_open(30.0))
         self.assertTrue(is_candle_still_open(0.1))
