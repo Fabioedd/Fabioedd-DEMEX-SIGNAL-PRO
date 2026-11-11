@@ -4,6 +4,7 @@ import logging, os, time, threading
 from dataclasses import dataclass
 from typing import Any
 from bullexapi.stable_api import Bullex
+from entry_timing import is_binary_active_open
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -74,6 +75,55 @@ class BullexReadOnlyConnector:
         with self.api_lock:
             self._require_connection()
             return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
+    def get_otc_asset_availability(self):
+        """Consulta somente o estado dos ativos OTC da modalidade BINÁRIA, sem enviar ordens."""
+        with self.api_lock:
+            self._require_connection()
+            init_info = self.client.get_all_init_v2(force_refresh=True)
+            if not isinstance(init_info, dict):
+                raise RuntimeError("A corretora não retornou os dados de disponibilidade dos ativos binários.")
+            binary = init_info.get("binary")
+            if not isinstance(binary, dict) or not isinstance(binary.get("actives"), dict):
+                raise RuntimeError("A resposta da corretora não contém a lista de ativos BINÁRIOS.")
+            now_ts = float(self.client.get_server_timestamp())
+            # O mapa de ativos da própria API é a fonte mais confiável para o símbolo
+            # usado em get_candles/buy. O campo "name" pode conter sufixos de tipo.
+            id_to_symbol = {}
+            for known_symbol, known_id in self.client.get_all_ACTIVES_OPCODE().items():
+                try:
+                    id_to_symbol[int(known_id)] = str(known_symbol)
+                except (TypeError, ValueError):
+                    continue
+
+            result = []
+            for active_id, detail in binary["actives"].items():
+                if not isinstance(detail, dict):
+                    continue
+                try:
+                    numeric_id = int(active_id)
+                except (TypeError, ValueError):
+                    continue
+
+                symbol = id_to_symbol.get(numeric_id)
+                if not symbol:
+                    raw_name = str(detail.get("name", ""))
+                    # Aceita nomes como "binary.EURUSD-OTC" e "EURUSD-OTC.op"
+                    # sem cortar o símbolo no ponto errado.
+                    parts = [part for part in raw_name.split(".") if part]
+                    symbol = next(
+                        (part for part in parts if "OTC" in part.upper()),
+                        raw_name,
+                    )
+                if "OTC" not in symbol.upper():
+                    continue
+
+                result.append({
+                    "symbol": symbol,
+                    "active_id": numeric_id,
+                    "available": is_binary_active_open(detail, now_ts),
+                })
+            return sorted(result, key=lambda item: item["symbol"])
+
     def get_candles(self,symbol,timeframe_seconds,count=100):
         with self.api_lock:
             self._require_connection()
