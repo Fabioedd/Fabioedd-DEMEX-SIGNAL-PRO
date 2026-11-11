@@ -33,7 +33,7 @@ def market_matches(symbol,mode):
     return otc if mode.upper()=="OTC" else not otc
 
 def signal_is_in_next_candle(connector, signal):
-    """Só autoriza a entrada durante a M5 imediatamente posterior ao candle do sinal."""
+    """Só autoriza a entrada durante a M1 imediatamente posterior ao candle do sinal."""
     raw_ts=signal.get("signal_timestamp")
     if raw_ts is None:
         logging.warning("Sinal %s descartado: timestamp do candle não disponível.",signal.get("symbol","?"))
@@ -51,7 +51,7 @@ def signal_is_in_next_candle(connector, signal):
     if server_ts > 10_000_000_000:
         server_ts /= 1000.0
 
-    next_candle_start=signal_ts+300
+    next_candle_start=signal_ts+60
     # Janela estrita: somente os primeiros 5 segundos da vela M5 vizinha.
     entry_deadline=next_candle_start+5.0
     if not (next_candle_start <= server_ts < entry_deadline):
@@ -75,7 +75,7 @@ def signal_still_present(connector, settings, candidate):
     symbol=candidate["symbol"]
     try:
         candles=connector.get_candles(
-            symbol,300,int(settings.get("candles_count",120))
+            symbol,60,int(settings.get("candles_count",250))
         )
         if len(candles) < 2:
             logging.info("Sinal %s descartado: candles insuficientes na rechecagem.",symbol)
@@ -120,13 +120,13 @@ def scan_once(connector,settings):
     global _priority_symbols, _scan_cycle
     _scan_cycle += 1
     tf=settings.get("timeframe","M5").upper()
-    if tf != "M5": raise ValueError("Este robô está configurado exclusivamente para timeframe M5.")
+    if tf != "M1": raise ValueError("Este robô está configurado exclusivamente para timeframe M1.")
     if settings.get("trade_type","binary").lower() != "binary":
         raise ValueError("Este robô está bloqueado para operar somente opções BINÁRIAS.")
-    seconds=300
-    expiry=5
-    settings["timeframe"]="M5"
-    settings["expiry_minutes"]=5
+    seconds=60
+    expiry=1
+    settings["timeframe"]="M1"
+    settings["expiry_minutes"]=1
     min_payout=87.0
     max_payout=87.0
     settings["minimum_confidence"]=float(settings.get("minimum_confidence",70))
@@ -151,7 +151,7 @@ def scan_once(connector,settings):
             signal_ts=candles[-2].get("timestamp")
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
             _priority_symbols=list(dict.fromkeys([asset["symbol"]]+[item["symbol"] for item in pre_signals]))
-            logging.info("SINAL CONFIRMADO NA VELA FECHADA: %s em %s; aguardando a próxima vela M5 (janela máxima de 5s).",result["direction"],asset["symbol"])
+            logging.info("SINAL CONFIRMADO NA VELA FECHADA: %s em %s; aguardando a próxima vela M1 (janela máxima de 5s).",result["direction"],asset["symbol"])
             return [candidate]
         except ConnectionError:
             raise
@@ -188,7 +188,7 @@ def main():
         if connector.client.get_balance_mode()!="PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
         trader=DemoTrader(connector,settings)
-        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M5 | expiração 5 minutos | GO 2024 + RSI 14 + EMA 21 (filtros) | payout BINÁRIO EXATAMENTE 87%.")
+        print("DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | GO 2024 + RSI 14 + EMA 21 (filtros) | payout BINÁRIO EXATAMENTE 87%.")
         print("Entrada inicial R$ %.2f | Soros 1 | Stop R$ %.2f | Take R$ %.2f" %
               (trader.base,trader.stop,trader.take))
         while not trader.stopped:
@@ -220,7 +220,7 @@ def main():
                         # Reconsultar e confirmar o mesmo sinal na mesma vela já fechada.
                         if not signal_still_present(connector,settings,candidate):
                             continue
-                        # Entrada somente na vela M5 imediatamente seguinte, até 5s após abrir.
+                        # Entrada somente na vela M1 imediatamente seguinte, até 5s após abrir.
                         if not signal_is_in_next_candle(connector,candidate):
                             continue
                         msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
