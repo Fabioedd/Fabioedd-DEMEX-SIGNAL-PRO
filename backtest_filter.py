@@ -3,11 +3,13 @@ from __future__ import annotations
 from strategies.my_strategy import get_signal
 
 
-def evaluate_backtest(candles, minimum_trades=5):
+def evaluate_backtest(candles):
     """Entrada na abertura da vela seguinte; expiracao no fechamento dela.
 
     O ultimo candle recebido pode estar em formacao e e descartado.
     Empates nao entram no denominador da taxa de acerto.
+    A aprovacao depende somente de assertividade estritamente acima de 70%;
+    nao existe quantidade minima de operacoes historicas.
     """
     if not isinstance(candles, list) or len(candles) < 20:
         return {"approved": False, "reason": "historico_insuficiente",
@@ -40,9 +42,9 @@ def evaluate_backtest(candles, minimum_trades=5):
                 losses += 1
     decisive = wins + losses
     rate = (100.0 * wins / decisive) if decisive else 0.0
-    approved = decisive >= int(minimum_trades) and rate > 70.0
+    approved = decisive > 0 and rate > 70.0
     reason = ("aprovado" if approved else
-              "amostra_insuficiente" if decisive < int(minimum_trades) else
+              "sem_operacoes_validas" if decisive == 0 else
               "taxa_abaixo_ou_igual_70")
     return {"approved": approved, "reason": reason, "trades": decisive,
             "wins": wins, "losses": losses, "ties": ties,
