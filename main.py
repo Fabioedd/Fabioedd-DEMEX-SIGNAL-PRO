@@ -112,7 +112,7 @@ def scan_once(connector, settings, assets):
                     "stage": "CLOSED",
                 }
                 logging.info(
-                    "SINAL CONFIRMADO NO FECHAMENTO %s %s | aguardando 3 segundos após a abertura da próxima vela.",
+                    "SINAL CONFIRMADO NO FECHAMENTO %s %s | tolerância de até 5 segundos na vela seguinte.",
                     asset["symbol"], result["direction"]
                 )
                 return candidate
@@ -183,7 +183,7 @@ def candidate_close_timestamp(candidate):
 
 
 def prepare_entry(connector, settings, candidate):
-    """Aplica a janela: 2–3s antes do fechamento, no fechamento ou +3s na vela seguinte."""
+    """Confirma no fechamento ou aceita detecção tardia até +5s na vela seguinte."""
     signal_ts = normalize_timestamp(candidate.get("signal_timestamp"))
     if signal_ts is None:
         logging.warning("Sinal descartado: timestamp indisponível.")
@@ -248,7 +248,7 @@ def prepare_entry(connector, settings, candidate):
 
         # Aguarda a corretora publicar a vela concluída, por no máximo 0,75s.
         if wait_for_closed_confirmation(
-            connector, settings, candidate, close_timestamp + 0.75
+            connector, settings, candidate, close_timestamp + 5.0
         ):
             logging.info(
                 "SINAL CONFIRMADO APÓS O FECHAMENTO M1. Entrada liberada."
@@ -263,7 +263,7 @@ def prepare_entry(connector, settings, candidate):
         return False
 
     # Sinal percebido no fechamento: entra no fechamento se capturado imediatamente;
-    # caso a leitura venha um pouco depois, permite a entrada exatamente em +3s.
+    # caso a leitura venha depois, aceita até +5s e aguarda esse marco para entrar.
     elapsed = now - close_timestamp
     mode = closed_signal_entry_mode(elapsed)
     if mode == "CLOSE":
@@ -277,12 +277,12 @@ def prepare_entry(connector, settings, candidate):
                      candidate["symbol"])
         return False
 
-    next_candle_entry = close_timestamp + 3.0
+    next_candle_entry = close_timestamp + 5.0
     now = wait_until(connector, next_candle_entry)
     if now is None:
         return False
     if verify_closed(connector, settings, candidate):
-        logging.info("ENTRADA LIBERADA com 3s de atraso após abertura da nova vela.")
+        logging.info("ENTRADA LIBERADA aos 5s após abertura da nova vela.")
         return True
     logging.info("Sinal %s cancelado: não permaneceu válido no fechamento.", candidate["symbol"])
     return False
