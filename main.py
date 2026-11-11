@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
-from strategies.my_strategy import get_pre_signal
+from strategies.my_strategy import get_pre_signal, get_intrabar_signal
 from trade_manager import DemoTrader
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s: %(message)s")
@@ -113,6 +113,42 @@ def signal_still_present(connector, settings, candidate):
         return False
 
 
+
+def signal_is_in_signal_candle(connector, signal):
+    """Autoriza somente nos últimos 3 a 1 segundos da própria vela do sinal."""
+    candle_ts=normalize_timestamp(signal.get("signal_timestamp"))
+    if candle_ts is None:
+        logging.warning("Sinal %s descartado: timestamp da vela atual ausente.",signal.get("symbol","?"))
+        return False
+    server_ts=normalize_timestamp(connector.client.get_server_timestamp())
+    if server_ts is None:
+        return False
+    remaining=(candle_ts+60.0)-server_ts
+    if not (1.0 <= remaining <= 3.0):
+        logging.info("Sinal %s descartado: fora da janela da própria vela (faltam %.3fs).",
+                     signal.get("symbol","?"),remaining)
+        return False
+    return True
+
+
+def signal_still_present_intrabar(connector, settings, candidate):
+    """Reconsulta a vela em formação e exige a mesma confluência e direção."""
+    candles=connector.get_candles(candidate["symbol"],60,int(settings.get("candles_count",120)))
+    if len(candles)<2:
+        return False
+    current_ts=normalize_timestamp(candles[-1].get("timestamp"))
+    original_ts=normalize_timestamp(candidate.get("signal_timestamp"))
+    if current_ts is None or original_ts is None or current_ts != original_ts:
+        logging.info("Sinal %s descartado: a vela do sinal já mudou.",candidate["symbol"])
+        return False
+    current=get_intrabar_signal(candles,settings)
+    if not current or current.get("direction") != candidate.get("direction"):
+        logging.info("Sinal %s descartado: confluência intrabar não permanece confirmada.",candidate["symbol"])
+        return False
+    candidate.update(current)
+    candidate["signal_timestamp"]=candles[-1].get("timestamp")
+    return True
+
 def scan_once(connector,settings):
     global _priority_symbols
     tf=settings.get("timeframe","M1").upper()
@@ -136,10 +172,10 @@ def scan_once(connector,settings):
             pre=get_pre_signal(candles,settings)
             if pre:
                 pre_signals.append({**pre,**asset})
-            result=analyze(candles,settings)
-            if not result or result["confidence"] < settings["minimum_confidence"]: continue
-            # Estratégia ignora a última vela (em formação); identificar a vela fechada que gerou o sinal.
-            signal_ts=candles[-2].get("timestamp") if len(candles)>=2 else None
+            result=get_intrabar_signal(candles,settings)
+            if not result: continue
+            # O sinal e a entrada pertencem à vela M1 ainda em formação.
+            signal_ts=candles[-1].get("timestamp")
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
             candidates.append(candidate)
         except ConnectionError:
@@ -208,10 +244,10 @@ def main():
                     try:
                         # Reconsultar o ativo: só entra se o mesmo sinal continuar
                         # confirmado na mesma vela fechada que originou o candidato.
-                        if not signal_still_present(connector,settings,candidate):
+                        if not signal_still_present_intrabar(connector,settings,candidate):
                             continue
-                        # Validar a janela temporal depois da rechecagem e imediatamente antes da ordem.
-                        if not signal_is_in_next_candle(connector,candidate):
+                        # Entrada na própria vela do sinal, somente faltando 1 a 3 segundos.
+                        if not signal_is_in_signal_candle(connector,candidate):
                             continue
                         msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
                              f"expiração {candidate['expiry_minutes']} min | confiança técnica {candidate['confidence']}% | "
