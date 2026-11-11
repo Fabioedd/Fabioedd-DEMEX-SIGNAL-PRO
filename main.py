@@ -245,6 +245,7 @@ def main():
                 break
 
             confirmed = []
+            connection_lost = False
             # Guarda os sinais intrabar sem interromper a análise dos outros ativos.
             for candidate in candidates:
                 key = candidate_key(candidate)
@@ -265,11 +266,22 @@ def main():
                 try:
                     if verify_closed(connector, settings, candidate):
                         confirmed.append(candidate)
-                except ConnectionError:
-                    raise
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    connection_lost = True
+                    break
+
+            if connection_lost:
+                continue
 
             # Reavalia todos os sinais pendentes cujo candle já deveria ter fechado.
-            now = normalize_timestamp(connector.get_server_timestamp())
+            try:
+                now = normalize_timestamp(connector.get_server_timestamp())
+            except ConnectionError as exc:
+                logging.warning("Conexão perdida ao consultar horário da corretora: %s", exc)
+                connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                continue
             for key, candidate in list(pending.items()):
                 close_ts = candidate_close_timestamp(candidate)
                 if close_ts is None or now < close_ts:
@@ -305,8 +317,16 @@ def main():
                             "SINAL DESCARTADO: dados de fechamento de %s não chegaram a tempo.",
                             candidate["symbol"]
                         )
-                except ConnectionError:
-                    raise
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida ao confirmar pendência %s: %s",
+                                    candidate["symbol"], exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    pending.clear()
+                    connection_lost = True
+                    break
+
+            if connection_lost:
+                continue
 
             if confirmed:
                 # Uma única entrada: escolhe o sinal confirmado mais antigo; os demais são descartados.
