@@ -286,9 +286,9 @@ def main():
                         trader.stopped = True
                         break
                     message = (
-                        "SINAL {} | {} | M1 | RSI {} | expiração 1 minuto"
+                        "SINAL {} | {} | M1 | RSI {:.2f} | expiração 1 minuto"
                         .format(candidate["symbol"], candidate["direction"],
-                                candidate.get("rsi", settings.get("rsi_period", 14)))
+                                float(candidate.get("rsi") or 0.0))
                     )
                     alert(message, bool(settings.get("sound_alert", True)))
                     print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
