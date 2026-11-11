@@ -17,6 +17,7 @@ _scan_cycle = 0
 _approved_assets = []
 _approved_lock = threading.RLock()
 _refresh_stop = threading.Event()
+_scan_pass_number = 0
 
 
 def scan_delay(settings):
@@ -154,25 +155,43 @@ def refresh_approved_assets(connector, settings):
     approved.sort(key=lambda a: (a["backtest"]["win_rate"],
                                  a["backtest"]["trades"],
                                  a["payout_percent"]), reverse=True)
+    # Uma rodada sem aprovados nao apaga uma lista valida que ja esteja em uso.
+    # A lista anterior permanece ativa ate uma nova lista nao vazia ser aprovada.
     with _approved_lock:
-        _approved_assets = approved
-    logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados (minimo %d operacoes historicas e acerto >70%%).",
-                 len(approved), len(assets), minimum_trades)
-    return approved
+        if approved:
+            _approved_assets = approved
+            active_assets = list(_approved_assets)
+            logging.info("LISTA APROVADA ATUALIZADA: %d ativos.", len(active_assets))
+        else:
+            active_assets = list(_approved_assets)
+            if active_assets:
+                logging.warning(
+                    "NOVO BACKTEST SEM APROVADOS: mantendo os %d ativos da ultima lista valida.",
+                    len(active_assets)
+                )
+            else:
+                logging.warning("BACKTEST SEM APROVADOS e sem lista anterior; aguardando nova avaliacao.")
+    logging.info("BACKTEST CONCLUIDO: %d/%d ativos aprovados nesta rodada (minimo %d operacoes historicas e acerto >70%%). Lista ativa: %d.",
+                 len(approved), len(assets), minimum_trades, len(active_assets))
+    return active_assets
 
 
 def refresh_worker(connector, settings):
-    """Atualiza a lista aprovada a cada 30 minutos sem parar o loop de sinais."""
-    while not _refresh_stop.wait(1800):
+    """Refaz o backtest em ciclos de 30 minutos sem interromper a varredura."""
+    cycle_seconds = 1800
+    while not _refresh_stop.wait(cycle_seconds):
+        logging.info("CICLO DE 30 MINUTOS: iniciando novo backtest; o monitoramento continua ativo.")
         try:
             refresh_approved_assets(connector, settings)
         except Exception as exc:
             logging.exception("Falha na atualizacao do backtest; mantendo a ultima lista aprovada: %s", exc)
+        logging.info("CICLO DE BACKTEST concluido. Monitoramento segue somente na lista aprovada ativa.")
 
 
 def scan_once(connector,settings):
-    global _priority_symbols, _scan_cycle
+    global _priority_symbols, _scan_cycle, _scan_pass_number
     _scan_cycle += 1
+    _scan_pass_number += 1
     tf=settings.get("timeframe","M1").upper()
     if tf != "M1": raise ValueError("Este robô está configurado exclusivamente para timeframe M1.")
     if settings.get("trade_type","binary").lower() != "binary":
@@ -185,10 +204,11 @@ def scan_once(connector,settings):
     with _approved_lock:
         assets=list(_approved_assets)
     if not assets:
-        logging.info("Nenhum ativo aprovado no backtest atual. Aguardando a proxima atualizacao.")
+        logging.warning("VARREDURA %d: lista aprovada vazia. O robô permanece ligado e tentará novamente em %ss; não analisará ativos reprovados.",
+                        _scan_pass_number, scan_delay(settings))
         return []
-    logging.info("Ativos liberados pelo backtest: %d | payout binario >=84%% | acerto historico >70%%.",
-                 len(assets))
+    logging.info("INICIO DA VARREDURA %d: monitorando os %d ativos aprovados (e somente eles) | payout binario >=84%% | acerto historico >70%%.",
+                 _scan_pass_number, len(assets))
     priority_rank={symbol:index for index,symbol in enumerate(_priority_symbols)}
     # Todos os ativos dentro da faixa continuam sendo observados; pré-sinais só alteram a ordem.
     assets.sort(key=lambda item: priority_rank.get(item["symbol"],len(priority_rank)+1))
@@ -218,6 +238,9 @@ def scan_once(connector,settings):
         logging.info("PRÉ-SINAIS encontrados: %d | Prioridade: %s",len(pre_signals),preview)
     else:
         logging.info("Nenhum pré-sinal ativo nesta varredura.")
+    # Chegar ao último ativo sem sinal encerra apenas esta passagem, nunca o robô.
+    logging.info("FIM DA VARREDURA %d: %d ativos aprovados percorridos; nenhum sinal válido. Próxima passagem em até %ss, mantendo a mesma lista até o próximo backtest de 30 minutos.",
+                 _scan_pass_number, len(assets), scan_delay(settings))
     # Sem confluência confirmada, conservar a fila de pré-sinais para o próximo ciclo.
     candidates.sort(key=lambda item: (item["confidence"], item["payout_percent"]), reverse=True)
     return candidates
