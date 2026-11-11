@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
 from signal_engine import analyze
-from strategies.my_strategy import get_pre_signal
+from strategies.my_strategy import get_pre_signal, get_intrabar_signal
 from trade_manager import DemoTrader
 from backtest_filter import evaluate_backtest
 
@@ -15,6 +15,7 @@ STOP_FILE = Path(".demex_stop")
 _priority_symbols = []
 _scan_cycle = 0
 _approved_assets = []
+_pending_intrabar_signals = {}
 _approved_lock = threading.RLock()
 _refresh_stop = threading.Event()
 _scan_pass_number = 0
@@ -37,7 +38,7 @@ def market_matches(symbol,mode):
     otc="OTC" in symbol.upper()
     return otc if mode.upper()=="OTC" else not otc
 
-def signal_is_in_next_candle(connector, signal):
+def signal_is_in_next_candle(connector, signal, settings):
     """Só autoriza a entrada durante a M1 imediatamente posterior ao candle do sinal."""
     raw_ts=signal.get("signal_timestamp")
     if raw_ts is None:
@@ -57,8 +58,8 @@ def signal_is_in_next_candle(connector, signal):
         server_ts /= 1000.0
 
     next_candle_start=signal_ts+60
-    # Janela estrita: somente os primeiros 5 segundos da vela M1 vizinha.
-    entry_deadline=next_candle_start+5.0
+    # Janela estrita: somente os primeiros 10 segundos da vela M1 vizinha.
+    entry_deadline=next_candle_start+float(settings.get("entry_confirmation_window_seconds",10))
     if not (next_candle_start <= server_ts < entry_deadline):
         logging.info(
             "Sinal %s descartado por atraso: candle do sinal=%d, janela de entrada=[%.3f,%.3f), servidor=%.3f.",
@@ -73,6 +74,35 @@ def normalize_timestamp(value):
         return None
     ts=float(value)
     return ts / 1000.0 if ts > 10_000_000_000 else ts
+
+
+def resolve_intrabar_confirmation(pending, symbol, closed_timestamp, closed_signal):
+    """Só libera o sinal intrabar se a mesma direção sobreviver ao fechamento."""
+    provisional = pending.get(symbol)
+    if provisional is None:
+        return closed_signal
+
+    provisional_ts = normalize_timestamp(provisional.get("timestamp"))
+    closed_ts = normalize_timestamp(closed_timestamp)
+    if provisional_ts is None or closed_ts is None or provisional_ts > closed_ts:
+        return closed_signal
+
+    pending.pop(symbol, None)
+    if provisional_ts != closed_ts:
+        return closed_signal
+
+    if not closed_signal or closed_signal.get("direction") != provisional.get("direction"):
+        logging.info(
+            "SINAL PROVISÓRIO %s CANCELADO: não permaneceu igual após o fechamento da vela.",
+            symbol
+        )
+        return None
+
+    logging.info(
+        "SINAL PROVISÓRIO %s %s CONFIRMADO no fechamento da vela.",
+        symbol, provisional.get("direction")
+    )
+    return closed_signal
 
 
 def signal_still_present(connector, settings, candidate):
@@ -226,13 +256,34 @@ def scan_once(connector,settings):
             pre=get_pre_signal(candles,settings)
             if pre:
                 pre_signals.append({**pre,**asset})
-            # O gatilho é calculado exclusivamente na última vela já fechada.
+
+            # Registra o sinal que aparece durante a vela, mas ainda não autoriza entrada.
+            provisional=get_intrabar_signal(candles,settings)
+            current_ts=normalize_timestamp(candles[-1].get("timestamp")) if candles else None
+            if provisional and current_ts is not None:
+                previous=_pending_intrabar_signals.get(asset["symbol"])
+                if (previous is None
+                        or normalize_timestamp(previous.get("timestamp")) != current_ts):
+                    _pending_intrabar_signals[asset["symbol"]]={
+                        "timestamp":current_ts,
+                        "direction":provisional["direction"],
+                    }
+                    logging.info(
+                        "SINAL PROVISÓRIO %s %s detectado durante a vela; aguardando fechamento.",
+                        asset["symbol"], provisional["direction"]
+                    )
+
+            # O gatilho executável é calculado exclusivamente na última vela já fechada.
             result=analyze(candles,settings)
+            closed_ts=normalize_timestamp(candles[-2].get("timestamp")) if len(candles) >= 2 else None
+            result=resolve_intrabar_confirmation(
+                _pending_intrabar_signals,asset["symbol"],closed_ts,result
+            )
             if not result: continue
             signal_ts=candles[-2].get("timestamp")
             candidate={**result,**asset,"timeframe":tf,"expiry_minutes":expiry,"signal_timestamp":signal_ts}
             _priority_symbols=list(dict.fromkeys([asset["symbol"]]+[item["symbol"] for item in pre_signals]))
-            logging.info("SINAL CONFIRMADO NA VELA FECHADA: %s em %s; aguardando a próxima vela M1 (janela máxima de 5s).",result["direction"],asset["symbol"])
+            logging.info("SINAL CONFIRMADO NA VELA FECHADA: %s em %s; aguardando a próxima vela M1 (janela máxima de 10s).",result["direction"],asset["symbol"])
             return [candidate]
         except ConnectionError:
             raise
@@ -310,7 +361,7 @@ def main():
                         if not signal_still_present(connector,settings,candidate):
                             continue
                         # Entrada somente na vela M1 imediatamente seguinte, até 5s após abrir.
-                        if not signal_is_in_next_candle(connector,candidate):
+                        if not signal_is_in_next_candle(connector,candidate,settings):
                             continue
                         msg=(f"SINAL {candidate['symbol']} | {candidate['direction']} | {candidate['timeframe']} | "
                              f"expiração {candidate['expiry_minutes']} min | confiança técnica {candidate['confidence']}% | "
