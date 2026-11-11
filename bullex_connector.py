@@ -45,23 +45,24 @@ class BullexReadOnlyConnector:
             try:
                 logger.warning("Conexão perdida. Nova tentativa em %s segundos...",delay)
                 time.sleep(delay)
-                try:
-                    self.client.logout()
-                except Exception:
-                    pass
-                self.client=Bullex(self.config.email,self.config.password,
-                                   active_account_type=self.config.account_type)
-                status,detail=self.client.connect()
-                if status and self.client.check_connect():
-                    mode=self.client.get_balance_mode()
-                    if self.config.account_type!="PRACTICE" or mode!="PRACTICE":
-                        raise PermissionError("Reconexão recusada: conta PRACTICE não confirmada.")
-                    self.connected=True
-                    self.account_mode=mode
-                    logger.info("Conexão Bullex restabelecida em PRACTICE.")
-                    return True
-                self.connected=False
-                logger.warning("Ainda sem conexão: %s",detail or "sem resposta")
+                with self.api_lock:
+                    try:
+                        self.client.logout()
+                    except Exception:
+                        pass
+                    self.client=Bullex(self.config.email,self.config.password,
+                                       active_account_type=self.config.account_type)
+                    status,detail=self.client.connect()
+                    if status and self.client.check_connect():
+                        mode=self.client.get_balance_mode()
+                        if self.config.account_type!="PRACTICE" or mode!="PRACTICE":
+                            raise PermissionError("Reconexão recusada: conta PRACTICE não confirmada.")
+                        self.connected=True
+                        self.account_mode=mode
+                        logger.info("Conexão Bullex restabelecida em PRACTICE.")
+                        return True
+                    self.connected=False
+                    logger.warning("Ainda sem conexão: %s",detail or "sem resposta")
             except PermissionError:
                 raise
             except Exception as exc:
@@ -96,29 +97,30 @@ class BullexReadOnlyConnector:
             return result
     def get_open_assets(self,minimum_payout_percent=85.0,maximum_payout_percent=90.0):
         """Retorna ativos somente pelo payout BINÁRIO, nunca pelo payout de Blitz/Turbo."""
-        minimum=float(minimum_payout_percent)
-        maximum=float(maximum_payout_percent)
-        if minimum > maximum:
-            raise ValueError("Payout mínimo não pode ser maior que o máximo.")
-        payouts=self.get_payouts()
-        available=[]
-        for asset in self.get_assets():
-            rates=payouts.get(asset["symbol"],{})
-            binary_rate=next(
-                (value for kind,value in rates.items() if str(kind).strip().lower()=="binary"),
-                None
-            )
-            if binary_rate is None:
-                continue
-            binary_rate=round(float(binary_rate),2)
-            if minimum <= binary_rate <= maximum:
-                available.append({
-                    **asset,
-                    "payout_percent":binary_rate,
-                    "payout_types":rates,
-                    "trade_type":"binary"
-                })
-        return available
+        with self.api_lock:
+            minimum=float(minimum_payout_percent)
+            maximum=float(maximum_payout_percent)
+            if minimum > maximum:
+                raise ValueError("Payout mínimo não pode ser maior que o máximo.")
+            payouts=self.get_payouts()
+            available=[]
+            for asset in self.get_assets():
+                rates=payouts.get(asset["symbol"],{})
+                binary_rate=next(
+                    (value for kind,value in rates.items() if str(kind).strip().lower()=="binary"),
+                    None
+                )
+                if binary_rate is None:
+                    continue
+                binary_rate=round(float(binary_rate),2)
+                if minimum <= binary_rate <= maximum:
+                    available.append({
+                        **asset,
+                        "payout_percent":binary_rate,
+                        "payout_types":rates,
+                        "trade_type":"binary"
+                    })
+            return available
     def place_practice_order(self,symbol,direction,amount,expiry_minutes):
         with self.api_lock:
             self._require_connection()
@@ -139,10 +141,15 @@ class BullexReadOnlyConnector:
             state,pnl=self.client.check_win_v4(int(order_id))
             state=str(state).lower()
             return ("WIN" if state=="win" else "LOSS" if state=="loose" else "TIE",round(float(pnl),2))
+    def get_server_timestamp(self):
+        with self.api_lock:
+            self._require_connection()
+            return self.client.get_server_timestamp()
     def _require_connection(self):
         if not self.connected or not self.client.check_connect():
             self.connected=False
             raise ConnectionError("Bullex desconectada; processamento de sinais/ordens interrompido.")
     def close(self):
-        try: self.client.logout()
-        finally: self.connected=False
+        with self.api_lock:
+            try: self.client.logout()
+            finally: self.connected=False
