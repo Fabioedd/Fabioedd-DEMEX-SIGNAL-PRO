@@ -20,6 +20,13 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
 - Payout exigido: mínimo de 84% no contrato binário. Antes de liberar um ativo, o DEMEX testa os últimos 100 candles M1 e exige pelo menos 5 operações históricas com taxa de acerto estritamente acima de 70%. A lista é atualizada a cada 30 minutos sem interromper as varreduras. Uma ordem por sinal/vela, uma operação em andamento por vez.
 
+### Ciclo de seleção dos ativos (backtest)
+- Na inicialização, o robô faz um backtest dos ativos elegíveis e monta uma lista de aprovados.
+- Durante os 30 minutos seguintes, a varredura de sinais consulta somente essa lista; **não executa backtest a cada sinal nem a cada ciclo de varredura**.
+- Ao completar 30 minutos, um processo em segundo plano roda novo backtest e substitui a lista pelos ativos aprovados no novo ciclo. Se a atualização falhar, mantém a última lista aprovada.
+- Um sinal cuja janela de entrada já expirou é descartado durante a própria varredura, e o robô continua procurando sinais válidos nos demais ativos aprovados. Antes de enviar qualquer ordem, a janela é verificada novamente.
+- Se a API de compra não devolver confirmação e ID da ordem, o robô interrompe a execução por segurança. Não tenta repetir automaticamente uma solicitação de resultado ambíguo, para evitar uma possível ordem duplicada.
+
 ## Trava de segurança
 
 O envio de ordens só passa se **ambas** as verificações confirmarem PRACTICE: `BULLEX_ACCOUNT_TYPE=PRACTICE` no ambiente e `get_balance_mode() == "PRACTICE"` na sessão conectada. Se qualquer verificação falhar, o robô interrompe sem enviar ordem. Não configure conta REAL.
