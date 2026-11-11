@@ -5,8 +5,13 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 ## Estratégia e operação
 
 - Estratégia personalizada: `strategies/my_strategy.py` (`get_signal`, `get_pre_signal`, `get_intrabar_signal`).
-- Estratégia atual: cruzamento GO 2024 (SMA 1/34 + WMA 5), filtrado por `buffer1` acima/abaixo de zero, RSI 14 acima/abaixo de 50 e preço acima/abaixo da EMA 21.
-- Fonte de preço do GO: HLC4 como hipótese para o seletor Lua `inputs.titles = 5`; confirme se corresponde à seleção da plataforma.
+- Estratégia atual: **SCRIPT AHORA**, traduzida do Lua para Python, preservando as regras originais:
+  - **PUT/VENDA:** candle verde toca ou atravessa a máxima C1 da vela M15 anterior.
+  - **CALL/COMPRA:** candle vermelho toca ou atravessa a mínima C2 da vela M15 anterior.
+  - O toque preserva a condição Lua original: `high >= nível and low <= nível`.
+  - Não adiciona EMA, RSI, filtro de corpo ou outros filtros.
+- O DEMEX recebe candles M5. C1/C2 são reconstruídas a partir dos três candles M5 completos que formam a vela M15 anterior. Se os três candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
+- Sinais que autorizam ordens usam somente o último candle fechado; o método intrabar é apenas diagnóstico e não é chamado pelo fluxo normal de execução.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M5 (candles de 300 segundos); expiração: 5 minutos, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
@@ -40,7 +45,7 @@ Inicie com `python main.py`. A execução automática está habilitada em `setti
 
 ## Testes e limitações
 
-- Testes unitários do gerenciamento Soros/stop/take: `python -m unittest discover -s tests`.
+- Execute os testes com `python -m unittest discover -s tests`.
+- Os testes de SCRIPT AHORA verificam a tradução das condições de compra/venda e a reconstrução da M15 a partir de três candles M5.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
-- A estratégia personalizada deve usar apenas candles fechados para evitar sinais intrabar.
