@@ -437,7 +437,7 @@ def main():
                         .format(candidate["symbol"], candidate["direction"],
                                 float(candidate.get("rsi") or 0.0))
                     )
-                    telegram.send_signal(candidate)
+                    telegram.send_signal_async(candidate)
                     alert(message, bool(settings.get("sound_alert", True)))
                     print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
                     summary = trader.execute_and_settle(candidate)
