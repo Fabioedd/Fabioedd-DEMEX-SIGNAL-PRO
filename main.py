@@ -220,11 +220,6 @@ def main():
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
             .format(len(assets), trader.base, trader.stop, trader.take)
         )
-        telegram.send_session_start(
-            account="PRACTICE/DEMO", market=settings.get("market_mode", "OTC"),
-            timeframe="M1", expiry_minutes=trader.expiry, assets_count=len(assets),
-            initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
-        )
 
         # No máximo dois ativos ficam pendentes; com dois, a varredura é pausada.
         pending = {}
@@ -442,6 +437,7 @@ def main():
                         .format(candidate["symbol"], candidate["direction"],
                                 float(candidate.get("rsi") or 0.0))
                     )
+                    telegram.send_signal(candidate)
                     alert(message, bool(settings.get("sound_alert", True)))
                     print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
                     summary = trader.execute_and_settle(candidate)
@@ -460,7 +456,6 @@ def main():
                                 summary["entry"], summary["pnl"], summary["next_entry"]
                             )
                         )
-                        telegram.send_trade_result(summary)
                         if summary["stopped"]:
                             print("ROBÔ ENCERRADO: " + str(summary["stop_reason"]))
                 except ConnectionError as exc:
@@ -490,45 +485,16 @@ def main():
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
-            telegram.send_session_end(
-                reason=getattr(trader, "stop_reason", None) or "Sessão encerrada",
-                total_entries=trader.total_entries, wins=trader.wins, losses=trader.losses,
-                ties=trader.ties, session_net=trader.net
-            )
     except InterruptedError as exc:
         print("Parada solicitada: encerrando o DEMEX com segurança. {}".format(exc), flush=True)
         trader_instance = locals().get("trader")
         telegram_instance = locals().get("telegram")
         if trader_instance is not None:
             trader_instance.stopped = True
-        if trader_instance is not None and telegram_instance is not None:
-            try:
-                telegram_instance.send_session_end(
-                    reason="Parada solicitada durante a reconexão",
-                    total_entries=trader_instance.total_entries,
-                    wins=trader_instance.wins,
-                    losses=trader_instance.losses,
-                    ties=trader_instance.ties,
-                    session_net=trader_instance.net,
-                )
-            except Exception:
-                logging.exception("Não foi possível enviar a confirmação final ao Telegram.")
     except KeyboardInterrupt:
         print("\\nInterrupção recebida no Termux. Registrando o encerramento no Telegram.", flush=True)
         trader_instance = locals().get("trader")
         telegram_instance = locals().get("telegram")
-        if trader_instance is not None and telegram_instance is not None:
-            try:
-                telegram_instance.send_session_end(
-                    reason="Interrupção recebida pelo Termux (Ctrl+C)",
-                    total_entries=trader_instance.total_entries,
-                    wins=trader_instance.wins,
-                    losses=trader_instance.losses,
-                    ties=trader_instance.ties,
-                    session_net=trader_instance.net,
-                )
-            except Exception:
-                logging.exception("Não foi possível enviar a confirmação de encerramento ao Telegram.")
     finally:
         connector.close()
 
