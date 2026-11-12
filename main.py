@@ -21,7 +21,7 @@ from entry_timing import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 STOP_FILE = Path(".demex_stop")
-ASSET_REFRESH_INTERVAL_SECONDS = 300
+ASSET_REFRESH_INTERVAL_SECONDS = 900
 MAX_PENDING_SIGNALS = 2
 ENTRY_CONFIRMATION_SECONDS = 5.0
 _scan_pass_number = 0
@@ -216,7 +216,7 @@ def main():
             .format(settings.get("rsi_period", 14))
         )
         print(
-            "Ativos OTC disponíveis: {} | Atualização a cada 5 minutos | "
+            "Ativos OTC disponíveis: {} | Atualização a cada 15 minutos | "
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
             .format(len(assets), trader.base, trader.stop, trader.take)
         )

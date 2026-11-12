@@ -17,7 +17,28 @@ log() {
 }
 
 robot_is_running() {
-    pgrep -f '[p]ython.*main.py' >/dev/null 2>&1
+    # Detecta somente o main.py deste repositorio; evita falsos positivos
+    # causados por outros projetos Python em execucao no mesmo Android.
+    local pid proc_cwd proc_state cmdline repo_real
+    repo_real="$(cd "$REPO_DIR" 2>/dev/null && pwd -P)" || return 1
+
+    while IFS= read -r pid; do
+        [ -r "/proc/$pid/cmdline" ] || continue
+        proc_cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+        [ "$proc_cwd" = "$repo_real" ] || continue
+
+        proc_state="$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)"
+        case "$proc_state" in
+            Z|X) continue ;;
+        esac
+
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        case "$cmdline" in
+            *main.py*) return 0 ;;
+        esac
+    done < <(pgrep -f '[p]ython.*main.py' 2>/dev/null || true)
+
+    return 1
 }
 
 tracked_tree_is_clean() {
