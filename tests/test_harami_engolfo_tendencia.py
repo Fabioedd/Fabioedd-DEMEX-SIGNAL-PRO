@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from strategies import harami_engolfo_tendencia as strategy
 
@@ -72,7 +73,7 @@ class EmaAndSignalTests(unittest.TestCase):
     def test_wrong_trend_blocks_call(self):
         candles = [candle(100 + i, 100 + i) for i in range(44)]
         candles += [candle(143, 141), candle(141.5, 142.5)]
-        with unittest.mock.patch.object(strategy, "_ema_series") as ema:
+        with patch.object(strategy, "_ema_series") as ema:
             ema.side_effect = lambda values, period: (
                 [None] * (len(values) - 1) + ([143.0] if period == 21 else [144.0])
             )
