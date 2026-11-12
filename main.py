@@ -177,7 +177,7 @@ def candidate_key(candidate):
 
 def main():
     # A trava é liberada pelo sistema operacional quando o processo termina.
-    # Isso impede duas instâncias, mesmo se Termux e Telegram enviarem /start juntos.
+    # Isso impede duas instâncias simultâneas do DEMEX.
     robot_lock = acquire_robot_lock()
     if robot_lock is None:
         print("DEMEX já está em execução nesta pasta. Nenhuma segunda instância será iniciada.", flush=True)
@@ -488,7 +488,6 @@ def main():
     except InterruptedError as exc:
         print("Parada solicitada: encerrando o DEMEX com segurança. {}".format(exc), flush=True)
         trader_instance = locals().get("trader")
-        telegram_instance = locals().get("telegram")
         if trader_instance is not None:
             trader_instance.stopped = True
     except KeyboardInterrupt:
