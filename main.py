@@ -222,7 +222,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT DEMEX ALFA | MACD 7/25/5 | RSI(14) | sinal intrabar e entrada na abertura da próxima vela M1."
+            "SCRIPT DEMEX ALFA | MACD 7/25/5 | compra abaixo de zero e venda acima de zero | sinal intrabar e entrada na abertura da próxima vela M1."
             
         )
         print(
@@ -380,8 +380,7 @@ def main():
                         break
                     message = (
                         "SINAL {} | {} | M1 | entrada na abertura da próxima vela | expiração 1 minuto"
-                        .format(candidate["symbol"], candidate["direction"],
-                                float(candidate.get("rsi") or 0.0))
+                        .format(candidate["symbol"], candidate["direction"])
                     )
                     alert(message, bool(settings.get("sound_alert", True)))
                     print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
