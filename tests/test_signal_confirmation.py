@@ -27,6 +27,9 @@ class SignalConfirmationTests(unittest.TestCase):
             "direction": "CALL",
             "signal_timestamp": 600,
             "close_timestamp": 660,
+            # Simula o payload produzido por verify_closed_signal.
+            "closed_signal_verified": True,
+            "signal_close_timestamp": 660,
         }
 
     def candles(self, closed_timestamp):
