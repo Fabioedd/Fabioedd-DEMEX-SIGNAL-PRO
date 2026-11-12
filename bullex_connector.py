@@ -255,6 +255,14 @@ class BullexReadOnlyConnector:
             self.connected=False
             raise ConnectionError("Bullex desconectada; processamento de sinais/ordens interrompido.")
     def close(self):
+        """Encerra localmente sem derrubar o robô se a sessão remota já caiu."""
         with self.api_lock:
-            try: self.client.logout()
-            finally: self.connected=False
+            try:
+                if self.connected:
+                    self.client.logout()
+            except Exception as exc:
+                # Logout é limpeza best-effort: uma queda da rede durante o
+                # encerramento não deve mascarar o motivo real da parada.
+                logger.warning("Falha ao encerrar sessão remota da BullX: %s", exc)
+            finally:
+                self.connected = False
