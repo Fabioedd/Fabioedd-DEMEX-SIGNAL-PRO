@@ -4,16 +4,15 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 
 ## Estratégia e operação
 
-- Estratégia personalizada ativa: **GO 2024**, implementada em Python em `strategies/my_strategy.py`.
-- Tradução da lógica do indicador original:
-  - SMA rápida de 1 período.
-  - SMA lenta de 34 períodos.
-  - Diferença `buffer1 = SMA(1) - SMA(34)`.
-  - Linha de sinal `buffer2 = WMA(buffer1, 5)`.
+- Estratégia personalizada ativa: **SNIPER — Confluência**, implementada em Python em `strategies/my_strategy.py`.
+- Lógica do indicador Lua preservada:
+  - SMA rápida de 1 período e SMA lenta de 34 períodos.
+  - Diferença `buffer1 = SMA(1) - SMA(34)` e linha de sinal `buffer2 = WMA(buffer1, 5)`.
   - EMA de preço de 21 períodos e EMA de tendência de 45 períodos.
-  - **CALL:** cruzamento ascendente de buffer1 sobre buffer2, fechamento acima da EMA21 e EMA21 acima da EMA45.
-  - **PUT:** cruzamento descendente de buffer1 abaixo de buffer2, fechamento abaixo da EMA21 e EMA21 abaixo da EMA45.
-  - O seletor original `MaValue=5` é representado por HL2 `(high + low) / 2`; as duas EMAs usam `close`, como no indicador Lua.
+  - **CALL:** cruzamento ascendente de buffer1 sobre buffer2, fechamento acima da EMA21, EMA21 acima da EMA45 e Harami de alta OU Engolfo de alta na mesma vela.
+  - **PUT:** cruzamento descendente de buffer1 abaixo de buffer2, fechamento abaixo da EMA21, EMA21 abaixo da EMA45 e Harami de baixa OU Engolfo de baixa na mesma vela.
+  - O seletor original `MaValue=5` continua representado por HL2 `(high + low) / 2`; as duas EMAs usam `close`.
+  - A entrada continua sendo validada pela lógica de tempo do DEMEX na vela M1 imediatamente seguinte; o sinal intrabar é provisório até a confirmação exigida pelo motor.
 - O DEMEX recebe candles M1. O sinal provisório intrabar é revalidado no candle fechado antes de autorizar a entrada.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
@@ -59,7 +58,7 @@ Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada co
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
-- Os testes de GO 2024 verificam SMA, WMA, EMA, cruzamentos de compra/venda e confirmação em candle fechado.
+- Os testes da SNIPER verificam Harami, Engolfo, cruzamentos, filtros EMA e exigência de confluência na mesma vela.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
 
