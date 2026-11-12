@@ -39,15 +39,17 @@ class SignalConfirmationTests(unittest.TestCase):
         rows[-1]["timestamp"] = closed_timestamp + 60
         return rows
 
-    def connector(self, candles):
+    def connector(self, candles, server_timestamp=660):
         class FakeConnector:
             def get_candles(self, symbol, timeframe_seconds, count):
                 return candles
+            def get_server_timestamp(self):
+                return server_timestamp
         return FakeConnector()
 
     def test_waits_until_the_candidate_candle_is_closed(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(540))
+        connector = self.connector(self.candles(540), server_timestamp=659)
         self.assertIsNone(main.verify_closed_signal(connector, {}, candidate))
 
     def test_returns_confirmed_signal_for_same_closed_candle(self):
