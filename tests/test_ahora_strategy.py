@@ -8,7 +8,7 @@ from strategies.my_strategy import (
 )
 
 
-def make_candles(direction="PUT", count=32):
+def make_candles(direction="PUT", count=31):
     rows = []
     for index in range(count):
         rows.append({
@@ -60,11 +60,7 @@ class ScriptAhoraDonchianTests(unittest.TestCase):
         self.assertEqual(result["stage"], "INTRABAR")
 
     def test_signal_is_rechecked_on_last_closed_candle(self):
-        data = make_candles("PUT")
-        data.append({
-            "timestamp": 32 * 60,
-            "open": 100.0, "high": 100.1, "low": 99.9, "close": 100.0
-        })
+        data = make_candles("PUT", count=32)
         result = get_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "PUT")
