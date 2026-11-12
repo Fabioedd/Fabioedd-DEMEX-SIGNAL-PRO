@@ -15,6 +15,7 @@ from strategies.harami_engolfo_tendencia import get_intrabar_signal, get_signal_
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
+from asset_selector import select_qualified_assets
 from entry_timing import (
     filter_market_assets,
     is_candle_still_open,
@@ -27,6 +28,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
 ENTRY_CONFIRMATION_TOLERANCE_SECONDS = 5.0
+
+
+def asset_refresh_interval(settings):
+    """Intervalo entre ciclos completos de disponibilidade + backtest OTC."""
+    try:
+        configured = int(settings.get("asset_refresh_interval_seconds", ASSET_REFRESH_INTERVAL_SECONDS))
+    except (TypeError, ValueError):
+        configured = ASSET_REFRESH_INTERVAL_SECONDS
+    return max(60, configured)
 MAX_PENDING_SIGNALS = 1
 _scan_pass_number = 0
 
@@ -113,7 +123,7 @@ def get_market_assets(connector, settings, stop_check=None):
     logging.info(
         "DISPONIBILIDADE OTC: %d disponíveis; %d fechados ou suspensos. "
         "Atualização a cada %d minutos.",
-        len(available), unavailable_count, ASSET_REFRESH_INTERVAL_SECONDS // 60
+        len(available), unavailable_count, asset_refresh_interval(settings) // 60
     )
     return filter_market_assets(available, "OTC")
 
@@ -402,8 +412,12 @@ def main():
         if connector.client.get_balance_mode() != "PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
 
-        assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
-        next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
+        available_assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
+        assets, backtest_report = select_qualified_assets(
+            connector, available_assets, settings, stop_check=STOP_FILE.exists
+        )
+        refresh_interval = asset_refresh_interval(settings)
+        next_asset_refresh = time.monotonic() + refresh_interval
         trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
         print(
@@ -412,9 +426,13 @@ def main():
             
         )
         print(
-            "Ativos OTC disponíveis: {} | Atualização a cada 15 minutos | "
+            "Ativos OTC disponíveis: {} | Aprovados no backtest: {} | "
+            "Backtest: 200 candles M1 | mínimo 70% | nova seleção a cada {} minutos | "
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
-            .format(len(assets), trader.base, trader.stop, trader.take)
+            .format(
+                len(available_assets), len(assets), refresh_interval // 60,
+                trader.base, trader.stop, trader.take
+            )
         )
         telegram.send_session_start(
             account="PRACTICE/DEMO", market=settings.get("market_mode", "OTC"),
@@ -434,12 +452,18 @@ def main():
 
             if not pending and time.monotonic() >= next_asset_refresh:
                 try:
-                    assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
-                    logging.info(
-                        "LISTA OTC ATUALIZADA: %d ativos disponíveis para análise.",
-                        len(assets)
+                    available_assets = get_market_assets(
+                        connector, settings, stop_check=STOP_FILE.exists
                     )
-                    next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
+                    assets, backtest_report = select_qualified_assets(
+                        connector, available_assets, settings, stop_check=STOP_FILE.exists
+                    )
+                    logging.info(
+                        "LISTA OTC SUBSTITUÍDA APÓS NOVO BACKTEST: %d disponíveis; "
+                        "%d aprovados para sinais e entradas.",
+                        len(available_assets), len(assets)
+                    )
+                    next_asset_refresh = time.monotonic() + refresh_interval
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
