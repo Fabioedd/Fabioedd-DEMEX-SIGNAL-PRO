@@ -53,22 +53,32 @@ class SignalConfirmationTests(unittest.TestCase):
     def test_returns_confirmed_signal_for_same_closed_candle(self):
         candidate = self.candidate()
         connector = self.connector(self.candles(600))
-        with patch.object(main, "get_signal", return_value={"direction": "CALL", "rsi": 25.0}):
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL", "rsi": 25.0}):
             result = main.verify_closed_signal(connector, {}, candidate)
         self.assertEqual(result["direction"], "CALL")
         self.assertEqual(result["signal_timestamp"], 600)
         self.assertEqual(result["symbol"], "EURUSD-OTC")
 
+    def test_confirms_candidate_when_api_returns_it_as_last_candle(self):
+        candidate = self.candidate()
+        rows = self.candles(540)
+        rows[-1]["timestamp"] = 600
+        connector = self.connector(rows)
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
+            result = main.verify_closed_signal(connector, {}, candidate)
+        self.assertEqual(result["direction"], "CALL")
+        self.assertEqual(result["signal_timestamp"], 600)
+
     def test_rejects_signal_that_disappeared_at_close(self):
         candidate = self.candidate()
         connector = self.connector(self.candles(600))
-        with patch.object(main, "get_signal", return_value=None):
+        with patch.object(main, "get_signal_at_index", return_value=None):
             self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
     def test_rejects_signal_that_changed_direction_at_next_open(self):
         candidate = self.candidate()
         connector = self.connector(self.candles(600))
-        with patch.object(main, "get_signal", return_value={"direction": "PUT"}):
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "PUT"}):
             self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
     def test_rejects_when_the_target_candle_was_missed(self):
