@@ -21,7 +21,7 @@ from entry_timing import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 STOP_FILE = Path(".demex_stop")
-ASSET_REFRESH_INTERVAL_SECONDS = 300
+ASSET_REFRESH_INTERVAL_SECONDS = 900
 MAX_PENDING_SIGNALS = 2
 ENTRY_CONFIRMATION_SECONDS = 5.0
 _scan_pass_number = 0
