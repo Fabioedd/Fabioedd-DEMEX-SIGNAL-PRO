@@ -222,7 +222,7 @@ def _signal_at(candles, signal_index, stage):
 
 def get_signal(candles, config=None):
     """Confirma o sinal na última vela M1 concluída."""
-    if not candles or len(candles) < BB_PERIOD + 16:
+    if not candles or len(candles) < BB_PERIOD + 14:
         return None
     closed = candles[:-1]
     return _signal_at(closed, len(closed) - 1, "CLOSED")
