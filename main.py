@@ -17,14 +17,14 @@ from robot_lock import acquire_robot_lock
 from entry_timing import (
     filter_market_assets,
     is_candle_still_open,
-    is_close_confirmation_window,
+    is_close_confirmation_tolerance,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
-ENTRY_CONFIRMATION_SECONDS = 3.0
+ENTRY_CONFIRMATION_TOLERANCE_SECONDS = 3.0
 MAX_PENDING_SIGNALS = 1
 _scan_pass_number = 0
 
@@ -207,7 +207,7 @@ def verify_closed_signal(connector, settings, candidate):
 
 
 def validate_signal_immediately_before_order(connector, settings, candidate):
-    """Revalida a mesma vela/sinal e a janela de 3s imediatamente antes da ordem."""
+    """Revalida a mesma vela/sinal e a tolerância de 3s imediatamente antes da ordem."""
     candles = connector.get_candles(
         candidate["symbol"], 60, int(settings.get("candles_count", 250))
     )
@@ -223,8 +223,12 @@ def validate_signal_immediately_before_order(connector, settings, candidate):
         return False, "timestamp da corretora/candidato inválido"
 
     elapsed = server_now - close_ts
-    if not is_close_confirmation_window(elapsed, ENTRY_CONFIRMATION_SECONDS):
-        return False, "janela de entrada de 3 segundos encerrada"
+    # O único candle permitido para a ordem é o que abre no fechamento
+    # da vela do sinal. A tolerância de 3s nunca autoriza entrar em candle posterior.
+    if server_now >= close_ts + 60:
+        return False, "a vela imediatamente seguinte já passou"
+    if not is_close_confirmation_tolerance(elapsed, ENTRY_CONFIRMATION_TOLERANCE_SECONDS):
+        return False, "tolerância máxima de 3 segundos após o fechamento excedida"
 
     target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
     if target_index is None:
@@ -397,9 +401,9 @@ def main():
                 elapsed = server_now - close_ts
                 if elapsed < 0:
                     continue
-                if not is_close_confirmation_window(elapsed, ENTRY_CONFIRMATION_SECONDS):
+                if not is_close_confirmation_tolerance(elapsed, ENTRY_CONFIRMATION_TOLERANCE_SECONDS):
                     logging.info(
-                        "SINAL EXPIRADO: %s %s | %.2fs após o fechamento.",
+                        "SINAL CANCELADO: %s %s | %.2fs após o fechamento; tolerância máxima excedida.",
                         candidate["symbol"], candidate["direction"], elapsed
                     )
                     pending.pop(key, None)
@@ -437,7 +441,7 @@ def main():
 
                 if confirmed is None:
                     # A corretora ainda não publicou a nova vela; aguarda,
-                    # respeitando a janela técnica de até 3 segundos.
+                    # respeitando a tolerância técnica de até 3 segundos.
                     continue
                 if confirmed is False:
                     logging.info(
