@@ -43,6 +43,12 @@ BULLEX_ACCOUNT_TYPE=PRACTICE
 
 Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia ordens binárias após conexão e confirmação da conta PRACTICE.
 
+## Telegram: somente recebimento de sinais
+
+O Telegram é exclusivamente um canal de saída. Depois que o DEMEX seleciona e confirma um sinal, envia uma mensagem com ativo, direção CALL/PUT, período M1 e RSI. O bot **não recebe comandos**, não inicia, não para e não consulta o estado do robô. O início e a parada continuam sendo feitos pelo Termux.
+
+Configure opcionalmente `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env`. A ausência ou falha do Telegram não interrompe a análise nem a execução na conta PRACTICE. Não inicie nenhum serviço `telegram_control.py`; o listener de comandos foi removido.
+
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
