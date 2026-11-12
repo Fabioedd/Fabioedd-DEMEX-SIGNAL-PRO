@@ -71,5 +71,33 @@ class SignalConfirmationTests(unittest.TestCase):
         self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
 
+    def test_scan_ranks_five_candidates_and_requires_accuracy_strictly_above_70(self):
+        assets = [{"symbol": name + "-OTC", "active_id": i}
+                  for i, name in enumerate(["A", "B", "C", "D", "E", "F"], 1)]
+        candles = [{"timestamp": 600, "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.0}
+                   for _ in range(17)]
+        scores = iter([
+            {"accuracy": 80.0, "signals": 10, "wins": 8, "losses": 2},
+            {"accuracy": 70.0, "signals": 10, "wins": 7, "losses": 3},
+            {"accuracy": 95.0, "signals": 20, "wins": 19, "losses": 1},
+            {"accuracy": 75.0, "signals": 4, "wins": 3, "losses": 1},
+            {"accuracy": 90.0, "signals": 10, "wins": 9, "losses": 1},
+            {"accuracy": 85.0, "signals": 20, "wins": 17, "losses": 3},
+        ])
+        class FakeConnector:
+            def get_candles(self, symbol, timeframe_seconds, count):
+                return candles
+            def get_server_timestamp(self):
+                return 650
+        with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
+            with patch.object(main, "backtest_strategy", side_effect=lambda rows, config: next(scores)):
+                result = main.scan_once(FakeConnector(), {"timeframe": "M1", "trade_type": "binary"},
+                                        assets, max_candidates=5)
+        self.assertEqual(len(result), 5)
+        self.assertEqual([item["symbol"] for item in result],
+                         ["C-OTC", "E-OTC", "F-OTC", "A-OTC", "D-OTC"])
+        self.assertTrue(all(item["backtest_accuracy"] > 70.0 for item in result))
+
+
 if __name__ == "__main__":
     unittest.main()
