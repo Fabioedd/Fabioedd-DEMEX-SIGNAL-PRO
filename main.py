@@ -356,7 +356,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT GO 2024 | SMA 1/34 + WMA 5 | filtros EMA 21 e EMA 45 | confirmação no fechamento e entrada na próxima vela M1."
+            "INDICADOR SNIPER | SMA 1/34 + WMA 5 | filtros EMA 21/45 | Harami/Engolfo em confluência na mesma vela | confirmação e entrada na próxima vela M1."
             
         )
         print(
