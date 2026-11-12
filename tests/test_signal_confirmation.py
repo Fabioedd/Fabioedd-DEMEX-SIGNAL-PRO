@@ -65,6 +65,12 @@ class SignalConfirmationTests(unittest.TestCase):
         with patch.object(main, "get_signal", return_value=None):
             self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
+    def test_rejects_signal_that_changed_direction_at_next_open(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(600))
+        with patch.object(main, "get_signal", return_value={"direction": "PUT"}):
+            self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
+
     def test_rejects_when_the_target_candle_was_missed(self):
         candidate = self.candidate()
         connector = self.connector(self.candles(660))
