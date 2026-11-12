@@ -84,6 +84,10 @@ def get_market_assets(connector, settings, stop_check=None):
             raise InterruptedError("Parada solicitada durante a atualização dos ativos OTC.")
         try:
             availability = connector.get_otc_asset_availability()
+            if not availability:
+                raise MarketDataUnavailableError(
+                    "A BullX retornou zero ativos OTC; a lista não será considerada válida."
+                )
             break
         except MarketDataUnavailableError as exc:
             logging.warning(
@@ -101,10 +105,6 @@ def get_market_assets(connector, settings, stop_check=None):
             connector.reconnect_forever(stop_check=stop_check)
             retry_delay = 5
 
-    if not availability:
-        raise MarketDataUnavailableError(
-            "A BullX retornou zero ativos OTC; a lista não será considerada válida."
-        )
     available = [
         {"symbol": item["symbol"], "active_id": item["active_id"]}
         for item in availability if item.get("available") is True
