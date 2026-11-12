@@ -147,7 +147,7 @@ def _signal_at(candles, index, stage):
 
 def get_signal(candles, config=None):
     """Confirma o cruzamento na última vela M1 concluída."""
-    if not candles or len(candles) < EMA_TREND_PERIOD + 2:
+    if not candles or len(candles) < EMA_TREND_PERIOD + 1:
         return None
     closed = candles[:-1]
     return _signal_at(closed, len(closed) - 1, "CLOSED")
@@ -155,6 +155,6 @@ def get_signal(candles, config=None):
 
 def get_intrabar_signal(candles, config=None):
     """Calcula sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
-    if not candles or len(candles) < EMA_TREND_PERIOD + 1:
+    if not candles or len(candles) < EMA_TREND_PERIOD:
         return None
     return _signal_at(candles, len(candles) - 1, "INTRABAR")
