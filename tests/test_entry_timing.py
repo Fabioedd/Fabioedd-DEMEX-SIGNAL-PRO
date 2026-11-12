@@ -6,6 +6,7 @@ from entry_timing import (
     filter_market_assets,
     is_binary_active_open,
     is_candle_still_open,
+    is_close_confirmation_tolerance,
     is_close_confirmation_window,
 )
 
@@ -18,15 +19,18 @@ class CandleEntryTimingTests(unittest.TestCase):
         self.assertFalse(is_candle_still_open(-0.1))
         self.assertFalse(is_candle_still_open(None))
 
-    def test_entry_window_is_limited_to_three_seconds_after_open(self):
-        self.assertTrue(is_close_confirmation_window(0.0))
-        self.assertTrue(is_close_confirmation_window(0.5))
-        self.assertTrue(is_close_confirmation_window(2.0))
-        self.assertTrue(is_close_confirmation_window(3.0))
-        self.assertFalse(is_close_confirmation_window(3.01))
-        self.assertFalse(is_close_confirmation_window(5.0))
-        self.assertFalse(is_close_confirmation_window(-0.1))
-        self.assertFalse(is_close_confirmation_window(None))
+    def test_three_seconds_are_confirmation_tolerance_not_a_wait_period(self):
+        self.assertTrue(is_close_confirmation_tolerance(0.0))
+        self.assertTrue(is_close_confirmation_tolerance(0.05))
+        self.assertTrue(is_close_confirmation_tolerance(0.5))
+        self.assertTrue(is_close_confirmation_tolerance(2.0))
+        self.assertTrue(is_close_confirmation_tolerance(3.0))
+        self.assertFalse(is_close_confirmation_tolerance(3.01))
+        self.assertFalse(is_close_confirmation_tolerance(5.0))
+        self.assertFalse(is_close_confirmation_tolerance(-0.1))
+        self.assertFalse(is_close_confirmation_tolerance(None))
+        # A função antiga continua disponível para compatibilidade.
+        self.assertTrue(is_close_confirmation_window(1.0))
 
     def test_pending_signal_limit(self):
         self.assertTrue(can_add_pending_signal(0))
