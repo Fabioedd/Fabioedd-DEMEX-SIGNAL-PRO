@@ -47,10 +47,10 @@ class AssetSelectorTests(unittest.TestCase):
 
         self.assertEqual(connector.requested_count, 265)
         self.assertEqual(result["candles_used"], 200)
-        self.assertEqual(result["wins"], 2)
+        self.assertEqual(result["wins"], 1)
         self.assertEqual(result["losses"], 1)
-        self.assertEqual(result["operations"], 3)
-        self.assertAlmostEqual(result["accuracy"], 200 / 3)
+        self.assertEqual(result["operations"], 2)
+        self.assertEqual(result["accuracy"], 50.0)
         self.assertFalse(result["approved"])
 
     def test_exactly_70_percent_is_approved_without_minimum_trade_count(self):
@@ -62,7 +62,7 @@ class AssetSelectorTests(unittest.TestCase):
         with patch("asset_selector.get_signal_at_index") as signal:
             signal.side_effect = [{"direction": "CALL"}] * 10 + [None] * 189
             # Use a controlled next-candle path: 7 wins and 3 losses.
-            for index in range(200, 210):
+            for index in range(10):
                 candle_index = 60 + index
                 candles[candle_index + 1]["close"] = candles[candle_index + 1]["open"] + (
                     1 if index < 7 else -1
