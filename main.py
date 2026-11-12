@@ -55,18 +55,21 @@ def normalize_timestamp(value):
     return ts / 1000.0 if ts > 10_000_000_000 else ts
 
 
-def get_market_assets(connector, settings):
+def get_market_assets(connector, settings, stop_check=None):
     """Retorna somente ativos OTC binários que a corretora informa disponíveis."""
     mode = str(settings.get("market_mode", "OTC")).upper()
     if mode != "OTC":
         raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
-    try:
-        availability = connector.get_otc_asset_availability()
-    except Exception as exc:
-        if is_transport_error(exc):
+    while True:
+        try:
+            availability = connector.get_otc_asset_availability()
+            break
+        except Exception as exc:
+            if not is_transport_error(exc):
+                raise
             connector.connected = False
-            raise ConnectionError("Conexão interrompida ao atualizar a lista OTC.") from exc
-        raise
+            logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
+            connector.reconnect_forever(stop_check=stop_check)
     available = [
         {"symbol": item["symbol"], "active_id": item["active_id"]}
         for item in availability if item.get("available") is True
@@ -225,7 +228,7 @@ def main():
         if connector.client.get_balance_mode() != "PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
 
-        assets = get_market_assets(connector, settings)
+        assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
         next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
         trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
@@ -257,7 +260,7 @@ def main():
 
             if not pending and time.monotonic() >= next_asset_refresh:
                 try:
-                    assets = get_market_assets(connector, settings)
+                    assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
                     logging.info(
                         "LISTA OTC ATUALIZADA: %d ativos disponíveis para análise.",
                         len(assets)
