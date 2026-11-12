@@ -25,7 +25,7 @@ class DemoTrader:
         self.busy=False
         self.stopped=False
         self.stop_reason=None
-    def execute_and_settle(self,signal):
+    def execute_and_settle(self,signal,pre_order_check=None):
         if self.busy or self.stopped: return None
         if self.connector.config.account_type!="PRACTICE" or self.connector.client.get_balance_mode()!="PRACTICE":
             raise PermissionError("Robô bloqueado: conta PRACTICE/DEMO não confirmada.")
@@ -38,6 +38,11 @@ class DemoTrader:
             amount=min(self.next_entry,money(self.stop+self.net))
             if amount<=0:
                 self.stopped=True; return None
+            # Callback de validação final é executado depois da checagem PRACTICE
+            # e imediatamente antes de enviar a ordem à corretora.
+            if pre_order_check is not None and not pre_order_check():
+                log.info("Ordem cancelada: validação final do sinal não autorizou a entrada.")
+                return None
             order_id=self.connector.place_practice_order(signal["symbol"],signal["direction"],float(amount),self.expiry)
             log.info("ORDEM DEMO | %s | %s | R$ %.2f | ID %s",signal["symbol"],signal["direction"],amount,order_id)
             # A ordem já foi enviada: em caso de queda, reconectar e consultar
