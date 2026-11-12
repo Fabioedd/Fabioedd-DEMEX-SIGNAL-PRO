@@ -6,7 +6,10 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from bullex_connector import BullexConfig, BullexReadOnlyConnector, is_transport_error
+from bullex_connector import (
+    BullexConfig, BullexReadOnlyConnector, is_transport_error,
+    OrderRejectedError, OrderConfirmationUnknownError,
+)
 from strategies.my_strategy import get_intrabar_signal, get_signal
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
@@ -436,6 +439,23 @@ def main():
                     assets = []
                     pending.clear()
                     next_asset_refresh = 0.0
+                except OrderRejectedError as exc:
+                    # Recusa explícita: não houve abertura; não contabiliza resultado
+                    # e mantém o DEMEX analisando outros sinais.
+                    logging.warning(
+                        "ORDEM RECUSADA PELA CORRETORA | %s %s | %s. "
+                        "Nenhuma entrada contabilizada; DEMEX continuará analisando.",
+                        candidate["symbol"], candidate["direction"], exc
+                    )
+                except OrderConfirmationUnknownError as exc:
+                    # Sem ID, o estado é incerto. Parar evita duplicidade e falsa perda.
+                    logging.critical(
+                        "CONFIRMAÇÃO DA ORDEM DESCONHECIDA | %s %s | %s. "
+                        "Sessão pausada por segurança; confira o histórico da BullX.",
+                        candidate["symbol"], candidate["direction"], exc
+                    )
+                    trader.stopped = True
+                    trader.stop_reason = "Confirmação da ordem desconhecida; verificar histórico da BullX"
                 except RuntimeError as exc:
                     error_text = str(exc).lower()
                     if (
