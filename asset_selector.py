@@ -100,8 +100,8 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
     if len(closed) < window + warmup + 1:
         base["reason"] = (
             "Histórico insuficiente: necessários {} candles fechados "
-            "(200 de teste + {} de aquecimento); recebidos {}."
-        ).format(window + warmup, warmup, len(closed))
+            "({} de aquecimento + {} de sinal + 1 para avaliar o resultado); recebidos {}."
+        ).format(window + warmup + 1, warmup, window, len(closed))
         return base
 
     first_signal_index = len(closed) - window - 1
