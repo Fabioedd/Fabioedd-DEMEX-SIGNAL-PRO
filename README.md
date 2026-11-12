@@ -4,15 +4,12 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 
 ## Estratégia e operação
 
-- Estratégia personalizada ativa: **SNIPER — Confluência**, implementada em Python em `strategies/sniper_confluence.py`.
-- Lógica do indicador Lua preservada:
-  - SMA rápida de 1 período e SMA lenta de 34 períodos.
-  - Diferença `buffer1 = SMA(1) - SMA(34)` e linha de sinal `buffer2 = WMA(buffer1, 5)`.
-  - EMA de preço de 21 períodos e EMA de tendência de 45 períodos.
-  - **CALL:** cruzamento ascendente de buffer1 sobre buffer2, fechamento acima da EMA21, EMA21 acima da EMA45 e Harami de alta OU Engolfo de alta na mesma vela.
-  - **PUT:** cruzamento descendente de buffer1 abaixo de buffer2, fechamento abaixo da EMA21, EMA21 abaixo da EMA45 e Harami de baixa OU Engolfo de baixa na mesma vela.
-  - O seletor original `MaValue=5` continua representado por HL2 `(high + low) / 2`; as duas EMAs usam `close`.
-  - A entrada continua sendo validada pela lógica de tempo do DEMEX na vela M1 imediatamente seguinte; o sinal intrabar é provisório até a confirmação exigida pelo motor.
+- Estratégia ativa: **HARAMI + ENGOLFO (Tendência EMA 21/45)**, implementada em Python em `strategies/harami_engolfo_tendencia.py`.
+- Regras preservadas do indicador Lua:
+  - **CALL:** Harami de alta OU Engolfo de alta na vela analisada, com fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
+  - **PUT:** Harami de baixa OU Engolfo de baixa na vela analisada, com fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
+  - Os padrões usam somente os corpos dos dois candles, exatamente pelas comparações de abertura/fechamento do script original.
+  - Não há cruzamento SMA/WMA, RSI, Bollinger ou outro filtro adicional nesta estratégia.
 - O DEMEX recebe candles M1. O sinal provisório intrabar é revalidado no candle fechado antes de autorizar a entrada.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
