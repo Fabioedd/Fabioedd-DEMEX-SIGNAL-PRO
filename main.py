@@ -133,15 +133,13 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, e
                 if key in excluded_keys:
                     continue
                 candidates.append(candidate)
-                if len(candidates) >= max_candidates:
-                    logging.info("LIMITE DE %d sinais pendentes atingido; pausando a varredura.", max_candidates)
-                    break
         except ConnectionError:
             raise
         except Exception as exc:
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
     candidates.sort(key=lambda item: item.get("backtest_accuracy", 0.0), reverse=True)
+    candidates = candidates[:max_candidates]
     if candidates:
         ranking = " | ".join("{} {:.2f}%".format(item["symbol"], item["backtest_accuracy"])
                              for item in candidates)
