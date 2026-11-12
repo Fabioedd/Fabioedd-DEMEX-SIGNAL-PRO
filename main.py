@@ -10,7 +10,7 @@ from bullex_connector import (
     BullexConfig, BullexReadOnlyConnector, is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.sniper_confluence import get_intrabar_signal, get_signal_at_index
+from strategies.harami_engolfo_tendencia import get_intrabar_signal, get_signal_at_index
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
@@ -105,7 +105,7 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
             candles = connector.get_candles(
                 asset["symbol"], 60, int(settings.get("candles_count", 250))
             )
-            if len(candles) < 21:
+            if len(candles) < 45:
                 continue
 
             provisional = get_intrabar_signal(candles, settings)
@@ -356,7 +356,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "INDICADOR SNIPER | SMA 1/34 + WMA 5 | filtros EMA 21/45 | Harami/Engolfo em confluência na mesma vela | confirmação e entrada na próxima vela M1."
+            "INDICADOR HARAMI + ENGOLFO | padrões originais + filtros EMA 21/45 | sem cruzamento SMA/WMA adicional | M1."
             
         )
         print(
