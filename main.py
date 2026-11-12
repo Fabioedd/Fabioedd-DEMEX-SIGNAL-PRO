@@ -18,6 +18,7 @@ from entry_timing import (
     filter_market_assets,
     is_candle_still_open,
     is_close_confirmation_tolerance,
+    is_next_candle_entry_window,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -203,45 +204,38 @@ def verify_closed_signal(connector, settings, candidate):
         "signal_timestamp": candidate["signal_timestamp"],
         "timeframe": "M1",
         "expiry_minutes": 1,
+        "closed_signal_verified": True,
+        "signal_close_timestamp": close_timestamp,
     }
 
 
 def validate_signal_immediately_before_order(connector, settings, candidate):
-    """Revalida a mesma vela/sinal e a tolerância de 3s imediatamente antes da ordem."""
-    candles = connector.get_candles(
-        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-    )
-    if len(candles) < 22:
-        return False, "histórico insuficiente para revalidar"
+    """Faz somente a checagem de relógio final; não repete consultas pesadas de candles."""
+    if not candidate.get("closed_signal_verified") or candidate.get("stage") != "CLOSED":
+        return False, "a vela do sinal ainda não foi confirmada como fechada"
 
-    # Consulta o relógio depois dos candles para reduzir o risco de validar
-    # com um horário anterior à leitura de mercado.
+    close_ts = normalize_timestamp(candidate.get("signal_close_timestamp", candidate.get("close_timestamp")))
+    if close_ts is None:
+        return False, "timestamp de fechamento do sinal inválido"
+
+    # A confirmação técnica da vela já ocorreu em verify_closed_signal.
+    # Aqui fazemos somente a última checagem do relógio, imediatamente antes
+    # de place_practice_order, sem baixar o histórico de candles novamente.
     server_now = normalize_timestamp(connector.get_server_timestamp())
-    close_ts = normalize_timestamp(candidate.get("close_timestamp"))
-    target_ts = normalize_timestamp(candidate.get("signal_timestamp"))
-    if server_now is None or close_ts is None or target_ts is None:
-        return False, "timestamp da corretora/candidato inválido"
+    if server_now is None:
+        return False, "relógio da corretora indisponível"
 
     elapsed = server_now - close_ts
-    # O único candle permitido para a ordem é o que abre no fechamento
-    # da vela do sinal. A tolerância de 3s nunca autoriza entrar em candle posterior.
-    if server_now >= close_ts + 60:
-        return False, "a vela imediatamente seguinte já passou"
-    if not is_close_confirmation_tolerance(elapsed, ENTRY_CONFIRMATION_TOLERANCE_SECONDS):
-        return False, "tolerância máxima de 3 segundos após o fechamento excedida"
+    if not is_next_candle_entry_window(
+        elapsed, ENTRY_CONFIRMATION_TOLERANCE_SECONDS, 60.0
+    ):
+        if elapsed < 0:
+            return False, "a vela do sinal ainda não fechou"
+        if elapsed >= 60.0:
+            return False, "a vela imediatamente seguinte já passou; entrada descartada"
+        return False, "janela de entrada de 3 segundos excedida; entrada descartada"
 
-    target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
-    if target_index is None:
-        latest_ts = normalize_timestamp(candles[-1].get("timestamp"))
-        if latest_ts is not None and latest_ts > target_ts:
-            return False, "a vela do sinal já saiu do histórico recente"
-        return False, "a BullX ainda não publicou a vela do sinal para confirmação"
-
-    confirmed = get_signal_at_index(candles, target_index)
-    if not confirmed or confirmed.get("direction") != candidate.get("direction"):
-        return False, "o sinal GO 2024 desapareceu ou mudou de direção"
-
-    return True, "mesma vela e mesmo sinal confirmados"
+    return True, "sinal fechado confirmado; ordem autorizada na primeira vela seguinte"
 
 
 def candidate_key(candidate):
@@ -410,9 +404,8 @@ def main():
                     processed.add(key)
                     continue
 
-                # Na abertura da próxima vela, recalcula a estratégia sobre a
-                # última vela concluída. Sinal intrabar pode repintar: só entra
-                # se continuar presente e na MESMA direção.
+                # Confirma o sinal na própria vela que o originou. A ordem
+                # só poderá ser enviada na vela imediatamente seguinte.
                 try:
                     confirmed = verify_closed_signal(connector, settings, candidate)
                 except ConnectionError as exc:
@@ -440,8 +433,8 @@ def main():
                     continue
 
                 if confirmed is None:
-                    # A corretora ainda não publicou a nova vela; aguarda,
-                    # respeitando a tolerância técnica de até 3 segundos.
+                    # A corretora ainda não publicou a vela fechada do sinal.
+                    # Aguarda apenas dentro da janela de 3s; depois o sinal expira.
                     continue
                 if confirmed is False:
                     logging.info(
@@ -460,7 +453,7 @@ def main():
             if ready:
                 _, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL CONFIRMADO NA ABERTURA | %s %s | %.2fs após o fechamento; enviando na vela seguinte.",
+                    "SINAL CONFIRMADO | %s %s | %.2fs após o fechamento; envio restrito à primeira vela seguinte.",
                     candidate["symbol"], candidate["direction"], server_now - close_ts
                 )
                 pending.pop(selected_key, None)
@@ -502,7 +495,7 @@ def main():
                             candidate["symbol"], candidate["direction"], validation_reason
                         )
                         message = (
-                            "SINAL {} | {} | M1 | entrada nos primeiros 3 segundos da vela seguinte | expiração 1 minuto"
+                            "SINAL {} | {} | M1 | entrada somente nos primeiros 3 segundos da vela imediatamente seguinte | expiração 1 minuto"
                             .format(candidate["symbol"], candidate["direction"])
                         )
                         alert(message, bool(settings.get("sound_alert", True)))
