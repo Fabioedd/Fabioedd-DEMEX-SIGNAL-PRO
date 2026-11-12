@@ -8,11 +8,19 @@ class FakeConnector:
     class Config: account_type="PRACTICE"
     config=Config()
     client=FakeClient()
-    def __init__(self, results): self.results=list(results); self.orders=[]
+    def __init__(self, results): self.results=list(results); self.orders=[]; self.reconnects=0; self.connected=True
     def place_practice_order(self,symbol,direction,amount,expiry):
         self.orders.append((symbol,direction,amount,expiry))
         return len(self.orders)
-    def wait_practice_result(self,order_id): return self.results.pop(0)
+    def wait_practice_result(self,order_id):
+        item=self.results.pop(0)
+        if isinstance(item, BaseException): raise item
+        return item
+    def reconnect_forever(self,stop_check=None):
+        if stop_check and stop_check(): raise InterruptedError("stop")
+        self.reconnects += 1
+        self.connected=True
+        return True
 
 class TradeManagerTests(unittest.TestCase):
     def settings(self):
@@ -43,6 +51,15 @@ class TradeManagerTests(unittest.TestCase):
         self.assertTrue(r["stopped"])
         self.assertEqual(r["session_net"],-15.0)
         self.assertIsNone(t.execute_and_settle(self.signal(4)))
+    def test_errno_103_reconnects_and_checks_same_order_without_duplicate(self):
+        c=FakeConnector([ConnectionAbortedError(103, "Software caused connection abort"), ("WIN",4.25)])
+        t=DemoTrader(c,self.settings())
+        r=t.execute_and_settle(self.signal())
+        self.assertEqual(r["result"],"WIN")
+        self.assertEqual(c.reconnects,1)
+        self.assertEqual(len(c.orders),1)
+        self.assertEqual(t.total_entries,1)
+
     def test_take_profit_stops_session(self):
         c=FakeConnector([("WIN",30.0)])
         t=DemoTrader(c,self.settings())

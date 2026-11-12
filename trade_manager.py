@@ -1,12 +1,14 @@
 """DEMO order runner with R$5 base, Soros 1, stop and take."""
 from decimal import Decimal, ROUND_HALF_UP
 import logging
+from bullex_connector import is_transport_error
 log=logging.getLogger(__name__)
 def money(v): return Decimal(str(v)).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
 
 class DemoTrader:
-    def __init__(self,connector,settings):
+    def __init__(self,connector,settings,stop_check=None):
         self.connector=connector
+        self.stop_check=stop_check
         self.expiry=int(settings.get("expiry_minutes",1))
         cfg=settings["trading"]
         self.base=money(cfg["initial_entry_brl"])
@@ -44,15 +46,18 @@ class DemoTrader:
                 try:
                     result,pnl_raw=self.connector.wait_practice_result(order_id)
                     break
-                except Exception:
-                    try:
-                        connected=(self.connector.connected and self.connector.client.check_connect())
-                    except Exception:
-                        connected=False
-                    if connected:
+                except Exception as exc:
+                    if not is_transport_error(exc):
                         raise
-                    log.warning("Conexão caiu aguardando resultado da ordem %s; reconectando para consultar a mesma ordem.",order_id)
-                    self.connector.reconnect_forever()
+                    # O ID já foi recebido: nunca reenviar a ordem. Reconectar e
+                    # consultar exatamente o mesmo ID, mesmo se check_connect() disser True.
+                    self.connector.connected=False
+                    log.warning(
+                        "Conexão caiu aguardando resultado da ordem %s (%s); "
+                        "reconectando para consultar a mesma ordem, sem duplicá-la.",
+                        order_id, exc
+                    )
+                    self.connector.reconnect_forever(stop_check=self.stop_check)
             pnl=money(pnl_raw); self.net=money(self.net+pnl)
             self.total_entries += 1
             if result == "WIN": self.wins += 1

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from bullex_connector import BullexConfig, BullexReadOnlyConnector
+from bullex_connector import BullexConfig, BullexReadOnlyConnector, is_transport_error
 from strategies.my_strategy import get_intrabar_signal, get_signal
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
@@ -55,12 +55,21 @@ def normalize_timestamp(value):
     return ts / 1000.0 if ts > 10_000_000_000 else ts
 
 
-def get_market_assets(connector, settings):
+def get_market_assets(connector, settings, stop_check=None):
     """Retorna somente ativos OTC binários que a corretora informa disponíveis."""
     mode = str(settings.get("market_mode", "OTC")).upper()
     if mode != "OTC":
         raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
-    availability = connector.get_otc_asset_availability()
+    while True:
+        try:
+            availability = connector.get_otc_asset_availability()
+            break
+        except Exception as exc:
+            if not is_transport_error(exc):
+                raise
+            connector.connected = False
+            logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
+            connector.reconnect_forever(stop_check=stop_check)
     available = [
         {"symbol": item["symbol"], "active_id": item["active_id"]}
         for item in availability if item.get("available") is True
@@ -128,6 +137,9 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
         except ConnectionError:
             raise
         except Exception as exc:
+            if is_transport_error(exc):
+                connector.connected = False
+                raise ConnectionError("Conexão interrompida durante a leitura de candles.") from exc
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
     candidates = candidates[:max_candidates]
@@ -216,9 +228,9 @@ def main():
         if connector.client.get_balance_mode() != "PRACTICE":
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
 
-        assets = get_market_assets(connector, settings)
+        assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
         next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
-        trader = DemoTrader(connector, settings)
+        trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
@@ -248,7 +260,7 @@ def main():
 
             if not pending and time.monotonic() >= next_asset_refresh:
                 try:
-                    assets = get_market_assets(connector, settings)
+                    assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
                     logging.info(
                         "LISTA OTC ATUALIZADA: %d ativos disponíveis para análise.",
                         len(assets)
@@ -338,9 +350,24 @@ def main():
                 # se continuar presente e na MESMA direção.
                 try:
                     confirmed = verify_closed_signal(connector, settings, candidate)
-                except ConnectionError:
-                    raise
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida ao revalidar sinal: %s", exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    pending.clear()
+                    next_asset_refresh = 0.0
+                    ready = []
+                    break
                 except Exception as exc:
+                    if is_transport_error(exc):
+                        connector.connected = False
+                        logging.warning("Conexão perdida ao revalidar sinal: %s", exc)
+                        connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                        assets = []
+                        pending.clear()
+                        next_asset_refresh = 0.0
+                        ready = []
+                        break
                     logging.warning(
                         "Não foi possível revalidar %s na abertura: %s",
                         candidate["symbol"], exc
@@ -407,6 +434,7 @@ def main():
                     logging.warning("Conexão perdida antes da ordem: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
+                    pending.clear()
                     next_asset_refresh = 0.0
                 except RuntimeError as exc:
                     error_text = str(exc).lower()

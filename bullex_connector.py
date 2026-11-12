@@ -7,6 +7,33 @@ from bullexapi.stable_api import Bullex
 from entry_timing import is_binary_active_open
 logger = logging.getLogger(__name__)
 
+
+def is_transport_error(exc):
+    """Identifica quedas de socket/WebSocket, inclusive Errno 103."""
+    import errno
+    transport_errnos = {
+        errno.ECONNABORTED, errno.ECONNRESET, errno.ENOTCONN,
+        errno.EPIPE, errno.ETIMEDOUT, errno.ECONNREFUSED,
+        errno.EHOSTUNREACH, errno.ENETUNREACH,
+    }
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (ConnectionError, TimeoutError, EOFError)):
+            return True
+        if isinstance(current, OSError) and current.errno in transport_errnos:
+            return True
+        name = type(current).__name__.lower()
+        message = str(current).lower()
+        if ("connectionclosed" in name or "websocketconnection" in name
+                or "software caused connection abort" in message
+                or "connection reset" in message or "connection aborted" in message
+                or "broken pipe" in message or "websocket is already closed" in message):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 @dataclass
 class BullexConfig:
     email: str
