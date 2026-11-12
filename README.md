@@ -45,6 +45,17 @@ BULLEX_ACCOUNT_TYPE=PRACTICE
 
 Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia ordens binárias após conexão e confirmação da conta PRACTICE.
 
+
+## Controle remoto pelo Telegram
+
+O projeto inclui comandos privados para ligar e desligar o DEMEX pelo Telegram. Configure `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env` (nunca publique o token). Inicie o listener uma vez com:
+
+```bash
+bash telegram-control.sh iniciar
+```
+
+Depois, envie `/start`, `/stop`, `/status` ou `/help) em uma conversa privada com seu bot. O comando `/stop` solicita parada segura e aguarda a operação em andamento terminar. Ao iniciar pelo `bash demex.sh iniciar`, o listener também é iniciado automaticamente quando as credenciais estão configuradas. Detalhes em [TELEGRAM_CONTROL.md](TELEGRAM_CONTROL.md).
+
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
