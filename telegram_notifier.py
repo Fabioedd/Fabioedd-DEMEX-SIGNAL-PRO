@@ -42,10 +42,10 @@ class TelegramNotifier:
         except (TypeError, ValueError):
             rsi_text = "—"
         text = (
-            "📡 <b>DEMEX — SINAL CONFIRMADO</b>\\n"
-            "Ativo: <b>{}</b>\\n"
-            "Direção: <b>{}</b>\\n"
-            "Período: <b>M1</b> | Expiração: <b>1 minuto</b>\\n"
+            "📡 <b>DEMEX — SINAL CONFIRMADO</b>\n"
+            "Ativo: <b>{}</b>\n"
+            "Direção: <b>{}</b>\n"
+            "Período: <b>M1</b> | Expiração: <b>1 minuto</b>\n"
             "RSI: <b>{}</b>"
         ).format(symbol, html.escape(direction_label), rsi_text)
         return self.send(text)
