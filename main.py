@@ -7,7 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from bullex_connector import (
-    BullexConfig, BullexReadOnlyConnector, is_transport_error,
+    BullexConfig, BullexReadOnlyConnector, MarketDataUnavailableError,
+    is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
 from strategies.harami_engolfo_tendencia import get_intrabar_signal, get_signal_at_index
@@ -59,21 +60,51 @@ def normalize_timestamp(value):
     return ts / 1000.0 if ts > 10_000_000_000 else ts
 
 
+def _wait_for_market_data_retry(delay, stop_check=None):
+    """Espera em pequenos intervalos para permitir /stop durante falhas da API."""
+    deadline = time.monotonic() + max(0.0, float(delay))
+    while True:
+        if stop_check and stop_check():
+            raise InterruptedError("Parada solicitada durante a atualização dos ativos OTC.")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.25, remaining))
+
+
 def get_market_assets(connector, settings, stop_check=None):
-    """Retorna somente ativos OTC binários que a corretora informa disponíveis."""
+    """Retorna somente ativos OTC binários; repete respostas vazias/incompletas."""
     mode = str(settings.get("market_mode", "OTC")).upper()
     if mode != "OTC":
         raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
+
+    retry_delay = 5
     while True:
+        if stop_check and stop_check():
+            raise InterruptedError("Parada solicitada durante a atualização dos ativos OTC.")
         try:
             availability = connector.get_otc_asset_availability()
+            if not availability:
+                raise MarketDataUnavailableError(
+                    "A BullX retornou zero ativos OTC; a lista não será considerada válida."
+                )
             break
+        except MarketDataUnavailableError as exc:
+            logging.warning(
+                "BullX ainda não forneceu a lista de ativos OTC (%s). "
+                "Nova consulta em %d segundos; nenhuma operação será liberada.",
+                exc, retry_delay
+            )
+            _wait_for_market_data_retry(retry_delay, stop_check=stop_check)
+            retry_delay = min(retry_delay * 2, 30)
         except Exception as exc:
             if not is_transport_error(exc):
                 raise
             connector.connected = False
             logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
             connector.reconnect_forever(stop_check=stop_check)
+            retry_delay = 5
+
     available = [
         {"symbol": item["symbol"], "active_id": item["active_id"]}
         for item in availability if item.get("available") is True
