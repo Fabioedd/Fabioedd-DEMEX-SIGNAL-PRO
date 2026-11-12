@@ -1,5 +1,6 @@
 """Bullex adapter with market-data reads and guarded PRACTICE-only orders."""
 from __future__ import annotations
+import json
 import logging, os, time, threading
 from dataclasses import dataclass
 from typing import Any
@@ -35,9 +36,15 @@ def is_transport_error(exc):
         name = type(current).__name__.lower()
         message = str(current).lower()
         if ("connectionclosed" in name or "websocketconnection" in name
+                or "nameresolutionerror" in name or "maxretryerror" in name
+                or "connectionerror" in name
                 or "software caused connection abort" in message
                 or "connection reset" in message or "connection aborted" in message
-                or "broken pipe" in message or "websocket is already closed" in message):
+                or "broken pipe" in message or "websocket is already closed" in message
+                or "failed to resolve" in message or "name resolution" in message
+                or "temporary failure in name resolution" in message
+                or "max retries exceeded" in message or "httpsconnectionpool" in message
+                or "getaddrinfo failed" in message):
             return True
         current = current.__cause__ or current.__context__
     return False
@@ -65,7 +72,22 @@ class BullexReadOnlyConnector:
         self.account_mode=None
         self.api_lock=threading.RLock()
     def connect(self):
-        status,detail=self.client.connect()
+        """Conecta sem deixar falhas transitórias de DNS/HTTP derrubarem o processo."""
+        try:
+            status,detail=self.client.connect()
+        except Exception as exc:
+            self.connected=False
+            # A bullexapi pode transformar uma resposta HTTP vazia (por exemplo,
+            # quando o DNS falha antes do login) em JSONDecodeError. Isso é falha
+            # de transporte/handshake, não motivo para encerrar o DEMEX.
+            if is_transport_error(exc) or isinstance(exc, json.JSONDecodeError):
+                reason="{}: {}".format(type(exc).__name__, exc)
+                logger.warning(
+                    "Conexão inicial BullX indisponível (%s). O DEMEX poderá tentar novamente.",
+                    reason
+                )
+                return {"connected":False,"reason":reason,"requires_2fa":False}
+            raise
         if not status: return {"connected":False,"reason":str(detail or "connection_failed"),"requires_2fa":detail=="2FA"}
         self.connected=bool(self.client.check_connect())
         if self.connected:
