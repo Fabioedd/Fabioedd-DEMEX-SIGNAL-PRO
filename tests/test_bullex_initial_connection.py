@@ -1,6 +1,20 @@
 import json
+import sys
+import types
 import unittest
 from unittest.mock import patch
+
+# O pacote da corretora não é instalado no runner de testes do GitHub.
+# Stub mínimo para testar o adaptador sem rede nem credenciais reais.
+try:
+    import bullexapi.stable_api  # noqa: F401
+except ModuleNotFoundError:
+    package = types.ModuleType("bullexapi")
+    package.__path__ = []
+    stable_api = types.ModuleType("bullexapi.stable_api")
+    stable_api.Bullex = object
+    sys.modules.setdefault("bullexapi", package)
+    sys.modules.setdefault("bullexapi.stable_api", stable_api)
 
 from bullex_connector import BullexConfig, BullexReadOnlyConnector, is_transport_error
 
