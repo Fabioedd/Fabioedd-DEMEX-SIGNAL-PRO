@@ -10,7 +10,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
   - **PUT:** Harami de baixa OU Engolfo de baixa na vela analisada, com fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
   - Os padrões usam somente os corpos dos dois candles, exatamente pelas comparações de abertura/fechamento do script original.
   - Não há cruzamento SMA/WMA, RSI, Bollinger ou outro filtro adicional nesta estratégia.
-- O DEMEX recebe candles M1. O sinal provisório intrabar é revalidado no candle fechado antes de autorizar a entrada.
+- O DEMEX recebe candles M1. O sinal é calculado sobre a vela fechada e só libera entrada na vela M1 seguinte, nos primeiros 5 segundos, após confirmar o relógio da corretora e o padrão novamente.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
