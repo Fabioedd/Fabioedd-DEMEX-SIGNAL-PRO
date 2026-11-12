@@ -1,37 +1,54 @@
 # Controle remoto do DEMEX pelo Telegram
 
-O serviço `telegram_control.py` recebe comandos privados do Telegram e controla o processo `main.py` no mesmo Termux.
+O serviço `telegram_control.py` recebe comandos privados do Telegram e controla o processo `main.py` no mesmo Termux. Ele pode iniciar o DEMEX quando estiver parado e solicitar uma parada segura quando estiver ligado.
 
-## Pré-requisitos
+## 1. Configuração única
 
-- `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` configurados no arquivo local `.env`.
-- O serviço deve permanecer ativo no Termux para receber comandos.
-- Não compartilhe o token do bot.
+No arquivo local `.env` da pasta do projeto, configure:
 
-## Iniciar o serviço de controle no Termux
+```env
+TELEGRAM_BOT_TOKEN=token_fornecido_pelo_BotFather
+TELEGRAM_CHAT_ID=seu_chat_id
+```
 
-Na pasta do projeto:
+Crie o bot pelo `@BotFather` no Telegram e obtenha seu Chat ID. **Não envie o token no chat e não o publique no GitHub.** O arquivo `.env` é local e não deve ser versionado.
+
+## 2. Ativar o controle remoto no Termux
+
+Na pasta do projeto, execute uma vez:
 
 ```bash
 cd ~/Fabioedd-DEMEX-SIGNAL-PRO
-nohup python telegram_control.py > "$HOME/DEMEX_TELEGRAM_CONTROL.log" 2>&1 &
+bash telegram-control.sh iniciar
 ```
 
-Esse comando inicia somente o serviço de controle, não inicia o robô de operações.
+Esse comando inicia somente o serviço de controle; ele não liga o robô de operações. O serviço permanece ativo em segundo plano para receber comandos mesmo quando o DEMEX estiver desligado.
 
-## Comandos privados no Telegram
+Para consultar ou parar somente o listener:
 
-- `/start` — inicia `main.py`, se não houver outro processo DEMEX em execução. O próprio robô continua bloqueando qualquer conta diferente de PRACTICE/DEMO.
-- `/stop` — cria o sinal de parada usado pelo robô. Não mata o processo à força: se uma operação já estiver em andamento, ele aguarda a apuração antes de encerrar e não inicia outra entrada.
+```bash
+bash telegram-control.sh status
+bash telegram-control.sh parar
+```
+
+Quando o robô for iniciado por `bash demex.sh iniciar`, o controle Telegram também será iniciado automaticamente, caso as credenciais estejam configuradas. Se você inicia o robô diretamente com `python main.py`, mantenha o listener iniciado separadamente pelo comando acima.
+
+## 3. Comandos privados no Telegram
+
+Envie os comandos em uma conversa privada com o seu bot:
+
+- `/start` — liga o DEMEX, se não houver outro processo em execução.
+- `/stop` — solicita desligamento seguro. Não encerra à força: se houver uma operação em andamento, aguarda o resultado e não inicia outra entrada.
 - `/status` — informa se o processo está ligado ou desligado.
-- `/help` — mostra os comandos.
+- `/help` ou `/ajuda` — mostra os comandos.
 
-Somente mensagens privadas vindas do `TELEGRAM_CHAT_ID` configurado são aceitas. Outros chats são ignorados.
+Somente mensagens privadas vindas do `TELEGRAM_CHAT_ID` configurado são aceitas. Outros chats e grupos são ignorados.
 
 ## Segurança e limites
 
-- O serviço não envia ordens à corretora; somente `main.py` executa a estratégia existente.
-- O comando `/stop` é cooperativo e depende do processo principal continuar executando até terminar a operação em andamento.
-- O serviço não altera estratégia, ativos OTC, timeframe, expiração, valores, Soros, stop loss, take profit ou conta.
-- O Android pode encerrar processos em segundo plano. Se isso acontecer, o serviço precisará ser iniciado novamente no Termux.
-- O serviço não é iniciado automaticamente após reinicialização do telefone.
+- O listener não envia ordens à corretora; somente `main.py` executa a estratégia.
+- O robô continua bloqueado para conta diferente de PRACTICE/DEMO. O comando `/start` não contorna a confirmação dupla de conta.
+- O comando `/stop` é cooperativo: solicita que o robô pare novas entradas e aguarde o resultado de uma operação já aberta.
+- O serviço não altera estratégia, ativos OTC, timeframe, expiração, valores, Soros, stop loss ou take profit.
+- O listener precisa permanecer ativo no Termux para receber comandos. Depois de reiniciar o Android, inicie-o novamente, a menos que tenha configurado o Termux:Boot.
+- O Android pode encerrar processos em segundo plano; mantenha o Termux permitido para execução em segundo plano.
