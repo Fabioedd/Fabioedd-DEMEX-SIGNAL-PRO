@@ -4,7 +4,7 @@ Regras:
 - PUT: candle verde toca C1 (máxima da vela M15 anterior) e RSI >= sobrecompra.
 - CALL: candle vermelho toca C2 (mínima da vela M15 anterior) e RSI <= sobrevenda.
 - RSI padrão 14, sobrecompra 70 e sobrevenda 30; parâmetros configuráveis.
-- Sinais fechados usam apenas candles concluídos; pré-sinal intrabar é separado.
+- Sinais fechados usam apenas candles concluídos; detecção em formação serve apenas para acompanhar o fechamento.
 """
 from __future__ import annotations
 
@@ -134,15 +134,11 @@ def get_signal(candles, config=None):
 
 
 def get_intrabar_signal(candles, config=None):
-    """Sinal provisório na vela M1 atual; usado para entrada perto do fechamento."""
+    """Detecta a condição na vela M1 atual para acompanhar e confirmar no fechamento."""
     config = config or {}
     if not candles:
         return None
     return _signal_at(candles, len(candles) - 1, config, "INTRABAR")
-
-
-def get_pre_signal(candles, config=None):
-    return None
 
 def backtest_strategy(candles, config=None):
     """Backtest sem look-ahead: cada sinal fechado é avaliado pela vela M1 seguinte.
