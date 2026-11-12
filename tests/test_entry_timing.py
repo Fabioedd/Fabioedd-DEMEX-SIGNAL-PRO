@@ -83,5 +83,63 @@ class AssetDiscoveryTests(unittest.TestCase):
         self.assertEqual([a["symbol"] for a in selected], ["EURUSD-OTC", "GBPUSD-OTC"])
 
 
+class StrategySignalTests(unittest.TestCase):
+    @staticmethod
+    def make_candles(direction):
+        candles = []
+        for i in range(15):
+            if direction == "PUT":
+                open_price = 100.0 + i
+                close_price = open_price + 1.0
+                candles.append({
+                    "timestamp": i * 60,
+                    "open": open_price,
+                    "high": close_price + 0.5,
+                    "low": open_price - 0.5,
+                    "close": close_price,
+                })
+            else:
+                open_price = 115.0 - i
+                close_price = open_price - 1.0
+                candles.append({
+                    "timestamp": i * 60,
+                    "open": open_price,
+                    "high": open_price + 0.5,
+                    "low": close_price - 0.5,
+                    "close": close_price,
+                })
+        if direction == "PUT":
+            candles.append({
+                "timestamp": 900, "open": 114.0, "high": 115.5,
+                "low": 113.5, "close": 115.0,
+            })
+        else:
+            candles.append({
+                "timestamp": 900, "open": 100.0, "high": 100.6,
+                "low": 98.9, "close": 99.0,
+            })
+        return candles
+
+    def test_green_candle_touching_previous_m15_high_with_overbought_rsi_is_put(self):
+        from strategies.my_strategy import get_intrabar_signal
+        signal = get_intrabar_signal(self.make_candles("PUT"), {
+            "rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30,
+        })
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["direction"], "PUT")
+        self.assertEqual(signal["stage"], "INTRABAR")
+        self.assertGreaterEqual(signal["rsi"], 70)
+
+    def test_red_candle_touching_previous_m15_low_with_oversold_rsi_is_call(self):
+        from strategies.my_strategy import get_intrabar_signal
+        signal = get_intrabar_signal(self.make_candles("CALL"), {
+            "rsi_period": 14, "rsi_overbought": 70, "rsi_oversold": 30,
+        })
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["direction"], "CALL")
+        self.assertEqual(signal["stage"], "INTRABAR")
+        self.assertLessEqual(signal["rsi"], 30)
+
+
 if __name__ == "__main__":
     unittest.main()
