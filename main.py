@@ -171,7 +171,16 @@ def verify_closed_signal(connector, settings, candidate):
         return None
 
     target_timestamp = normalize_timestamp(candidate.get("signal_timestamp"))
-    if target_timestamp is None:
+    close_timestamp = normalize_timestamp(candidate.get("close_timestamp"))
+    if target_timestamp is None or close_timestamp is None:
+        return None
+
+    # O timestamp de abertura, sozinho, não prova que a vela fechou:
+    # algumas respostas da API incluem a vela ainda em formação como último item.
+    # Consulta o relógio da corretora para distinguir esse caso do histórico
+    # que retorna somente velas concluídas.
+    server_timestamp = normalize_timestamp(connector.get_server_timestamp())
+    if server_timestamp is None or server_timestamp < close_timestamp:
         return None
 
     target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
