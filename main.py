@@ -222,7 +222,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT DEMEX ALFA | MACD 7/25/5 | compra abaixo de zero e venda acima de zero | sinal intrabar e entrada na abertura da próxima vela M1."
+            "SCRIPT AHORA BB | Bollinger 20/2 | sequência banda, retração e C1/C2 | confirmação no fechamento e entrada na próxima vela M1."
             
         )
         print(
