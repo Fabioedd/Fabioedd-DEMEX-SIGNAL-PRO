@@ -24,43 +24,51 @@ def candles(count=40, last_open=100.0, last_close=100.5):
 
 
 class DemexAlfaStrategyTests(unittest.TestCase):
-    def test_call_requires_bullish_macd_cross_rsi_below_30_and_green_candle(self):
+    def test_call_uses_bullish_cross_below_zero_and_green_candle(self):
         data = candles()
-        with patch("strategies.my_strategy._macd_state", return_value=(-0.2, -0.1, 0.1, 0.0)), \
-             patch("strategies.my_strategy._rsi_wilder", return_value=29.9):
+        state = (-0.30, -0.20, -0.10, -0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state):
             result = get_intrabar_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "CALL")
         self.assertEqual(result["stage"], "INTRABAR")
-        self.assertLess(result["rsi"], 30)
+        self.assertNotIn("rsi", result)
 
-    def test_put_requires_bearish_macd_cross_rsi_above_70_and_red_candle(self):
+    def test_put_uses_bearish_cross_above_zero_and_red_candle(self):
         data = candles(last_open=100.5, last_close=100.0)
-        with patch("strategies.my_strategy._macd_state", return_value=(0.2, 0.1, -0.1, 0.0)), \
-             patch("strategies.my_strategy._rsi_wilder", return_value=70.1):
+        state = (0.30, 0.20, 0.10, 0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state):
             result = get_intrabar_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "PUT")
-        self.assertGreater(result["rsi"], 70)
+        self.assertNotIn("rsi", result)
 
-    def test_rsi_equal_to_30_or_70_does_not_trigger(self):
-        for value, state, open_, close in (
-            (30.0, (-0.2, -0.1, 0.1, 0.0), 100.0, 100.5),
-            (70.0, (0.2, 0.1, -0.1, 0.0), 100.5, 100.0),
-        ):
-            with patch("strategies.my_strategy._macd_state", return_value=state), \
-                 patch("strategies.my_strategy._rsi_wilder", return_value=value):
-                self.assertIsNone(get_intrabar_signal(candles(last_open=open_, last_close=close)))
+    def test_call_cross_above_zero_is_rejected(self):
+        state = (0.10, 0.20, 0.30, 0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state):
+            self.assertIsNone(get_intrabar_signal(candles()))
+
+    def test_put_cross_below_zero_is_rejected(self):
+        data = candles(last_open=100.5, last_close=100.0)
+        state = (-0.10, -0.20, -0.30, -0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state):
+            self.assertIsNone(get_intrabar_signal(data))
 
     def test_no_signal_without_macd_cross(self):
-        with patch("strategies.my_strategy._macd_state", return_value=(0.2, 0.0, 0.3, 0.1)), \
-             patch("strategies.my_strategy._rsi_wilder", return_value=20.0):
+        state = (-0.30, -0.20, -0.25, -0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state):
             self.assertIsNone(get_intrabar_signal(candles()))
+
+    def test_cross_requires_matching_candle_color(self):
+        data = candles(last_open=100.5, last_close=100.0)
+        state = (-0.30, -0.20, -0.10, -0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state):
+            self.assertIsNone(get_intrabar_signal(data))
 
     def test_closed_signal_uses_last_completed_candle(self):
         data = candles()
-        with patch("strategies.my_strategy._macd_state", return_value=(-0.2, -0.1, 0.1, 0.0)) as macd, \
-             patch("strategies.my_strategy._rsi_wilder", return_value=20.0):
+        state = (-0.30, -0.20, -0.10, -0.20)
+        with patch("strategies.my_strategy._macd_state", return_value=state) as macd:
             result = get_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["stage"], "CLOSED")
