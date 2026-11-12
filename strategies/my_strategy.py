@@ -1,12 +1,18 @@
-"""SNIPER — tradução do indicador Lua para o motor Python do DEMEX.
+"""GO 2024 — tradução fiel do indicador Lua para o motor Python do DEMEX.
 
-Confluência obrigatória na mesma vela:
-- GO 2024: SMA(1) - SMA(34), WMA(5) do diferencial.
-- Filtros: close > EMA(21) > EMA(45) para CALL; inverso para PUT.
-- Padrão de candle: Harami OU Engolfo, na mesma direção.
-- MaValue=5 é mantido como HL2 ((high + low) / 2), conforme a tradução já usada
-  pelo projeto; as EMAs usam close.
-A confirmação fechada e a leitura intrabar compartilham a mesma regra.
+Lógica original preservada:
+- SMA rápida: 1 período.
+- SMA lenta: 34 períodos.
+- buffer1 = SMA rápida - SMA lenta.
+- buffer2 = WMA de buffer1: 5 períodos.
+- EMA de preço: 21 períodos.
+- EMA de tendência: 45 períodos.
+- CALL: cruzamento ascendente + fechamento acima da EMA21 + EMA21 acima da EMA45.
+- PUT: cruzamento descendente + fechamento abaixo da EMA21 + EMA21 abaixo da EMA45.
+
+O seletor original MaValue=5 (inputs.titles) é traduzido para HL2
+((high + low) / 2), mantendo close como fonte dos filtros EMA, como no Lua.
+get_signal confirma a última vela fechada; get_intrabar_signal é provisório.
 """
 from __future__ import annotations
 
@@ -27,7 +33,9 @@ def _number(candle, key):
 
 
 def _price_series(candles):
-    source, closes = [], []
+    """Fonte MaValue=5: HL2; filtros EMA usam close."""
+    source = []
+    closes = []
     for candle in candles:
         high = _number(candle, "high")
         low = _number(candle, "low")
@@ -77,32 +85,6 @@ def _wma_series(values, period):
     return result
 
 
-def candle_pattern_at(candles, index):
-    """Retorna HARAMI/ENGOLFO e direção quando o padrão é válido."""
-    if index < 1 or index >= len(candles):
-        return None
-    previous, current = candles[index - 1], candles[index]
-    o1, c1 = _number(previous, "open"), _number(previous, "close")
-    o2, c2 = _number(current, "open"), _number(current, "close")
-    if None in (o1, c1, o2, c2):
-        return None
-
-    harami_bull = o1 > c1 and o2 < c2 and o2 > c1 and c2 < o1
-    harami_bear = o1 < c1 and o2 > c2 and o2 < c1 and c2 > o1
-    engulf_bull = o1 > c1 and o2 < c2 and o2 < c1 and c2 > o1
-    engulf_bear = o1 < c1 and o2 > c2 and o2 > c1 and c2 < o1
-
-    if harami_bull:
-        return {"direction": "CALL", "pattern": "HARAMI"}
-    if harami_bear:
-        return {"direction": "PUT", "pattern": "HARAMI"}
-    if engulf_bull:
-        return {"direction": "CALL", "pattern": "ENGOLFO"}
-    if engulf_bear:
-        return {"direction": "PUT", "pattern": "ENGOLFO"}
-    return None
-
-
 def _calculate(candles):
     if len(candles) < EMA_TREND_PERIOD:
         return None
@@ -133,60 +115,45 @@ def _signal_at(candles, index, stage):
     if any(value is None for value in current + previous):
         return None
 
-    pattern = candle_pattern_at(candles, index)
-    if pattern is None:
-        return None
-
     cross_up = buffer1[index] > buffer2[index] and buffer1[index - 1] < buffer2[index - 1]
     cross_down = buffer1[index] < buffer2[index] and buffer1[index - 1] > buffer2[index - 1]
 
-    if (
-        pattern["direction"] == "CALL"
-        and cross_up
-        and closes[index] > ema_filter[index]
-        and ema_filter[index] > ema_trend[index]
-    ):
+    if cross_up and closes[index] > ema_filter[index] and ema_filter[index] > ema_trend[index]:
         return {
             "direction": "CALL",
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "SNIPER: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
+                "GO 2024: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
                 "Preço acima da EMA(21)",
                 "EMA(21) acima da EMA(45)",
-                "Padrão de alta: " + pattern["pattern"],
             ],
         }
 
-    if (
-        pattern["direction"] == "PUT"
-        and cross_down
-        and closes[index] < ema_filter[index]
-        and ema_filter[index] < ema_trend[index]
-    ):
+    if cross_down and closes[index] < ema_filter[index] and ema_filter[index] < ema_trend[index]:
         return {
             "direction": "PUT",
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "SNIPER: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
+                "GO 2024: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
                 "Preço abaixo da EMA(21)",
                 "EMA(21) abaixo da EMA(45)",
-                "Padrão de baixa: " + pattern["pattern"],
             ],
         }
+
     return None
 
 
 def get_signal_at_index(candles, index):
-    """Calcula o sinal confirmado exatamente na vela indicada."""
+    """Calcula o sinal confirmado exatamente na vela indicada pelo timestamp."""
     if not candles or len(candles) < EMA_TREND_PERIOD or index < 1 or index >= len(candles):
         return None
     return _signal_at(candles, index, "CLOSED")
 
 
 def get_signal(candles, config=None):
-    """Confirma o sinal na última vela concluída; última vela recebida é descartada."""
+    """Confirma o cruzamento na última vela M1 concluída."""
     if not candles or len(candles) < EMA_TREND_PERIOD + 1:
         return None
     closed = candles[:-1]
@@ -194,7 +161,7 @@ def get_signal(candles, config=None):
 
 
 def get_intrabar_signal(candles, config=None):
-    """Sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
+    """Calcula sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
     if not candles or len(candles) < EMA_TREND_PERIOD:
         return None
     return _signal_at(candles, len(candles) - 1, "INTRABAR")
