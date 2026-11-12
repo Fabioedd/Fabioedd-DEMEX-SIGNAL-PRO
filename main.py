@@ -10,7 +10,7 @@ from bullex_connector import (
     BullexConfig, BullexReadOnlyConnector, is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.my_strategy import get_intrabar_signal, get_signal
+from strategies.my_strategy import get_intrabar_signal, get_signal_at_index
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
@@ -151,24 +151,39 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
     return candidates
 
 
+def find_candle_index_by_timestamp(candles, target_timestamp):
+    """Localiza a vela pelo timestamp, sem presumir que a API inclua a vela em formação."""
+    target = normalize_timestamp(target_timestamp)
+    if target is None:
+        return None
+    for index, candle in enumerate(candles):
+        if normalize_timestamp(candle.get("timestamp")) == target:
+            return index
+    return None
+
+
 def verify_closed_signal(connector, settings, candidate):
-    """Confirma o sinal na vela fechada; None significa que a vela ainda não virou."""
+    """Confirma a própria vela do sinal, esteja ela no fim ou penúltima na resposta da API."""
     candles = connector.get_candles(
         candidate["symbol"], 60, int(settings.get("candles_count", 250))
     )
-    if len(candles) < 22:
+    if len(candles) < 45:
         return None
 
-    closed_timestamp = normalize_timestamp(candles[-2].get("timestamp"))
     target_timestamp = normalize_timestamp(candidate.get("signal_timestamp"))
-    if closed_timestamp is None or target_timestamp is None:
+    if target_timestamp is None:
         return None
-    if closed_timestamp < target_timestamp:
-        return None
-    if closed_timestamp > target_timestamp:
-        return False
 
-    confirmed = get_signal(candles, settings)
+    target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
+    if target_index is None:
+        latest_timestamp = normalize_timestamp(candles[-1].get("timestamp"))
+        if latest_timestamp is not None and latest_timestamp > target_timestamp:
+            return False
+        return None
+
+    # O chamador só chega aqui depois do horário de fechamento da vela.
+    # Calculamos o cruzamento exatamente no candle que gerou o pré-sinal.
+    confirmed = get_signal_at_index(candles, target_index)
     if not confirmed or confirmed.get("direction") != candidate.get("direction"):
         return False
     return {
@@ -202,11 +217,14 @@ def validate_signal_immediately_before_order(connector, settings, candidate):
     if not is_close_confirmation_window(elapsed, ENTRY_CONFIRMATION_SECONDS):
         return False, "janela de entrada de 3 segundos encerrada"
 
-    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
-    if closed_ts is None or closed_ts != target_ts:
-        return False, "a vela fechada já não é a mesma que gerou o sinal"
+    target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
+    if target_index is None:
+        latest_ts = normalize_timestamp(candles[-1].get("timestamp"))
+        if latest_ts is not None and latest_ts > target_ts:
+            return False, "a vela do sinal já saiu do histórico recente"
+        return False, "a BullX ainda não publicou a vela do sinal para confirmação"
 
-    confirmed = get_signal(candles, settings)
+    confirmed = get_signal_at_index(candles, target_index)
     if not confirmed or confirmed.get("direction") != candidate.get("direction"):
         return False, "o sinal GO 2024 desapareceu ou mudou de direção"
 
@@ -429,8 +447,8 @@ def main():
             if ready:
                 _, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL PRONTO PARA ENTRADA: %s %s | próxima vela aberta.",
-                    candidate["symbol"], candidate["direction"]
+                    "SINAL CONFIRMADO NA ABERTURA | %s %s | %.2fs após o fechamento; enviando na vela seguinte.",
+                    candidate["symbol"], candidate["direction"], server_now - close_ts
                 )
                 pending.pop(selected_key, None)
                 processed.add(selected_key)
@@ -471,7 +489,7 @@ def main():
                             candidate["symbol"], candidate["direction"], validation_reason
                         )
                         message = (
-                            "SINAL {} | {} | M1 | entrada na abertura da próxima vela | expiração 1 minuto"
+                            "SINAL {} | {} | M1 | entrada nos primeiros 3 segundos da vela seguinte | expiração 1 minuto"
                             .format(candidate["symbol"], candidate["direction"])
                         )
                         alert(message, bool(settings.get("sound_alert", True)))
