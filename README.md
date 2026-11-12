@@ -4,7 +4,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 
 ## Estratégia e operação
 
-- Estratégia personalizada ativa: **SNIPER — Confluência**, implementada em Python em `strategies/my_strategy.py`.
+- Estratégia personalizada ativa: **SNIPER — Confluência**, implementada em Python em `strategies/sniper_confluence.py`.
 - Lógica do indicador Lua preservada:
   - SMA rápida de 1 período e SMA lenta de 34 períodos.
   - Diferença `buffer1 = SMA(1) - SMA(34)` e linha de sinal `buffer2 = WMA(buffer1, 5)`.
@@ -65,3 +65,6 @@ Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada co
 ## Atualização automática no Termux
 
 O script `demex-auto-update.sh` consulta a branch `main` do GitHub a cada 60 segundos. Ele só aplica atualizações quando o robô está parado, a branch local é `main`, o histórico permite avanço rápido e não há alterações locais em arquivos rastreados. Arquivos locais não rastreados, como `.env`, são preservados. Se dependências mudarem, instala `requirements.txt`; depois valida a sintaxe e executa os testes. Se a validação falhar, reverte o código para o commit anterior. O atualizador nunca inicia, para ou reinicia o robô. Consulte o status com `bash ~/.demex-auto-update.sh status`.
+
+
+A estratégia GO 2024 anterior permanece em `strategies/my_strategy.py` para compatibilidade com os testes e outros componentes legados; o motor principal importa explicitamente `strategies/sniper_confluence.py`.
