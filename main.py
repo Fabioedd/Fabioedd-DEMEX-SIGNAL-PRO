@@ -395,7 +395,7 @@ def main():
                             )
                         )
                         print(
-                            "OPERAÇÃO {} | {} {} | Entrada R$ {:.2f} | Resultado R$ {:+.2f} | "
+                            "OPERAÇÃO {} | {} {} | Entrada R$ {:.2f} | "
                             "Próxima entrada R$ {:.2f}".format(
                                 summary["result"], summary["symbol"], summary["direction"],
                                 summary["entry"], summary["next_entry"]
