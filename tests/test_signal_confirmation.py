@@ -89,6 +89,36 @@ class SignalConfirmationTests(unittest.TestCase):
         self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
 
+    def test_final_validation_allows_order_only_in_first_three_seconds_of_next_candle(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(600), server_timestamp=662)
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
+            valid, reason = main.validate_signal_immediately_before_order(
+                connector, {}, candidate
+            )
+        self.assertTrue(valid)
+        self.assertIn("same", reason)
+
+    def test_final_validation_rejects_after_three_second_tolerance(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(600), server_timestamp=663.01)
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
+            valid, reason = main.validate_signal_immediately_before_order(
+                connector, {}, candidate
+            )
+        self.assertFalse(valid)
+        self.assertIn("tolerância", reason)
+
+    def test_final_validation_rejects_third_candle_even_if_signal_remains(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(600), server_timestamp=720)
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
+            valid, reason = main.validate_signal_immediately_before_order(
+                connector, {}, candidate
+            )
+        self.assertFalse(valid)
+        self.assertIn("vela imediatamente seguinte", reason)
+
     def test_scan_returns_only_the_first_live_signal_without_backtest(self):
         assets = [{"symbol": name + "-OTC", "active_id": i}
                   for i, name in enumerate(["A", "B", "C", "D", "E", "F"], 1)]
