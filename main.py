@@ -395,6 +395,18 @@ def main():
                     pending.clear()
                     next_asset_refresh = 0.0
                 except Exception as exc:
+                    if is_transport_error(exc):
+                        connector.connected = False
+                        logging.warning(
+                            "Falha transitória de rede ao atualizar ativos OTC: %s. "
+                            "DEMEX aguardará a reconexão.",
+                            exc
+                        )
+                        connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                        assets = []
+                        pending.clear()
+                        next_asset_refresh = 0.0
+                        continue
                     logging.error(
                         "Disponibilidade OTC não confirmada; análise pausada: %s", exc
                     )
@@ -430,7 +442,7 @@ def main():
                 if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "SINAL DETECTADO | %s %s | preparando entrada na própria vela do sinal",
+                        "SINAL DETECTADO | %s %s | fechamento previsto %.0f",
                         candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                     )
 
@@ -444,6 +456,18 @@ def main():
                 next_asset_refresh = 0.0
                 continue
             except Exception as exc:
+                if is_transport_error(exc):
+                    connector.connected = False
+                    logging.warning(
+                        "Falha transitória de rede ao consultar o relógio da BullX: %s. "
+                        "DEMEX aguardará a reconexão e descartará sinais antigos.",
+                        exc
+                    )
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    pending.clear()
+                    next_asset_refresh = 0.0
+                    continue
                 logging.warning("Não foi possível ler o relógio da corretora: %s", exc)
                 time.sleep(0.10 if pending else scan_delay(settings))
                 continue
