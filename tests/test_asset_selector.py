@@ -17,7 +17,7 @@ class FakeConnector:
         return 260 * 60 + 60
 
 
-def make_candles(count=260):
+def make_candles(count=261):
     return [
         {
             "timestamp": index * 60,
@@ -42,10 +42,11 @@ class AssetSelectorTests(unittest.TestCase):
                 {"direction": "CALL"},
                 {"direction": "PUT"},
                 None,
-            ] + [None] * 196
+            ] + [None] * 197
             result = backtest_asset(connector, asset, settings)
 
         self.assertEqual(connector.requested_count, 265)
+        self.assertEqual(signal.call_count, 200)
         self.assertEqual(result["candles_used"], 200)
         self.assertEqual(result["wins"], 1)
         self.assertEqual(result["losses"], 1)
@@ -60,7 +61,7 @@ class AssetSelectorTests(unittest.TestCase):
         settings = {"minimum_backtest_accuracy": 70}
 
         with patch("asset_selector.get_signal_at_index") as signal:
-            signal.side_effect = [{"direction": "CALL"}] * 10 + [None] * 189
+            signal.side_effect = [{"direction": "CALL"}] * 10 + [None] * 190
             # Use a controlled next-candle path: 7 wins and 3 losses.
             for index in range(10):
                 candle_index = 60 + index
@@ -81,7 +82,7 @@ class AssetSelectorTests(unittest.TestCase):
         asset = {"symbol": "AUDUSD-OTC", "active_id": 79}
 
         with patch("asset_selector.get_signal_at_index") as signal:
-            signal.side_effect = [{"direction": "CALL"}] + [None] * 198
+            signal.side_effect = [{"direction": "CALL"}] + [None] * 199
             result = backtest_asset(connector, asset, {})
 
         self.assertEqual(result["operations"], 1)
