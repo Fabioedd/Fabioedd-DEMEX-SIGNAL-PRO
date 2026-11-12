@@ -97,14 +97,14 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         "approved": False,
         "candles_used": min(window, len(closed)),
     }
-    if len(closed) < window + warmup:
+    if len(closed) < window + warmup + 1:
         base["reason"] = (
             "Histórico insuficiente: necessários {} candles fechados "
             "(200 de teste + {} de aquecimento); recebidos {}."
         ).format(window + warmup, warmup, len(closed))
         return base
 
-    first_signal_index = len(closed) - window
+    first_signal_index = len(closed) - window - 1
     for index in range(first_signal_index, len(closed) - 1):
         signal = get_signal_at_index(closed, index)
         if not signal:
