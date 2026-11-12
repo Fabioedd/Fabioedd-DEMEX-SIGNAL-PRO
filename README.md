@@ -11,12 +11,12 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
   - Os padrões usam somente os corpos dos dois candles, exatamente pelas comparações de abertura/fechamento do script original.
   - Não há cruzamento SMA/WMA, RSI, Bollinger ou outro filtro adicional nesta estratégia.
 - O DEMEX recebe candles M1. O sinal é calculado sobre a vela fechada e só libera entrada na vela M1 seguinte, nos primeiros 5 segundos, após confirmar o relógio da corretora e o padrão novamente.
-- Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
+- Modalidade: somente opções binárias. A disponibilidade é obtida da lista de ativos binários OTC da BullX; payout não é usado como critério de seleção.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
-- Payout exigido: mínimo de 84% no contrato binário. Antes de liberar um ativo, o DEMEX testa os últimos 100 candles M1 e exige pelo menos 1 operação decisiva e taxa de acerto estritamente acima de 70%; não há quantidade mínima de operações históricas. A lista é atualizada a cada 30 minutos. Cada varredura completa substitui a lista anterior, inclusive por uma lista vazia; uma varredura interrompida preserva a lista anterior. Uma ordem por sinal/vela, uma operação em andamento por vez.
+- Seleção automática: a cada ciclo, o DEMEX identifica os ativos OTC binários disponíveis e executa novamente o backtest dos últimos 200 candles M1 fechados de cada ativo, usando exatamente HARAMI + ENGOLFO com EMA 21/45. São contabilizados WIN, LOSS e TIE; a assertividade é WIN / (WIN + LOSS), sem mínimo de operações e sem filtro de payout. Só são aprovados ativos com assertividade >= 70%. O resultado completo substitui a lista anterior; apenas os aprovados entram na varredura de sinais e nas entradas. O histórico de aquecimento da EMA é buscado antes dos 200 candles avaliados. O DEMEX registra progresso, tempo decorrido e estimativa de tempo restante durante cada ciclo.
 
 ## Trava de segurança
 
@@ -55,7 +55,7 @@ Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada co
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
-- A estratégia ativa do DEMEX é HARAMI + ENGOLFO (EMA 21/45): reconhece os quatro padrões do indicador Lua e aplica somente os filtros de tendência EMA 21/45. Não exige cruzamento SMA/WMA. Os testes verificam padrões, filtros e ausência de filtros extras.
+- A estratégia ativa do DEMEX é HARAMI + ENGOLFO (EMA 21/45): reconhece os quatro padrões do indicador Lua e aplica somente os filtros de tendência EMA 21/45. Não exige cruzamento SMA/WMA. O backtest reproduz essa mesma função de sinal candle a candle, sem olhar candles futuros.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
 
