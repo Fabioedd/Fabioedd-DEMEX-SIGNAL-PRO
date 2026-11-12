@@ -27,6 +27,10 @@ class TelegramNotifier:
         self.total_invested = 0.0
         self.last_entry = 0.0
         self.next_entry = 0.0
+        self.current_win_streak = 0
+        self.current_loss_streak = 0
+        self.max_win_streak = 0
+        self.max_loss_streak = 0
 
     @classmethod
     def from_env(cls):
@@ -99,6 +103,10 @@ class TelegramNotifier:
         self.total_invested += entry
         self.last_entry = entry
         self.next_entry = next_entry
+        self.current_win_streak = int(summary.get("current_win_streak", self.current_win_streak))
+        self.current_loss_streak = int(summary.get("current_loss_streak", self.current_loss_streak))
+        self.max_win_streak = max(self.max_win_streak, int(summary.get("max_win_streak", 0)))
+        self.max_loss_streak = max(self.max_loss_streak, int(summary.get("max_loss_streak", 0)))
 
         text = (
             "📊 <b>DEMEX — RESULTADO DA OPERAÇÃO</b>\n\n"
@@ -112,7 +120,9 @@ class TelegramNotifier:
             "Resultado desta sessão: <b>{:+.2f} BRL</b>\n"
             "Próxima entrada: <b>R$ {:.2f}</b>"
         ).format(symbol, direction, entry, emoji, result, pnl, wins, losses, ties,
-                 total, win_rate, self.total_invested, net, next_entry)
+                 total, win_rate, self.total_invested,
+                 self.current_win_streak, self.current_loss_streak,
+                 self.max_win_streak, self.max_loss_streak, net, next_entry)
         if summary.get("stopped"):
             reason = html.escape(str(summary.get("stop_reason") or "Limite da sessão atingido"))
             text += "\n\n⛔ <b>SESSÃO ENCERRADA:</b> " + reason
@@ -141,6 +151,8 @@ class TelegramNotifier:
             html.escape(str(reason)),
             datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
             int(total_entries), int(wins), int(losses), int(ties), win_rate,
+            self.current_win_streak, self.current_loss_streak,
+            self.max_win_streak, self.max_loss_streak,
             self.initial_entry, self.total_invested, self.last_entry,
             self.next_entry, self.stop_loss, self.take_profit, float(session_net)
         )
