@@ -53,17 +53,18 @@ class ScriptAhoraBBTests(unittest.TestCase):
         self.assertIsNotNone(levels)
         self.assertAlmostEqual(levels[0], 100.6)
         self.assertAlmostEqual(levels[1], 99.4)
-        self.assertIsNone(_m15_previous_levels(data[:29], 28))
+        incomplete = [row for row in data[:29] if row["timestamp"] != 600]
+        self.assertIsNone(_m15_previous_levels(incomplete, len(incomplete) - 1))
 
     def test_put_requires_upper_band_touch_retracement_then_c1(self):
-        result = get_intrabar_signal(make_candles("PUT"))
+        result = get_intrabar_signal(make_candles("PUT", count=33))
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "PUT")
         self.assertEqual(result["stage"], "INTRABAR")
         self.assertEqual(len(result["reasons"]), 4)
 
     def test_call_requires_lower_band_touch_retracement_then_c2(self):
-        result = get_intrabar_signal(make_candles("CALL"))
+        result = get_intrabar_signal(make_candles("CALL", count=33))
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "CALL")
         self.assertEqual(result["stage"], "INTRABAR")
@@ -83,7 +84,7 @@ class ScriptAhoraBBTests(unittest.TestCase):
         self.assertEqual(result["stage"], "CLOSED")
 
     def test_no_signal_when_retracement_is_missing(self):
-        data = make_candles("PUT")
+        data = make_candles("PUT", count=33)
         # Faz a vela posterior ao toque continuar acima da banda, sem retração.
         data[31].update({"open": 101.0, "high": 101.4, "low": 100.9, "close": 101.3})
         self.assertIsNone(get_intrabar_signal(data))
