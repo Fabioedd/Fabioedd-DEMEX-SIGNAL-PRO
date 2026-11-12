@@ -99,10 +99,6 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
     candidates = []
     analyzed_count = 0
     excluded_keys = excluded_keys or set()
-    server_ts = normalize_timestamp(connector.get_server_timestamp())
-    if server_ts is None:
-        return candidates
-
     for asset in assets:
         analyzed_count += 1
         try:
@@ -110,6 +106,16 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                 asset["symbol"], 60, int(settings.get("candles_count", 250))
             )
             if len(candles) < 45:
+                continue
+
+            try:
+                server_ts = normalize_timestamp(connector.get_server_timestamp())
+            except Exception as exc:
+                if is_transport_error(exc):
+                    connector.connected = False
+                    raise ConnectionError("Conexão interrompida ao consultar o relógio da corretora.") from exc
+                raise
+            if server_ts is None:
                 continue
 
             # A API pode incluir ou omitir a vela em formação. Encontra a
