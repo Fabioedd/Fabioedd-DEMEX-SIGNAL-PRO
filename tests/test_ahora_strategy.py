@@ -70,9 +70,9 @@ class ScriptAhoraBBTests(unittest.TestCase):
         self.assertEqual(result["stage"], "INTRABAR")
 
     def test_closed_signal_uses_last_completed_candle(self):
-        data = make_candles("PUT")
+        data = make_candles("PUT", count=33)
         data.append({
-            "timestamp": 34 * 60,
+            "timestamp": 33 * 60,
             "open": 100.0,
             "high": 100.02,
             "low": 99.98,
