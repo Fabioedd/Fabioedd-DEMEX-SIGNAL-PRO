@@ -102,7 +102,7 @@ update_once() {
         fi
     fi
 
-    if ! (cd "$REPO_DIR" && python -m py_compile main.py bullex_connector.py strategies/my_strategy.py strategies/sniper_confluence.py) >> "$LOG_FILE" 2>&1; then
+    if ! (cd "$REPO_DIR" && python -m py_compile main.py bullex_connector.py strategies/my_strategy.py strategies/sniper_confluence.py strategies/harami_engolfo_tendencia.py) >> "$LOG_FILE" 2>&1; then
         git -C "$REPO_DIR" reset --hard "$old_sha" >/dev/null 2>&1
         log "FALHA na verificação de sintaxe; código revertido para $old_sha."
         return 1
