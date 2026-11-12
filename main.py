@@ -10,7 +10,7 @@ from bullex_connector import (
     BullexConfig, BullexReadOnlyConnector, is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.my_strategy import get_intrabar_signal, get_signal_at_index
+from strategies.sniper_confluence import get_intrabar_signal, get_signal_at_index
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
