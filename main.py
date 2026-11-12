@@ -123,7 +123,7 @@ def get_market_assets(connector, settings, stop_check=None):
     logging.info(
         "DISPONIBILIDADE OTC: %d disponíveis; %d fechados ou suspensos. "
         "Atualização a cada %d minutos.",
-        len(available), unavailable_count, ASSET_REFRESH_INTERVAL_SECONDS // 60
+        len(available), unavailable_count, asset_refresh_interval(settings) // 60
     )
     return filter_market_assets(available, "OTC")
 
