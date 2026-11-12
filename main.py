@@ -183,6 +183,16 @@ def main():
         print("DEMEX já está em execução nesta pasta. Nenhuma segunda instância será iniciada.", flush=True)
         return
 
+    # Um pedido de parada só deve afetar uma sessão já iniciada. Se o arquivo
+    # sobrou de uma sessão anterior, consumi-lo aqui evita que o próximo
+    # comando "python main.py" conecte e encerre imediatamente.
+    if STOP_FILE.exists():
+        try:
+            STOP_FILE.unlink()
+            logging.warning("Pedido de parada antigo removido; iniciando uma nova sessão.")
+        except OSError as exc:
+            raise RuntimeError("Não foi possível limpar o pedido de parada antigo: {}".format(exc))
+
     load_dotenv()
     settings = load_settings()
     trading = settings.get("trading", {})
