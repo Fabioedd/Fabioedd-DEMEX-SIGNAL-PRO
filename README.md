@@ -5,18 +5,18 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 ## Estratégia e operação
 
 - Estratégia personalizada: `strategies/my_strategy.py` (`get_signal`, `get_pre_signal`, `get_intrabar_signal`).
-- Estratégia atual: **SCRIPT AHORA**, traduzida do Lua para Python, preservando as regras originais:
-  - **PUT/VENDA:** candle verde toca ou atravessa a máxima C1 da vela M15 anterior.
-  - **CALL/COMPRA:** candle vermelho toca ou atravessa a mínima C2 da vela M15 anterior.
-  - O toque preserva a condição Lua original: `high >= nível and low <= nível`.
-  - Não adiciona EMA, RSI, filtro de corpo ou outros filtros.
-- O DEMEX recebe candles M1. O backtest simula a entrada na abertura da vela seguinte e o resultado no fechamento dessa vela, sem usar candles futuros para formar o sinal. C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os quinze candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
-- Sinais que autorizam ordens usam somente o último candle fechado; o método intrabar é apenas diagnóstico e não é chamado pelo fluxo normal de execução.
+- Estratégia atual: **SCRIPT AHORA BB**, traduzida para Python:
+  - **PUT/VENDA:** toque na banda superior de Bollinger (SMA 20, desvio 2), retração para baixo confirmada e, depois, toque na C1 (máxima do M15 anterior) em candle verde.
+  - **CALL/COMPRA:** toque na banda inferior de Bollinger (SMA 20, desvio 2), retração para cima confirmada e, depois, toque na C2 (mínima do M15 anterior) em candle vermelho.
+  - A retração exige uma vela posterior ao toque da banda fechando de volta para dentro da banda e na direção da retração. O toque na zona precisa acontecer em uma vela posterior à retração.
+  - A sequência deve ocorrer dentro do mesmo bloco M15 e expira após 15 candles M1.
+  - C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os quinze candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
+- O DEMEX recebe candles M1. O backtest simula a entrada na abertura da vela seguinte e o resultado no fechamento dessa vela, sem usar candles futuros para formar o sinal.
+- Sinais que autorizam ordens usam somente o último candle fechado; o método intrabar é apenas diagnóstico e é revalidado no fluxo normal de execução.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
-- Stop da sessão: -R$ 15,00; take da sessão: +R$ 30,00.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
 - Payout exigido: mínimo de 84% no contrato binário. Antes de liberar um ativo, o DEMEX testa os últimos 100 candles M1 e exige pelo menos 1 operação decisiva e taxa de acerto estritamente acima de 70%; não há quantidade mínima de operações históricas. A lista é atualizada a cada 30 minutos. Cada varredura completa substitui a lista anterior, inclusive por uma lista vazia; uma varredura interrompida preserva a lista anterior. Uma ordem por sinal/vela, uma operação em andamento por vez.
 
@@ -46,10 +46,9 @@ Inicie com `python main.py`. A execução automática está habilitada em `setti
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
-- Os testes de SCRIPT AHORA verificam a tradução das condições de compra/venda e a reconstrução da M15 a partir de quinze candles M1.
+- Os testes de SCRIPT AHORA BB verificam as Bandas de Bollinger, a reconstrução da M15, a sequência banda → retração → C1/C2 e a confirmação em candle fechado.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
-
 
 ## Atualização automática no Termux
 
