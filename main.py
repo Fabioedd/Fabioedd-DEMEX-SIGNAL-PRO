@@ -350,12 +350,24 @@ def main():
                 # se continuar presente e na MESMA direção.
                 try:
                     confirmed = verify_closed_signal(connector, settings, candidate)
-                except ConnectionError:
-                    raise
+                except ConnectionError as exc:
+                    logging.warning("Conexão perdida ao revalidar sinal: %s", exc)
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    pending.clear()
+                    next_asset_refresh = 0.0
+                    ready = []
+                    break
                 except Exception as exc:
                     if is_transport_error(exc):
                         connector.connected = False
-                        raise ConnectionError("Conexão perdida ao revalidar sinal.") from exc
+                        logging.warning("Conexão perdida ao revalidar sinal: %s", exc)
+                        connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                        assets = []
+                        pending.clear()
+                        next_asset_refresh = 0.0
+                        ready = []
+                        break
                     logging.warning(
                         "Não foi possível revalidar %s na abertura: %s",
                         candidate["symbol"], exc
