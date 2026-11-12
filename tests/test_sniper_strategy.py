@@ -75,6 +75,25 @@ class SniperConfluenceTests(unittest.TestCase):
         with patch.object(sniper, "_calculate", return_value=self._calculated("CALL")):
             self.assertIsNone(sniper._signal_at(candles, 1, "CLOSED"))
 
+
+    def test_call_blocked_when_ema21_is_not_above_ema45(self):
+        candles = [candle(10, 8), candle(8.5, 9.5)]
+        values = ([0.0, 2.0], [1.0, 1.0], [None, 10.0], [None, 11.0], [None, 13.0])
+        with patch.object(sniper, "_calculate", return_value=values):
+            self.assertIsNone(sniper._signal_at(candles, 1, "CLOSED"))
+
+    def test_put_blocked_when_ema21_is_not_below_ema45(self):
+        candles = [candle(8, 10), candle(9.5, 8.5)]
+        values = ([2.0, 0.0], [1.0, 1.0], [None, 12.0], [None, 11.0], [None, 10.0])
+        with patch.object(sniper, "_calculate", return_value=values):
+            self.assertIsNone(sniper._signal_at(candles, 1, "CLOSED"))
+
+    def test_pattern_and_ema_filters_without_go_cross_do_not_signal(self):
+        candles = [candle(10, 8), candle(8.5, 9.5)]
+        values = ([2.0, 3.0], [1.0, 1.0], [None, 12.0], [None, 11.0], [None, 13.0])
+        with patch.object(sniper, "_calculate", return_value=values):
+            self.assertIsNone(sniper._signal_at(candles, 1, "CLOSED"))
+
     def test_insufficient_history_does_not_signal(self):
         candles = [candle(1, 2) for _ in range(sniper.EMA_TREND_PERIOD - 1)]
         self.assertIsNone(sniper.get_intrabar_signal(candles))
