@@ -135,7 +135,7 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                     continue
                 candidates.append(candidate)
                 logging.info(
-                    "PRIMEIRO SINAL DETECTADO | %s %s | próxima abertura M1 às %.0f",
+                    "PRIMEIRO SINAL DETECTADO | %s %s | vela atual M1 até %.0f",
                     candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                 )
                 return candidates
@@ -430,7 +430,7 @@ def main():
                 if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "SINAL DETECTADO | %s %s | aguardando somente a abertura da próxima vela %s",
+                        "SINAL DETECTADO | %s %s | preparando entrada na própria vela do sinal",
                         candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                     )
 
