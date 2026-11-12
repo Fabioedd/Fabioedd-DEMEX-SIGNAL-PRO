@@ -7,6 +7,14 @@ from bullexapi.stable_api import Bullex
 from entry_timing import is_binary_active_open
 logger = logging.getLogger(__name__)
 
+class OrderRejectedError(RuntimeError):
+    """A corretora respondeu explicitamente que não abriu a ordem."""
+
+
+class OrderConfirmationUnknownError(RuntimeError):
+    """O envio terminou sem confirmação/ID; não é seguro reenviar."""
+
+
 
 def is_transport_error(exc):
     """Identifica quedas de socket/WebSocket, inclusive Errno 103."""
@@ -219,8 +227,17 @@ class BullexReadOnlyConnector:
             if float(amount)<=0: raise ValueError("Valor de entrada inválido.")
             if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo indisponível: {symbol}")
             ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
-            if not ok or not order_id: raise RuntimeError(f"Corretora recusou a ordem: {order_id}")
-            return int(order_id)
+            if ok and order_id:
+                return int(order_id)
+            # A biblioteca também retorna (False, None) quando esgota seu timeout
+            # interno. Não sabemos se a corretora recebeu a ordem; nunca reenviar,
+            # pois isso poderia duplicar uma operação.
+            if order_id is None:
+                raise OrderConfirmationUnknownError(
+                    "A BullX não confirmou a ordem nem devolveu ID (timeout/resposta ausente). "
+                    "Estado desconhecido; reenvio automático bloqueado por segurança."
+                )
+            raise OrderRejectedError(f"A BullX recusou explicitamente a ordem: {order_id}")
     def wait_practice_result(self,order_id):
         with self.api_lock:
             self._require_connection()
