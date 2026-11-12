@@ -33,7 +33,7 @@ class SignalConfirmationTests(unittest.TestCase):
         rows = [
             {"timestamp": index * 60, "open": 1.0, "high": 1.1,
              "low": 0.9, "close": 1.0}
-            for index in range(17)
+            for index in range(25)
         ]
         rows[-2]["timestamp"] = closed_timestamp
         rows[-1]["timestamp"] = closed_timestamp + 60
@@ -83,13 +83,13 @@ class SignalConfirmationTests(unittest.TestCase):
         candles = [
             {"timestamp": 600 + i * 60, "open": 1.0, "high": 1.1,
              "low": 0.9, "close": 1.0}
-            for i in range(17)
+            for i in range(25)
         ]
         class FakeConnector:
             def get_candles(self, symbol, timeframe_seconds, count):
                 return candles
             def get_server_timestamp(self):
-                return 600 + 16 * 60 + 50
+                return 600 + 24 * 60 + 50
         with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
             result = main.scan_once(
                 FakeConnector(), {"timeframe": "M1", "trade_type": "binary"},
