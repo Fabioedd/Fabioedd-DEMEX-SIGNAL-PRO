@@ -182,6 +182,37 @@ def verify_closed_signal(connector, settings, candidate):
     }
 
 
+def validate_signal_immediately_before_order(connector, settings, candidate):
+    """Revalida a mesma vela/sinal e a janela de 3s imediatamente antes da ordem."""
+    candles = connector.get_candles(
+        candidate["symbol"], 60, int(settings.get("candles_count", 250))
+    )
+    if len(candles) < 22:
+        return False, "histórico insuficiente para revalidar"
+
+    # Consulta o relógio depois dos candles para reduzir o risco de validar
+    # com um horário anterior à leitura de mercado.
+    server_now = normalize_timestamp(connector.get_server_timestamp())
+    close_ts = normalize_timestamp(candidate.get("close_timestamp"))
+    target_ts = normalize_timestamp(candidate.get("signal_timestamp"))
+    if server_now is None or close_ts is None or target_ts is None:
+        return False, "timestamp da corretora/candidato inválido"
+
+    elapsed = server_now - close_ts
+    if not is_close_confirmation_window(elapsed, ENTRY_CONFIRMATION_SECONDS):
+        return False, "janela de entrada de 3 segundos encerrada"
+
+    closed_ts = normalize_timestamp(candles[-2].get("timestamp"))
+    if closed_ts is None or closed_ts != target_ts:
+        return False, "a vela fechada já não é a mesma que gerou o sinal"
+
+    confirmed = get_signal(candles, settings)
+    if not confirmed or confirmed.get("direction") != candidate.get("direction"):
+        return False, "o sinal GO 2024 desapareceu ou mudou de direção"
+
+    return True, "mesma vela e mesmo sinal confirmados"
+
+
 def candidate_key(candidate):
     return "{}|{}|{}".format(
         candidate.get("symbol"),
@@ -408,6 +439,37 @@ def main():
                     if STOP_FILE.exists():
                         trader.stopped = True
                         break
+                    # Última barreira: não enviar ordem só porque o sinal foi
+                    # confirmado alguns instantes antes. A mesma vela e a mesma
+                    # direção precisam continuar confirmadas, ainda dentro de 3s.
+                    try:
+                        still_valid, validation_reason = validate_signal_immediately_before_order(
+                            connector, settings, candidate
+                        )
+                    except Exception as exc:
+                        if is_transport_error(exc):
+                            connector.connected = False
+                            raise ConnectionError(
+                                "Conexão perdida na validação final do sinal."
+                            ) from exc
+                        logging.warning(
+                            "ENTRADA CANCELADA | %s %s | falha na validação final: %s",
+                            candidate["symbol"], candidate["direction"], exc
+                        )
+                        continue
+
+                    if not still_valid:
+                        logging.info(
+                            "ENTRADA CANCELADA | %s %s | %s. "
+                            "DEMEX continuará procurando novos sinais.",
+                            candidate["symbol"], candidate["direction"], validation_reason
+                        )
+                        continue
+
+                    logging.info(
+                        "VALIDAÇÃO FINAL APROVADA | %s %s | %s",
+                        candidate["symbol"], candidate["direction"], validation_reason
+                    )
                     message = (
                         "SINAL {} | {} | M1 | entrada na abertura da próxima vela | expiração 1 minuto"
                         .format(candidate["symbol"], candidate["direction"])
