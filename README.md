@@ -54,7 +54,7 @@ O projeto inclui comandos privados para ligar e desligar o DEMEX pelo Telegram. 
 bash telegram-control.sh iniciar
 ```
 
-Depois, envie `/start`, `/stop`, `/status` ou `/help) em uma conversa privada com seu bot. O comando `/stop` solicita parada segura e aguarda a operação em andamento terminar. Ao iniciar pelo `bash demex.sh iniciar`, o listener também é iniciado automaticamente quando as credenciais estão configuradas. Detalhes em [TELEGRAM_CONTROL.md](TELEGRAM_CONTROL.md).
+Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada com seu bot. O comando `/stop` solicita parada segura e aguarda a operação em andamento terminar. Ao iniciar pelo `bash demex.sh iniciar`, o listener também é iniciado automaticamente quando as credenciais estão configuradas. Detalhes em [TELEGRAM_CONTROL.md](TELEGRAM_CONTROL.md).
 
 ## Testes e limitações
 
