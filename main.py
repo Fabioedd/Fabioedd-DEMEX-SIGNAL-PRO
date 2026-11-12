@@ -333,8 +333,35 @@ def main():
                     processed.add(key)
                     continue
 
-                # O sinal intrabar já está detectado; não há confirmação no fechamento.
-                # Aguarda somente a abertura da próxima vela e envia a entrada.
+                # Na abertura da próxima vela, recalcula a estratégia sobre a
+                # última vela concluída. Sinal intrabar pode repintar: só entra
+                # se continuar presente e na MESMA direção.
+                try:
+                    confirmed = verify_closed_signal(connector, settings, candidate)
+                except ConnectionError:
+                    raise
+                except Exception as exc:
+                    logging.warning(
+                        "Não foi possível revalidar %s na abertura: %s",
+                        candidate["symbol"], exc
+                    )
+                    continue
+
+                if confirmed is None:
+                    # A corretora ainda não publicou a nova vela; aguarda,
+                    # respeitando a janela técnica de 2 segundos.
+                    continue
+                if confirmed is False:
+                    logging.info(
+                        "SINAL CANCELADO POR REPINTURA: %s %s | "
+                        "não permaneceu válido na abertura da próxima vela.",
+                        candidate["symbol"], candidate["direction"]
+                    )
+                    pending.pop(key, None)
+                    processed.add(key)
+                    continue
+
+                candidate = confirmed
                 ready.append((close_ts, key, candidate))
                 break
 
