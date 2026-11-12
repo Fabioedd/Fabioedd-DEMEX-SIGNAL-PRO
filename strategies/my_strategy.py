@@ -1,143 +1,144 @@
-"""SCRIPT AHORA DONCHIAN — níveis M15 + Donchian(20) + cor do candle.
+"""GO 2024 — tradução fiel do indicador Lua para o motor Python do DEMEX.
 
-PUT: o candle M1 toca a máxima (C1) do candle M15 em formação,
-também alcança o Donchian superior calculado somente com os 20 candles M1
-anteriores e fecha vermelho.
+Lógica original preservada:
+- SMA rápida: 1 período.
+- SMA lenta: 34 períodos.
+- buffer1 = SMA rápida - SMA lenta.
+- buffer2 = WMA de buffer1: 5 períodos.
+- EMA de preço: 21 períodos.
+- EMA de tendência: 45 períodos.
+- CALL: cruzamento ascendente + fechamento acima da EMA21 + EMA21 acima da EMA45.
+- PUT: cruzamento descendente + fechamento abaixo da EMA21 + EMA21 abaixo da EMA45.
 
-CALL: o candle M1 toca a mínima (C2) do candle M15 em formação,
-também alcança o Donchian inferior calculado somente com os 20 candles M1
-anteriores e fecha verde.
-
-Não usa RSI, MACD, Bollinger, médias, pavios ou filtro de rejeição.
-O sinal confirmado é calculado sobre candles M1 fechados.
+O seletor original MaValue=5 (inputs.titles) é traduzido para HL2
+((high + low) / 2), mantendo close como fonte dos filtros EMA, como no Lua.
+get_signal confirma a última vela fechada; get_intrabar_signal é provisório.
 """
 from __future__ import annotations
 
-M1_SECONDS = 60
-M15_SECONDS = 15 * M1_SECONDS
-DONCHIAN_PERIOD = 20
+FAST_PERIOD = 1
+SLOW_PERIOD = 34
+SIGNAL_PERIOD = 5
+EMA_FILTER_PERIOD = 21
+EMA_TREND_PERIOD = 45
+SOURCE_SELECTION = 5
 
 
-def _timestamp_seconds(candle):
-    """Converte timestamp da corretora para segundos Unix."""
+def _number(candle, key):
     try:
-        value = float(candle["timestamp"])
+        value = float(candle[key])
     except (KeyError, TypeError, ValueError):
         return None
-    return value / 1000.0 if value > 10_000_000_000 else value
+    return value if value == value and abs(value) != float("inf") else None
 
 
-def _valid_candle(candle):
-    try:
-        values = [float(candle[key]) for key in ("open", "high", "low", "close")]
-    except (KeyError, TypeError, ValueError):
-        return None
-    open_price, high, low, close = values
-    if high < low or high < max(open_price, close) or low > min(open_price, close):
-        return None
-    return open_price, high, low, close
+def _price_series(candles):
+    """Fonte MaValue=5: HL2; filtros EMA usam close."""
+    source = []
+    closes = []
+    for candle in candles:
+        high = _number(candle, "high")
+        low = _number(candle, "low")
+        close = _number(candle, "close")
+        if high is None or low is None or close is None or high < low:
+            return None, None
+        source.append((high + low) / 2.0)
+        closes.append(close)
+    return source, closes
 
 
-def _m15_current_levels(candles, index):
-    """Calcula C1/C2 do candle M15 atual usando os candles M1 disponíveis."""
-    timestamp = _timestamp_seconds(candles[index])
-    if timestamp is None:
-        return None
+def _sma_series(values, period):
+    result = [None] * len(values)
+    running = 0.0
+    for index, value in enumerate(values):
+        running += value
+        if index >= period:
+            running -= values[index - period]
+        if index >= period - 1:
+            result[index] = running / period
+    return result
 
-    current_bucket = int(timestamp // M15_SECONDS) * M15_SECONDS
-    highs = []
-    lows = []
 
-    # Considera somente candles do bloco M15 atual até o candle analisado.
-    for candle in candles[:index + 1]:
-        ts = _timestamp_seconds(candle)
-        if ts is None:
+def _ema_series(values, period):
+    result = [None] * len(values)
+    if len(values) < period:
+        return result
+    current = sum(values[:period]) / period
+    result[period - 1] = current
+    alpha = 2.0 / (period + 1.0)
+    for index in range(period, len(values)):
+        current = alpha * values[index] + (1.0 - alpha) * current
+        result[index] = current
+    return result
+
+
+def _wma_series(values, period):
+    result = [None] * len(values)
+    denominator = period * (period + 1) / 2.0
+    for index in range(period - 1, len(values)):
+        window = values[index - period + 1:index + 1]
+        if any(value is None for value in window):
             continue
-        minute = int(ts // M1_SECONDS) * M1_SECONDS
-        if current_bucket <= minute < current_bucket + M15_SECONDS:
-            values = _valid_candle(candle)
-            if values is None:
-                continue
-            _, high, low, _ = values
-            highs.append(high)
-            lows.append(low)
+        result[index] = sum(
+            value * weight for weight, value in enumerate(window, start=1)
+        ) / denominator
+    return result
 
-    if not highs or not lows:
+
+def _calculate(candles):
+    if len(candles) < EMA_TREND_PERIOD:
         return None
-    return max(highs), min(lows), current_bucket
-
-
-def _donchian_previous(candles, index):
-    """Donchian(20) usando exclusivamente os 20 candles anteriores."""
-    start = index - DONCHIAN_PERIOD
-    if start < 0:
+    source, closes = _price_series(candles)
+    if source is None:
         return None
 
-    previous = candles[start:index]
-    if len(previous) != DONCHIAN_PERIOD:
+    sma_fast = _sma_series(source, FAST_PERIOD)
+    sma_slow = _sma_series(source, SLOW_PERIOD)
+    buffer1 = [
+        None if fast is None or slow is None else fast - slow
+        for fast, slow in zip(sma_fast, sma_slow)
+    ]
+    buffer2 = _wma_series(buffer1, SIGNAL_PERIOD)
+    ema_filter = _ema_series(closes, EMA_FILTER_PERIOD)
+    ema_trend = _ema_series(closes, EMA_TREND_PERIOD)
+    return buffer1, buffer2, ema_filter, ema_trend, closes
+
+
+def _signal_at(candles, index, stage):
+    calculated = _calculate(candles)
+    if calculated is None or index < 1 or index >= len(candles):
         return None
 
-    highs = []
-    lows = []
-    for candle in previous:
-        values = _valid_candle(candle)
-        if values is None:
-            return None
-        _, high, low, _ = values
-        highs.append(high)
-        lows.append(low)
-
-    return max(highs), min(lows)
-
-
-def _signal_at(candles, signal_index, stage):
-    """Avalia a confluência AHORA M15 + Donchian anterior + cor da vela."""
-    if signal_index < DONCHIAN_PERIOD or signal_index >= len(candles):
+    buffer1, buffer2, ema_filter, ema_trend, closes = calculated
+    current = (buffer1[index], buffer2[index], ema_filter[index], ema_trend[index])
+    previous = (buffer1[index - 1], buffer2[index - 1])
+    if any(value is None for value in current + previous):
         return None
 
-    values = _valid_candle(candles[signal_index])
-    levels = _m15_current_levels(candles, signal_index)
-    channel = _donchian_previous(candles, signal_index)
+    cross_up = buffer1[index] > buffer2[index] and buffer1[index - 1] < buffer2[index - 1]
+    cross_down = buffer1[index] < buffer2[index] and buffer1[index - 1] > buffer2[index - 1]
 
-    if values is None or levels is None or channel is None:
-        return None
-
-    open_price, high, low, close = values
-    c1, c2, _ = levels
-    donchian_upper, donchian_lower = channel
-
-    # Mesma lógica de toque do indicador Lua.
-    touched_c1 = high >= c1 and low <= c1
-    touched_c2 = high >= c2 and low <= c2
-    touched_upper = high >= donchian_upper
-    touched_lower = low <= donchian_lower
-
-    is_green = close > open_price
-    is_red = close < open_price
-
-    # Venda: C1 M15 + Donchian superior + candle vermelho.
-    if is_red and touched_c1 and touched_upper:
-        return {
-            "direction": "PUT",
-            "confidence": 100,
-            "stage": stage,
-            "reasons": [
-                "Toque na C1: máxima do M15 atual",
-                "Toque no Donchian superior (20 candles anteriores)",
-                "Candle M1 fechou vermelho",
-            ],
-        }
-
-    # Compra: C2 M15 + Donchian inferior + candle verde.
-    if is_green and touched_c2 and touched_lower:
+    if cross_up and closes[index] > ema_filter[index] and ema_filter[index] > ema_trend[index]:
         return {
             "direction": "CALL",
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "Toque na C2: mínima do M15 atual",
-                "Toque no Donchian inferior (20 candles anteriores)",
-                "Candle M1 fechou verde",
+                "GO 2024: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
+                "Preço acima da EMA(21)",
+                "EMA(21) acima da EMA(45)",
+            ],
+        }
+
+    if cross_down and closes[index] < ema_filter[index] and ema_filter[index] < ema_trend[index]:
+        return {
+            "direction": "PUT",
+            "confidence": 100,
+            "stage": stage,
+            "reasons": [
+                "GO 2024: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
+                "Preço abaixo da EMA(21)",
+                "EMA(21) abaixo da EMA(45)",
             ],
         }
 
@@ -145,15 +146,15 @@ def _signal_at(candles, signal_index, stage):
 
 
 def get_signal(candles, config=None):
-    """Confirma o sinal na última vela M1 concluída."""
-    if not candles or len(candles) < DONCHIAN_PERIOD + 2:
+    """Confirma o cruzamento na última vela M1 concluída."""
+    if not candles or len(candles) < EMA_TREND_PERIOD + 2:
         return None
     closed = candles[:-1]
     return _signal_at(closed, len(closed) - 1, "CLOSED")
 
 
 def get_intrabar_signal(candles, config=None):
-    """Sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
-    if not candles or len(candles) < DONCHIAN_PERIOD + 1:
+    """Calcula sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
+    if not candles or len(candles) < EMA_TREND_PERIOD + 1:
         return None
     return _signal_at(candles, len(candles) - 1, "INTRABAR")
