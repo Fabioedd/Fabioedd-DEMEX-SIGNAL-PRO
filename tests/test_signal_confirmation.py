@@ -3,6 +3,10 @@ import types
 import unittest
 from unittest.mock import patch
 
+# main imports python-dotenv at runtime; provide a no-op for these isolated tests.
+dotenv = sys.modules.setdefault("dotenv", types.ModuleType("dotenv"))
+dotenv.load_dotenv = lambda: None
+
 # Stub optional broker SDK import: these tests exercise only local signal logic.
 if "bullexapi.stable_api" not in sys.modules:
     package = sys.modules.setdefault("bullexapi", types.ModuleType("bullexapi"))
