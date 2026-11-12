@@ -3,15 +3,15 @@ import html
 import json
 import logging
 import os
+from datetime import datetime
 import urllib.error
-import urllib.parse
 import urllib.request
 
 log = logging.getLogger(__name__)
 
 
 class TelegramNotifier:
-    """Sends concise session and settled-trade updates without affecting trading."""
+    """Sends session and settled-trade reports without affecting trading."""
 
     API_BASE = "https://api.telegram.org"
 
@@ -19,6 +19,14 @@ class TelegramNotifier:
         self.bot_token = (bot_token or "").strip()
         self.chat_id = (chat_id or "").strip()
         self.timeout = timeout
+        # Session totals are tracked here so the final report can be complete
+        # without coupling the trading manager to Telegram.
+        self.initial_entry = 0.0
+        self.stop_loss = 0.0
+        self.take_profit = 0.0
+        self.total_invested = 0.0
+        self.last_entry = 0.0
+        self.next_entry = 0.0
 
     @classmethod
     def from_env(cls):
@@ -55,6 +63,12 @@ class TelegramNotifier:
 
     def send_session_start(self, account, market, timeframe, expiry_minutes,
                             assets_count, initial_entry, stop_loss, take_profit):
+        self.initial_entry = float(initial_entry)
+        self.stop_loss = float(stop_loss)
+        self.take_profit = float(take_profit)
+        self.total_invested = 0.0
+        self.last_entry = 0.0
+        self.next_entry = self.initial_entry
         text = (
             "🟦 <b>DEMEX INICIADO</b>\n"
             "Conta: <b>{}</b>\nMercado: <b>{}</b>\n"
@@ -63,7 +77,7 @@ class TelegramNotifier:
             "Stop Loss: <b>R$ {:.2f}</b> | Take Profit: <b>R$ {:.2f}</b>"
         ).format(html.escape(str(account)), html.escape(str(market)),
                  html.escape(str(timeframe)), int(expiry_minutes), int(assets_count),
-                 float(initial_entry), float(stop_loss), float(take_profit))
+                 self.initial_entry, self.stop_loss, self.take_profit)
         return self.send(text)
 
     def send_trade_result(self, summary):
@@ -80,6 +94,12 @@ class TelegramNotifier:
         entry = float(summary.get("entry", 0))
         win_rate = float(summary.get("win_rate", 0))
         next_entry = float(summary.get("next_entry", 0))
+
+        # Accumulate the actual stakes reported by each settled operation.
+        self.total_invested += entry
+        self.last_entry = entry
+        self.next_entry = next_entry
+
         text = (
             "📊 <b>DEMEX — RESULTADO DA OPERAÇÃO</b>\n\n"
             "Ativo: <b>{}</b>\nDireção: <b>{}</b>\n"
@@ -88,21 +108,40 @@ class TelegramNotifier:
             "📈 <b>PLACAR ATUALIZADO</b>\n"
             "WIN: <b>{}</b> | LOSS: <b>{}</b> | TIE: <b>{}</b>\n"
             "Operações: <b>{}</b> | Aproveitamento: <b>{:.2f}%</b>\n"
+            "Total investido: <b>R$ {:.2f}</b>\n"
             "Resultado desta sessão: <b>{:+.2f} BRL</b>\n"
             "Próxima entrada: <b>R$ {:.2f}</b>"
         ).format(symbol, direction, entry, emoji, result, pnl, wins, losses, ties,
-                 total, win_rate, net, next_entry)
+                 total, win_rate, self.total_invested, net, next_entry)
         if summary.get("stopped"):
             reason = html.escape(str(summary.get("stop_reason") or "Limite da sessão atingido"))
             text += "\n\n⛔ <b>SESSÃO ENCERRADA:</b> " + reason
         return self.send(text)
 
     def send_session_end(self, reason, total_entries, wins, losses, ties, session_net):
+        decisive = int(wins) + int(losses)
+        win_rate = (100.0 * int(wins) / decisive) if decisive else 0.0
         text = (
-            "⛔ <b>DEMEX — SESSÃO ENCERRADA</b>\n"
-            "Motivo: <b>{}</b>\n"
-            "Operações: <b>{}</b> | WIN: <b>{}</b> | LOSS: <b>{}</b> | TIE: <b>{}</b>\n"
-            "Resultado acumulado: <b>{:+.2f} BRL</b>"
-        ).format(html.escape(str(reason)), int(total_entries), int(wins), int(losses),
-                 int(ties), float(session_net))
+            "⛔ <b>DEMEX — RELATÓRIO FINAL DA SESSÃO</b>\n\n"
+            "Motivo do encerramento: <b>{}</b>\n"
+            "Horário: <b>{}</b>\n\n"
+            "📊 <b>QUANTIDADE DE OPERAÇÕES</b>\n"
+            "Total de entradas: <b>{}</b>\n"
+            "WIN: <b>{}</b> | LOSS: <b>{}</b> | TIE: <b>{}</b>\n"
+            "Assertividade: <b>{:.2f}%</b>\n\n"
+            "💰 <b>RESUMO FINANCEIRO</b>\n"
+            "Entrada inicial: <b>R$ {:.2f}</b>\n"
+            "Total investido nas entradas: <b>R$ {:.2f}</b>\n"
+            "Última entrada realizada: <b>R$ {:.2f}</b>\n"
+            "Próxima entrada prevista: <b>R$ {:.2f}</b>\n"
+            "Limite Stop Loss: <b>R$ {:.2f}</b>\n"
+            "Meta Take Profit: <b>R$ {:.2f}</b>\n"
+            "RESULTADO LÍQUIDO: <b>{:+.2f} BRL</b>"
+        ).format(
+            html.escape(str(reason)),
+            datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            int(total_entries), int(wins), int(losses), int(ties), win_rate,
+            self.initial_entry, self.total_invested, self.last_entry,
+            self.next_entry, self.stop_loss, self.take_profit, float(session_net)
+        )
         return self.send(text)
