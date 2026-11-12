@@ -36,7 +36,7 @@ class SignalConfirmationTests(unittest.TestCase):
         rows = [
             {"timestamp": index * 60, "open": 1.0, "high": 1.1,
              "low": 0.9, "close": 1.0}
-            for index in range(25)
+            for index in range(50)
         ]
         rows[-2]["timestamp"] = closed_timestamp
         rows[-1]["timestamp"] = closed_timestamp + 60
@@ -92,7 +92,7 @@ class SignalConfirmationTests(unittest.TestCase):
         self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
 
-    def test_final_validation_allows_order_only_in_first_three_seconds_of_next_candle(self):
+    def test_final_validation_allows_order_only_in_first_five_seconds_of_next_candle(self):
         candidate = self.candidate()
         connector = self.connector(self.candles(600), server_timestamp=662)
         with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
@@ -102,9 +102,9 @@ class SignalConfirmationTests(unittest.TestCase):
         self.assertTrue(valid)
         self.assertIn("mesma vela", reason)
 
-    def test_final_validation_rejects_after_three_second_tolerance(self):
+    def test_final_validation_rejects_after_five_second_tolerance(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(600), server_timestamp=663.01)
+        connector = self.connector(self.candles(600), server_timestamp=665.01)
         with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
             valid, reason = main.validate_signal_immediately_before_order(
                 connector, {}, candidate
@@ -122,20 +122,20 @@ class SignalConfirmationTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("vela imediatamente seguinte", reason)
 
-    def test_scan_returns_only_the_first_live_signal_without_backtest(self):
+    def test_scan_returns_only_the_first_closed_signal_without_backtest(self):
         assets = [{"symbol": name + "-OTC", "active_id": i}
                   for i, name in enumerate(["A", "B", "C", "D", "E", "F"], 1)]
         candles = [
             {"timestamp": 600 + i * 60, "open": 1.0, "high": 1.1,
              "low": 0.9, "close": 1.0}
-            for i in range(25)
+            for i in range(45)
         ]
         class FakeConnector:
             def get_candles(self, symbol, timeframe_seconds, count):
                 return candles
             def get_server_timestamp(self):
-                return 600 + 24 * 60 + 50
-        with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
+                return 600 + 44 * 60 + 60 + 2
+        with patch.object(main, "get_signal_at_index", return_value={"direction": "CALL"}):
             result = main.scan_once(
                 FakeConnector(), {"timeframe": "M1", "trade_type": "binary"},
                 assets, max_candidates=5
@@ -183,9 +183,9 @@ class IntrabarEntryTests(unittest.TestCase):
         self.assertTrue(result["intrabar_signal_verified"])
         self.assertEqual(result["signal_timestamp"], 2640)
 
-    def test_rejects_after_three_seconds_from_detection(self):
+    def test_rejects_after_five_seconds_from_detection(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(), 2643.51)
+        connector = self.connector(self.candles(), 2645.51)
         with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
             self.assertFalse(main.verify_intrabar_signal(connector, {}, candidate))
 
@@ -201,7 +201,7 @@ class IntrabarEntryTests(unittest.TestCase):
         with patch.object(main, "get_intrabar_signal", return_value=None):
             self.assertFalse(main.verify_intrabar_signal(connector, {}, candidate))
 
-    def test_final_validation_allows_order_in_signal_candle_within_three_seconds(self):
+    def test_final_validation_allows_order_only_in_next_candle_within_five_seconds(self):
         candidate = self.candidate()
         candidate["intrabar_signal_verified"] = True
         connector = self.connector(self.candles(), 2642.0)
