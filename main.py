@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from bullex_connector import BullexConfig, BullexReadOnlyConnector
+from bullex_connector import BullexConfig, BullexReadOnlyConnector, is_transport_error
 from strategies.my_strategy import get_intrabar_signal, get_signal
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
@@ -128,6 +128,9 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
         except ConnectionError:
             raise
         except Exception as exc:
+            if is_transport_error(exc):
+                connector.connected = False
+                raise ConnectionError("Conexão interrompida durante a leitura de candles.") from exc
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
     candidates = candidates[:max_candidates]
@@ -218,7 +221,7 @@ def main():
 
         assets = get_market_assets(connector, settings)
         next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
-        trader = DemoTrader(connector, settings)
+        trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
@@ -341,6 +344,9 @@ def main():
                 except ConnectionError:
                     raise
                 except Exception as exc:
+                    if is_transport_error(exc):
+                        connector.connected = False
+                        raise ConnectionError("Conexão perdida ao revalidar sinal.") from exc
                     logging.warning(
                         "Não foi possível revalidar %s na abertura: %s",
                         candidate["symbol"], exc
@@ -407,6 +413,7 @@ def main():
                     logging.warning("Conexão perdida antes da ordem: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
+                    pending.clear()
                     next_asset_refresh = 0.0
                 except RuntimeError as exc:
                     error_text = str(exc).lower()
