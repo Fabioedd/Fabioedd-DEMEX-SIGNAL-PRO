@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
 ENTRY_CONFIRMATION_SECONDS = 2.0
-MAX_PENDING_SIGNALS = 5
+MAX_PENDING_SIGNALS = 1
 _scan_pass_number = 0
 
 
@@ -74,8 +74,8 @@ def get_market_assets(connector, settings):
     return filter_market_assets(available, "OTC")
 
 
-def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, excluded_keys=None):
-    """Detecta até cinco sinais ativos e aguarda confirmação no fechamento."""
+def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None):
+    """Retorna o primeiro sinal intrabar; a entrada ocorre na próxima vela."""
     global _scan_pass_number
     _scan_pass_number += 1
     if settings.get("timeframe", "M1").upper() != "M1":
@@ -111,7 +111,7 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, e
                     "expiry_minutes": 1,
                     "signal_timestamp": candles[-1].get("timestamp"),
                     "close_timestamp": signal_ts + 60,
-                    "stage": "WAIT_CLOSE",
+                    "stage": "WAIT_NEXT_OPEN",
                 }
                 key = "{}|{}|{}".format(
                     candidate.get("symbol"), candidate.get("direction"),
@@ -120,6 +120,11 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, e
                 if key in excluded_keys:
                     continue
                 candidates.append(candidate)
+                logging.info(
+                    "PRIMEIRO SINAL DETECTADO | %s %s | próxima abertura M1 às %.0f",
+                    candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
+                )
+                return candidates
         except ConnectionError:
             raise
         except Exception as exc:
@@ -217,7 +222,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT DEMEX ALFA | MACD 7/25/5 | RSI(14) | confirmação no fechamento e entrada na vela seguinte."
+            "SCRIPT DEMEX ALFA | MACD 7/25/5 | RSI(14) | sinal intrabar e entrada na abertura da próxima vela M1."
             
         )
         print(
@@ -231,7 +236,7 @@ def main():
             initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
         )
 
-        # Até cinco sinais podem aguardar o fechamento; sem ranking ou backtest.
+        # Apenas o primeiro sinal encontrado aguarda a próxima abertura M1.
         pending = {}
         processed = set()
 
@@ -291,9 +296,8 @@ def main():
                 if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "SINAL %d/%d | %s %s | aguardando fechamento da vela %s",
-                        len(pending), MAX_PENDING_SIGNALS, candidate["symbol"],
-                        candidate["direction"], candidate["signal_timestamp"]
+                        "SINAL DETECTADO | %s %s | aguardando somente a abertura da próxima vela %s",
+                        candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                     )
 
             try:
@@ -329,60 +333,15 @@ def main():
                     processed.add(key)
                     continue
 
-                try:
-                    confirmed = verify_closed_signal(connector, settings, candidate)
-                except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao confirmar %s: %s", candidate["symbol"], exc)
-                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                    assets = []
-                    pending.clear()
-                    next_asset_refresh = 0.0
-                    break
-                if confirmed is None:
-                    # A API ainda não publicou a vela fechada; aguarda e verifica os demais sinais.
-                    continue
-                if not confirmed:
-                    logging.info(
-                        "SINAL DESCARTADO: não confirmou no fechamento | %s %s.",
-                        candidate["symbol"], candidate["direction"]
-                    )
-                    pending.pop(key, None)
-                    processed.add(key)
-                    continue
-
-                # A confirmação da API pode consumir tempo; confira novamente
-                # imediatamente antes de autorizar a ordem.
-                try:
-                    final_now = normalize_timestamp(connector.get_server_timestamp())
-                except ConnectionError as exc:
-                    logging.warning(
-                        "Conexão perdida na confirmação final do sinal: %s", exc
-                    )
-                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
-                    assets = []
-                    pending.clear()
-                    next_asset_refresh = 0.0
-                    break
-                final_elapsed = final_now - close_ts if final_now is not None else None
-                if final_elapsed is None or not is_close_confirmation_window(
-                    final_elapsed, ENTRY_CONFIRMATION_SECONDS
-                ):
-                    logging.info(
-                        "SINAL EXPIRADO DURANTE A CONFIRMAÇÃO: %s %s.",
-                        candidate["symbol"], candidate["direction"]
-                    )
-                    pending.pop(key, None)
-                    processed.add(key)
-                    continue
-
-                ready.append((close_ts, key, confirmed))
-                # Sem ranking: usa o primeiro sinal confirmado dentro da janela de entrada.
+                # O sinal intrabar já está detectado; não há confirmação no fechamento.
+                # Aguarda somente a abertura da próxima vela e envia a entrada.
+                ready.append((close_ts, key, candidate))
                 break
 
             if ready:
                 _, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL CONFIRMADO: %s %s | entrada autorizada na primeira oportunidade da nova vela.",
+                    "SINAL PRONTO PARA ENTRADA: %s %s | próxima vela aberta.",
                     candidate["symbol"], candidate["direction"]
                 )
                 pending.pop(selected_key, None)
@@ -393,7 +352,7 @@ def main():
                         trader.stopped = True
                         break
                     message = (
-                        "SINAL CONFIRMADO {} | {} | M1 | RSI {:.2f} | expiração 1 minuto"
+                        "SINAL {} | {} | M1 | entrada na abertura da próxima vela | expiração 1 minuto"
                         .format(candidate["symbol"], candidate["direction"],
                                 float(candidate.get("rsi") or 0.0))
                     )
@@ -439,7 +398,7 @@ def main():
                     logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
                     trader.stopped = True
             else:
-                # Consulta os sinais em acompanhamento até confirmação ou expiração.
+                # Aguarda a abertura da próxima vela do primeiro sinal detectado.
                 time.sleep(0.10 if pending else scan_delay(settings))
 
         if trader.stopped:

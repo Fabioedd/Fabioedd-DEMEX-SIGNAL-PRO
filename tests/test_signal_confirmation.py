@@ -71,7 +71,7 @@ class SignalConfirmationTests(unittest.TestCase):
         self.assertFalse(main.verify_closed_signal(connector, {}, candidate))
 
 
-    def test_scan_keeps_up_to_five_live_signals_without_backtest(self):
+    def test_scan_returns_only_the_first_live_signal_without_backtest(self):
         assets = [{"symbol": name + "-OTC", "active_id": i}
                   for i, name in enumerate(["A", "B", "C", "D", "E", "F"], 1)]
         candles = [
@@ -89,10 +89,10 @@ class SignalConfirmationTests(unittest.TestCase):
                 FakeConnector(), {"timeframe": "M1", "trade_type": "binary"},
                 assets, max_candidates=5
             )
-        self.assertEqual(len(result), 5)
+        self.assertEqual(len(result), 1)
         self.assertEqual([item["symbol"] for item in result],
-                         ["A-OTC", "B-OTC", "C-OTC", "D-OTC", "E-OTC"])
-        self.assertTrue(all(item["direction"] == "CALL" for item in result))
+                         ["A-OTC"])
+        self.assertEqual(result[0]["direction"], "CALL")
         self.assertTrue(all("backtest_accuracy" not in item for item in result))
         self.assertFalse(hasattr(main, "backtest_strategy"))
 
