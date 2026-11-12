@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
-from strategies.my_strategy import get_intrabar_signal, get_signal, backtest_strategy
+from strategies.my_strategy import get_intrabar_signal, get_signal
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
@@ -23,8 +23,6 @@ STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
 ENTRY_CONFIRMATION_SECONDS = 2.0
 MAX_PENDING_SIGNALS = 5
-BACKTEST_CANDLES = 100
-MIN_BACKTEST_ACCURACY = 70.0
 _scan_pass_number = 0
 
 
@@ -77,7 +75,7 @@ def get_market_assets(connector, settings):
 
 
 def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, excluded_keys=None):
-    """Detecta até cinco sinais, classifica pelo backtest e aguarda confirmação no fechamento."""
+    """Detecta até cinco sinais ativos e aguarda confirmação no fechamento."""
     global _scan_pass_number
     _scan_pass_number += 1
     if settings.get("timeframe", "M1").upper() != "M1":
@@ -100,13 +98,6 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, e
             provisional = get_intrabar_signal(candles, settings)
             if not provisional:
                 continue
-            historical_window = candles[-(BACKTEST_CANDLES + 1):]
-            performance = backtest_strategy(historical_window, settings)
-            accuracy = float(performance.get("accuracy", 0.0))
-            if accuracy <= MIN_BACKTEST_ACCURACY:
-                logging.info("SINAL NÃO CLASSIFICADO: %s | assertividade %.2f%% (precisa ser > %.2f%%).",
-                             asset["symbol"], accuracy, MIN_BACKTEST_ACCURACY)
-                continue
             signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
             server_ts = normalize_timestamp(connector.get_server_timestamp())
             if signal_ts is None or server_ts is None:
@@ -121,10 +112,6 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, e
                     "signal_timestamp": candles[-1].get("timestamp"),
                     "close_timestamp": signal_ts + 60,
                     "stage": "WAIT_CLOSE",
-                    "backtest_accuracy": accuracy,
-                    "backtest_signals": int(performance.get("signals", 0)),
-                    "backtest_wins": int(performance.get("wins", 0)),
-                    "backtest_losses": int(performance.get("losses", 0)),
                 }
                 key = "{}|{}|{}".format(
                     candidate.get("symbol"), candidate.get("direction"),
@@ -138,14 +125,9 @@ def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, e
         except Exception as exc:
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
-    candidates.sort(key=lambda item: item.get("backtest_accuracy", 0.0), reverse=True)
     candidates = candidates[:max_candidates]
-    if candidates:
-        ranking = " | ".join("{} {:.2f}%".format(item["symbol"], item["backtest_accuracy"])
-                             for item in candidates)
-        logging.info("RANKING BACKTEST (melhor primeiro): %s", ranking)
-    logging.info("VARREDURA %d: %d ativos analisados; %d candidatos acima de %.2f%%.",
-                 _scan_pass_number, analyzed_count, len(candidates), MIN_BACKTEST_ACCURACY)
+    logging.info("VARREDURA %d: %d ativos analisados; %d sinais encontrados (limite %d).",
+                 _scan_pass_number, analyzed_count, len(candidates), max_candidates)
     return candidates
 
 
@@ -249,7 +231,7 @@ def main():
             initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
         )
 
-        # Até cinco candidatos; a ordem de inserção preserva o ranking do backtest.
+        # Até cinco sinais podem aguardar o fechamento; sem ranking ou backtest.
         pending = {}
         processed = set()
 
@@ -309,10 +291,9 @@ def main():
                 if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "CANDIDATO %d/%d | %s %s | backtest %.2f%% (%d sinais) | aguardando fechamento: vela %s",
-                        len(pending), MAX_PENDING_SIGNALS, candidate["symbol"], candidate["direction"],
-                        candidate["backtest_accuracy"], candidate["backtest_signals"],
-                        candidate["signal_timestamp"]
+                        "SINAL %d/%d | %s %s | aguardando fechamento da vela %s",
+                        len(pending), MAX_PENDING_SIGNALS, candidate["symbol"],
+                        candidate["direction"], candidate["signal_timestamp"]
                     )
 
             try:
@@ -358,8 +339,8 @@ def main():
                     next_asset_refresh = 0.0
                     break
                 if confirmed is None:
-                    # Não ultrapassa um candidato melhor enquanto a API ainda não publicou sua confirmação.
-                    break
+                    # A API ainda não publicou a vela fechada; aguarda e verifica os demais sinais.
+                    continue
                 if not confirmed:
                     logging.info(
                         "SINAL DESCARTADO: não confirmou no fechamento | %s %s.",
@@ -395,14 +376,14 @@ def main():
                     continue
 
                 ready.append((close_ts, key, confirmed))
-                # pending está ordenado pelo backtest: usa o primeiro confirmado.
+                # Sem ranking: usa o primeiro sinal confirmado dentro da janela de entrada.
                 break
 
             if ready:
                 _, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL CONFIRMADO: %s %s | backtest %.2f%% | entrada autorizada na primeira oportunidade da nova vela.",
-                    candidate["symbol"], candidate["direction"], candidate.get("backtest_accuracy", 0.0)
+                    "SINAL CONFIRMADO: %s %s | entrada autorizada na primeira oportunidade da nova vela.",
+                    candidate["symbol"], candidate["direction"]
                 )
                 pending.pop(selected_key, None)
                 processed.add(selected_key)
@@ -458,8 +439,7 @@ def main():
                     logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
                     trader.stopped = True
             else:
-                # Com um sinal em acompanhamento, consulta apenas esse ativo
-                # até confirmar o fechamento ou expirar a janela de entrada.
+                # Consulta os sinais em acompanhamento até confirmação ou expiração.
                 time.sleep(0.10 if pending else scan_delay(settings))
 
         if trader.stopped:
