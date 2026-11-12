@@ -18,11 +18,12 @@ class CandleEntryTimingTests(unittest.TestCase):
         self.assertFalse(is_candle_still_open(-0.1))
         self.assertFalse(is_candle_still_open(None))
 
-    def test_entry_window_is_limited_to_two_seconds_after_close(self):
+    def test_entry_window_is_limited_to_three_seconds_after_open(self):
         self.assertTrue(is_close_confirmation_window(0.0))
         self.assertTrue(is_close_confirmation_window(0.5))
         self.assertTrue(is_close_confirmation_window(2.0))
-        self.assertFalse(is_close_confirmation_window(2.01))
+        self.assertTrue(is_close_confirmation_window(3.0))
+        self.assertFalse(is_close_confirmation_window(3.01))
         self.assertFalse(is_close_confirmation_window(5.0))
         self.assertFalse(is_close_confirmation_window(-0.1))
         self.assertFalse(is_close_confirmation_window(None))
