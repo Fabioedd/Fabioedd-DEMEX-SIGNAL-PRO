@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import os
+import threading
 import urllib.error
 import urllib.request
 
@@ -49,6 +50,16 @@ class TelegramNotifier:
             "RSI: <b>{}</b>"
         ).format(symbol, html.escape(direction_label), rsi_text)
         return self.send(text)
+
+    def send_signal_async(self, candidate):
+        """Dispatch notification in background so network latency cannot delay an entry."""
+        if not self.enabled:
+            return False
+        worker = threading.Thread(
+            target=self.send_signal, args=(dict(candidate),), daemon=True
+        )
+        worker.start()
+        return True
 
     def send(self, message):
         """Best-effort delivery: Telegram failures never interrupt trading."""
