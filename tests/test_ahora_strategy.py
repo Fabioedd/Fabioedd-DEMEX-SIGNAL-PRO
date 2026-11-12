@@ -23,11 +23,11 @@ def make_candles(direction="PUT", count=31):
     # Os 20 candles anteriores têm máxima 100.2 e mínima 99.8.
     if direction == "PUT":
         rows[30].update({
-            "open": 100.3, "high": 100.8, "low": 100.0, "close": 100.1
+            "open": 100.3, "high": 100.8, "low": 99.2, "close": 100.1
         })
     else:
         rows[30].update({
-            "open": 99.7, "high": 100.0, "low": 99.2, "close": 99.9
+            "open": 99.7, "high": 100.8, "low": 99.2, "close": 99.9
         })
     return rows
 
@@ -43,7 +43,7 @@ class ScriptAhoraDonchianTests(unittest.TestCase):
         data = make_candles("PUT")
         c1, c2, bucket = _m15_current_levels(data, 30)
         self.assertAlmostEqual(c1, 100.8)
-        self.assertAlmostEqual(c2, 100.0)
+        self.assertAlmostEqual(c2, 99.2)
         self.assertEqual(bucket, 1800)
 
     def test_put_requires_c1_upper_donchian_and_red_close_only(self):
