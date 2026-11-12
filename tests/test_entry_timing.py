@@ -37,6 +37,8 @@ class CandleEntryTimingTests(unittest.TestCase):
         self.assertTrue(is_next_candle_entry_window(0.0))
         self.assertTrue(is_next_candle_entry_window(0.5))
         self.assertTrue(is_next_candle_entry_window(3.0))
+        self.assertTrue(is_next_candle_entry_window(5.0, 5.0, 60.0))
+        self.assertFalse(is_next_candle_entry_window(5.01, 5.0, 60.0))
         self.assertFalse(is_next_candle_entry_window(-0.01))
         self.assertFalse(is_next_candle_entry_window(3.01))
         self.assertFalse(is_next_candle_entry_window(59.99))
