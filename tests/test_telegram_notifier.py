@@ -33,6 +33,15 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertIn("A&amp;B", message)
         self.assertIn("VENDA / PUT", message)
 
+    def test_async_dispatch_starts_background_worker(self):
+        notifier = TelegramNotifier("token", "chat")
+        with patch("telegram_notifier.threading.Thread") as thread:
+            self.assertTrue(notifier.send_signal_async({
+                "symbol": "EURUSD-OTC", "direction": "CALL"
+            }))
+        thread.assert_called_once()
+        thread.return_value.start.assert_called_once()
+
     def test_signal_delivery_failure_is_non_fatal(self):
         notifier = TelegramNotifier("token", "chat")
         with patch.object(notifier, "send", return_value=False):
