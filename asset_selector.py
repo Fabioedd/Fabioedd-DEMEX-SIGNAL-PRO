@@ -4,10 +4,42 @@ from __future__ import annotations
 import logging
 import time
 
-from bullex_connector import is_transport_error
 from strategies.harami_engolfo_tendencia import get_signal_at_index
 
 logger = logging.getLogger(__name__)
+
+
+def _is_transport_error(exc):
+    """Detecta falhas de transporte sem importar o conector/API da corretora."""
+    import errno
+
+    transport_errnos = {
+        errno.ECONNABORTED, errno.ECONNRESET, errno.ENOTCONN,
+        errno.EPIPE, errno.ETIMEDOUT, errno.ECONNREFUSED,
+        errno.EHOSTUNREACH, errno.ENETUNREACH,
+    }
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (ConnectionError, TimeoutError, EOFError)):
+            return True
+        if isinstance(current, OSError) and current.errno in transport_errnos:
+            return True
+        name = type(current).__name__.lower()
+        message = str(current).lower()
+        if any(token in name for token in (
+            "connectionerror", "connectionclosed", "websocket",
+            "timeout", "nameresolution", "maxretry"
+        )) or any(token in message for token in (
+            "connection reset", "connection aborted", "broken pipe",
+            "websocket is already closed", "failed to resolve",
+            "temporary failure in name resolution", "max retries exceeded",
+            "name resolution"
+        )):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _seconds(value):
@@ -135,7 +167,7 @@ def select_qualified_assets(connector, available_assets, settings, stop_check=No
                 result = backtest_asset(connector, asset, settings)
                 break
             except Exception as exc:
-                if is_transport_error(exc):
+                if _is_transport_error(exc):
                     logger.warning(
                         "Conexão interrompida no backtest de %s; reconectando antes de continuar.",
                         asset["symbol"]
