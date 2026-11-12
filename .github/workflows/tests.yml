@@ -17,5 +17,7 @@ jobs:
         run: |
           bash -n demex-auto-update.sh
           bash -n demex-agent.sh
+          bash -n demex.sh
+          bash -n telegram-control.sh
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
