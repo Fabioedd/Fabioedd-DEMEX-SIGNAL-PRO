@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from bullex_connector import BullexConfig, BullexReadOnlyConnector
-from strategies.my_strategy import get_intrabar_signal, get_signal
+from strategies.my_strategy import get_intrabar_signal, get_signal, backtest_strategy
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
@@ -22,6 +22,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
 ENTRY_CONFIRMATION_SECONDS = 2.0
+MAX_PENDING_SIGNALS = 5
+BACKTEST_CANDLES = 100
+MIN_BACKTEST_ACCURACY = 70.0
 _scan_pass_number = 0
 
 
@@ -73,8 +76,8 @@ def get_market_assets(connector, settings):
     return filter_market_assets(available, "OTC")
 
 
-def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None):
-    """Detecta condição na vela M1 em formação para confirmar no fechamento."""
+def scan_once(connector, settings, assets, max_candidates=MAX_PENDING_SIGNALS, excluded_keys=None):
+    """Detecta até cinco sinais, classifica pelo backtest e aguarda confirmação no fechamento."""
     global _scan_pass_number
     _scan_pass_number += 1
     if settings.get("timeframe", "M1").upper() != "M1":
@@ -97,6 +100,13 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
             provisional = get_intrabar_signal(candles, settings)
             if not provisional:
                 continue
+            historical_window = candles[-(BACKTEST_CANDLES + 1):]
+            performance = backtest_strategy(historical_window, settings)
+            accuracy = float(performance.get("accuracy", 0.0))
+            if accuracy <= MIN_BACKTEST_ACCURACY:
+                logging.info("SINAL NÃO CLASSIFICADO: %s | assertividade %.2f%% (precisa ser > %.2f%%).",
+                             asset["symbol"], accuracy, MIN_BACKTEST_ACCURACY)
+                continue
             signal_ts = normalize_timestamp(candles[-1].get("timestamp"))
             server_ts = normalize_timestamp(connector.get_server_timestamp())
             if signal_ts is None or server_ts is None:
@@ -111,6 +121,10 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                     "signal_timestamp": candles[-1].get("timestamp"),
                     "close_timestamp": signal_ts + 60,
                     "stage": "WAIT_CLOSE",
+                    "backtest_accuracy": accuracy,
+                    "backtest_signals": int(performance.get("signals", 0)),
+                    "backtest_wins": int(performance.get("wins", 0)),
+                    "backtest_losses": int(performance.get("losses", 0)),
                 }
                 key = "{}|{}|{}".format(
                     candidate.get("symbol"), candidate.get("direction"),
@@ -127,10 +141,13 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
         except Exception as exc:
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
 
-    logging.info(
-        "VARREDURA %d: %d ativos analisados; %d sinais detectados.",
-        _scan_pass_number, analyzed_count, len(candidates)
-    )
+    candidates.sort(key=lambda item: item.get("backtest_accuracy", 0.0), reverse=True)
+    if candidates:
+        ranking = " | ".join("{} {:.2f}%".format(item["symbol"], item["backtest_accuracy"])
+                             for item in candidates)
+        logging.info("RANKING BACKTEST (melhor primeiro): %s", ranking)
+    logging.info("VARREDURA %d: %d ativos analisados; %d candidatos acima de %.2f%%.",
+                 _scan_pass_number, analyzed_count, len(candidates), MIN_BACKTEST_ACCURACY)
     return candidates
 
 
@@ -234,7 +251,7 @@ def main():
             initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
         )
 
-        # Um único sinal é acompanhado por vez; ao detectá-lo, a varredura pausa.
+        # Até cinco candidatos; a ordem de inserção preserva o ranking do backtest.
         pending = {}
         processed = set()
 
@@ -271,7 +288,7 @@ def main():
                 else:
                     candidates = scan_once(
                         connector, settings, assets,
-                        max_candidates=1,
+                        max_candidates=MAX_PENDING_SIGNALS,
                         excluded_keys=set(processed)
                     )
             except ConnectionError as exc:
@@ -291,11 +308,12 @@ def main():
                 key = candidate_key(candidate)
                 if key in processed or key in pending:
                     continue
-                if not pending:
+                if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "SINAL DETECTADO; aguardando fechamento: %s %s | vela %s",
-                        candidate["symbol"], candidate["direction"],
+                        "CANDIDATO %d/%d | %s %s | backtest %.2f%% (%d sinais) | aguardando fechamento: vela %s",
+                        len(pending), MAX_PENDING_SIGNALS, candidate["symbol"], candidate["direction"],
+                        candidate["backtest_accuracy"], candidate["backtest_signals"],
                         candidate["signal_timestamp"]
                     )
 
@@ -342,9 +360,8 @@ def main():
                     next_asset_refresh = 0.0
                     break
                 if confirmed is None:
-                    # A API ainda não publicou a vela como concluída; aguarda
-                    # dentro da pequena tolerância, sem voltar à varredura geral.
-                    continue
+                    # Não ultrapassa um candidato melhor enquanto a API ainda não publicou sua confirmação.
+                    break
                 if not confirmed:
                     logging.info(
                         "SINAL DESCARTADO: não confirmou no fechamento | %s %s.",
@@ -380,12 +397,14 @@ def main():
                     continue
 
                 ready.append((close_ts, key, confirmed))
+                # pending está ordenado pelo backtest: usa o primeiro confirmado.
+                break
 
             if ready:
                 _, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL CONFIRMADO: %s %s | entrada autorizada na primeira oportunidade da nova vela.",
-                    candidate["symbol"], candidate["direction"]
+                    "SINAL CONFIRMADO: %s %s | backtest %.2f%% | entrada autorizada na primeira oportunidade da nova vela.",
+                    candidate["symbol"], candidate["direction"], candidate.get("backtest_accuracy", 0.0)
                 )
                 pending.pop(selected_key, None)
                 processed.add(selected_key)
