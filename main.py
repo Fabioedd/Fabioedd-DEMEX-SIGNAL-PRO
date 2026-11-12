@@ -210,7 +210,7 @@ def verify_closed_signal(connector, settings, candidate):
 
 def validate_signal_immediately_before_order(connector, settings, candidate):
     """Faz somente a checagem de relógio final; não repete consultas pesadas de candles."""
-    if not candidate.get("closed_signal_verified") or candidate.get("stage") != "CLOSED":
+    if not candidate.get("closed_signal_verified"):
         return False, "a vela do sinal ainda não foi confirmada como fechada"
 
     close_ts = normalize_timestamp(candidate.get("signal_close_timestamp", candidate.get("close_timestamp")))
@@ -232,9 +232,9 @@ def validate_signal_immediately_before_order(connector, settings, candidate):
             return False, "a vela do sinal ainda não fechou"
         if elapsed >= 60.0:
             return False, "a vela imediatamente seguinte já passou; entrada descartada"
-        return False, "janela de entrada de 3 segundos excedida; entrada descartada"
+        return False, "tolerância de 3 segundos excedida; entrada descartada"
 
-    return True, "sinal fechado confirmado; ordem autorizada na primeira vela seguinte"
+    return True, "mesma vela do sinal confirmada; ordem autorizada na primeira vela seguinte"
 
 
 def candidate_key(candidate):
