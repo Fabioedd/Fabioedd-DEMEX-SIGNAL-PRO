@@ -63,6 +63,19 @@ def is_close_confirmation_window(seconds_after_close, max_delay=3.0):
     return is_close_confirmation_tolerance(seconds_after_close, max_delay)
 
 
+def is_next_candle_entry_window(seconds_after_close, max_delay=3.0, candle_duration=60.0):
+    """Autoriza somente os primeiros segundos da vela imediatamente seguinte."""
+    try:
+        elapsed = float(seconds_after_close)
+        limit = float(max_delay)
+        duration = float(candle_duration)
+    except (TypeError, ValueError):
+        return False
+    if duration <= 0 or limit < 0:
+        return False
+    return 0.0 <= elapsed <= limit and elapsed < duration
+
+
 def is_binary_active_open(active, now_timestamp):
     """Usa flags binárias e, quando fornecida, a agenda da corretora."""
     if not isinstance(active, dict):
