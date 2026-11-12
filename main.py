@@ -156,7 +156,7 @@ def verify_closed_signal(connector, settings, candidate):
     candles = connector.get_candles(
         candidate["symbol"], 60, int(settings.get("candles_count", 250))
     )
-    if len(candles) < 17:
+    if len(candles) < 21:
         return None
 
     closed_timestamp = normalize_timestamp(candles[-2].get("timestamp"))
