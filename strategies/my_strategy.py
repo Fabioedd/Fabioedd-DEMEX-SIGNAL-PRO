@@ -1,57 +1,73 @@
-"""SCRIPT AHORA RSI EXHAUSTION — tradução fiel do indicador Lua para Python/DEMEX.
+"""DEMEX Alfa — MACD 7/25/5 + RSI(14), portado de Lua para Python.
 
-Regras:
-- PUT: candle verde toca C1 (máxima da vela M15 anterior) e RSI >= sobrecompra.
-- CALL: candle vermelho toca C2 (mínima da vela M15 anterior) e RSI <= sobrevenda.
-- RSI padrão 14, sobrecompra 70 e sobrevenda 30; parâmetros configuráveis.
-- Sinais fechados usam apenas candles concluídos; detecção em formação serve apenas para acompanhar o fechamento.
+CALL: cruzamento MACD para cima (EMA 7 acima da EMA 25, MACD cruza acima da WMA 5),
+RSI(14) estritamente abaixo de 30 e candle verde.
+PUT: cruzamento MACD para baixo, RSI(14) estritamente acima de 70 e candle vermelho.
+
+Não utiliza EMA 200, filtro de tendência, suporte/resistência ou níveis M15.
+A detecção intrabar acompanha a vela em formação; get_signal confirma a última vela fechada.
 """
 from __future__ import annotations
 
-M1_SECONDS = 60
-M15_SECONDS = 900
+
+FAST_PERIOD = 7
+SLOW_PERIOD = 25
+SIGNAL_PERIOD = 5
+RSI_PERIOD = 14
+OVERSOLD = 30.0
+OVERBOUGHT = 70.0
 
 
-def _timestamp_seconds(candle):
-    raw = candle.get("timestamp")
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if value > 10_000_000_000:
-        value /= 1000.0
-    return int(value)
+def _ema_series(values, period):
+    """EMA com inicialização pela média simples dos primeiros 'period' valores."""
+    if period < 1 or len(values) < period:
+        return [None] * len(values)
+    result = [None] * (period - 1)
+    current = sum(values[:period]) / period
+    result.append(current)
+    alpha = 2.0 / (period + 1.0)
+    for value in values[period:]:
+        current = alpha * value + (1.0 - alpha) * current
+        result.append(current)
+    return result
 
 
-def _previous_m15_levels(candles, signal_index):
-    """C1/C2 são a máxima/mínima dos 15 candles M1 da M15 anterior."""
-    if signal_index < 0 or signal_index >= len(candles):
-        return None
-    signal_ts = _timestamp_seconds(candles[signal_index])
-    if signal_ts is None:
-        return None
-    current_m15_start = (signal_ts // M15_SECONDS) * M15_SECONDS
-    previous_m15_start = current_m15_start - M15_SECONDS
-    expected = {previous_m15_start + i * M1_SECONDS for i in range(15)}
-    previous = {}
-    for candle in candles[:signal_index]:
-        ts = _timestamp_seconds(candle)
-        if ts in expected:
-            previous[ts] = candle
-    if set(previous) != expected:
-        return None
-    try:
-        highs = [float(previous[ts]["high"]) for ts in expected]
-        lows = [float(previous[ts]["low"]) for ts in expected]
-    except (KeyError, TypeError, ValueError):
-        return None
-    return max(highs), min(lows)
+def _wma_series(values, period):
+    """WMA com peso crescente para os valores mais recentes."""
+    result = [None] * len(values)
+    if period < 1:
+        return result
+    denominator = period * (period + 1) / 2.0
+    for index in range(period - 1, len(values)):
+        window = values[index - period + 1:index + 1]
+        if any(value is None for value in window):
+            continue
+        result[index] = sum(
+            value * weight for weight, value in enumerate(window, start=1)
+        ) / denominator
+    return result
 
 
-def _rsi_wilder(closes, period):
-    """RSI padrão com suavização de Wilder, calculado até o candle avaliado."""
+def _macd_state(closes):
+    """Retorna MACD e WMA de sinal para a vela atual e a anterior."""
+    fast = _ema_series(closes, FAST_PERIOD)
+    slow = _ema_series(closes, SLOW_PERIOD)
+    macd_line = [
+        (fast_value - slow_value)
+        if fast_value is not None and slow_value is not None else None
+        for fast_value, slow_value in zip(fast, slow)
+    ]
+    signal_line = _wma_series(macd_line, SIGNAL_PERIOD)
+    if len(closes) < 2:
+        return None
+    values = (macd_line[-2], signal_line[-2], macd_line[-1], signal_line[-1])
+    if any(value is None for value in values):
+        return None
+    return values
+
+
+def _rsi_wilder(closes, period=RSI_PERIOD):
+    """RSI com suavização de Wilder."""
     if period < 2 or len(closes) <= period:
         return None
     changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
@@ -59,126 +75,77 @@ def _rsi_wilder(closes, period):
     losses = [max(-change, 0.0) for change in changes]
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-    for i in range(period, len(gains)):
-        avg_gain = ((period - 1) * avg_gain + gains[i]) / period
-        avg_loss = ((period - 1) * avg_loss + losses[i]) / period
+    for index in range(period, len(gains)):
+        avg_gain = ((period - 1) * avg_gain + gains[index]) / period
+        avg_loss = ((period - 1) * avg_loss + losses[index]) / period
     if avg_loss == 0:
         return 100.0 if avg_gain > 0 else 50.0
     if avg_gain == 0:
         return 0.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
+    relative_strength = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + relative_strength))
 
 
-def _signal_at(candles, signal_index, config, stage):
-    if not candles or signal_index < 0 or signal_index >= len(candles):
-        return None
-    levels = _previous_m15_levels(candles, signal_index)
-    if levels is None:
+def _signal_at(candles, signal_index, stage):
+    if signal_index < 1 or signal_index >= len(candles):
         return None
     try:
-        closes = [float(candle["close"]) for candle in candles[:signal_index + 1]]
+        closes = [float(item["close"]) for item in candles[:signal_index + 1]]
         candle = candles[signal_index]
         open_price = float(candle["open"])
-        high = float(candle["high"])
-        low = float(candle["low"])
         close = float(candle["close"])
     except (KeyError, TypeError, ValueError):
         return None
 
-    period = int(config.get("rsi_period", 14))
-    overbought = float(config.get("rsi_overbought", 70))
-    oversold = float(config.get("rsi_oversold", 30))
-    rsi_value = _rsi_wilder(closes, period)
-    if rsi_value is None:
+    macd = _macd_state(closes)
+    rsi_value = _rsi_wilder(closes, RSI_PERIOD)
+    if macd is None or rsi_value is None:
         return None
 
-    c1, c2 = levels
+    previous_macd, previous_signal, current_macd, current_signal = macd
     is_green = close > open_price
     is_red = close < open_price
-    touched_c1 = high >= c1 and low <= c1
-    touched_c2 = high >= c2 and low <= c2
 
-    if is_green and touched_c1 and rsi_value >= overbought:
-        return {
-            "direction": "PUT",
-            "confidence": 100,
-            "stage": stage,
-            "rsi": round(rsi_value, 2),
-            "reasons": [
-                "SCRIPT AHORA RSI: candle verde tocou C1 da M15 anterior",
-                "RSI em sobrecompra ({:.2f} >= {:.2f})".format(rsi_value, overbought),
-            ],
-        }
-    if is_red and touched_c2 and rsi_value <= oversold:
+    buy_cross = current_macd > current_signal and previous_macd < previous_signal
+    sell_cross = current_macd < current_signal and previous_macd > previous_signal
+
+    if buy_cross and rsi_value < OVERSOLD and is_green:
         return {
             "direction": "CALL",
             "confidence": 100,
             "stage": stage,
             "rsi": round(rsi_value, 2),
             "reasons": [
-                "SCRIPT AHORA RSI: candle vermelho tocou C2 da M15 anterior",
-                "RSI em sobrevenda ({:.2f} <= {:.2f})".format(rsi_value, oversold),
+                "MACD 7/25 cruzou acima da WMA 5",
+                "RSI(14) abaixo de 30 ({:.2f})".format(rsi_value),
+                "Candle verde",
+            ],
+        }
+    if sell_cross and rsi_value > OVERBOUGHT and is_red:
+        return {
+            "direction": "PUT",
+            "confidence": 100,
+            "stage": stage,
+            "rsi": round(rsi_value, 2),
+            "reasons": [
+                "MACD 7/25 cruzou abaixo da WMA 5",
+                "RSI(14) acima de 70 ({:.2f})".format(rsi_value),
+                "Candle vermelho",
             ],
         }
     return None
 
 
 def get_signal(candles, config=None):
-    """Sinal na última vela M1 fechada; descarta a vela atual em formação."""
-    config = config or {}
-    if not candles or len(candles) < 17:
+    """Confirma o sinal usando a última vela M1 concluída."""
+    if not candles or len(candles) < SLOW_PERIOD + SIGNAL_PERIOD + 1:
         return None
     closed = candles[:-1]
-    return _signal_at(closed, len(closed) - 1, config, "CLOSED")
+    return _signal_at(closed, len(closed) - 1, "CLOSED")
 
 
 def get_intrabar_signal(candles, config=None):
-    """Detecta a condição na vela M1 atual para acompanhar e confirmar no fechamento."""
-    config = config or {}
-    if not candles:
+    """Detecta provisoriamente o cruzamento na vela M1 em formação."""
+    if not candles or len(candles) < SLOW_PERIOD + SIGNAL_PERIOD + 1:
         return None
-    return _signal_at(candles, len(candles) - 1, config, "INTRABAR")
-
-def backtest_strategy(candles, config=None):
-    """Backtest sem look-ahead: cada sinal fechado é avaliado pela vela M1 seguinte.
-
-    Usa apenas candles concluídos (a última vela recebida é tratada como em formação).
-    Empates são contabilizados separadamente e não entram no denominador da assertividade.
-    """
-    config = config or {}
-    if not candles or len(candles) < 18:
-        return {"signals": 0, "wins": 0, "losses": 0, "ties": 0, "accuracy": 0.0}
-
-    completed = list(candles[:-1])
-    wins = losses = ties = 0
-    for signal_index in range(15, len(completed) - 1):
-        # get_signal ignora a última vela do recorte; assim avalia signal_index
-        # e deixa signal_index + 1 exclusivamente como resultado da operação.
-        signal = get_signal(completed[:signal_index + 2], config)
-        if not signal:
-            continue
-        try:
-            next_open = float(completed[signal_index + 1]["open"])
-            next_close = float(completed[signal_index + 1]["close"])
-        except (KeyError, TypeError, ValueError):
-            continue
-
-        if next_close == next_open:
-            ties += 1
-        elif signal["direction"] == "CALL":
-            wins += int(next_close > next_open)
-            losses += int(next_close < next_open)
-        elif signal["direction"] == "PUT":
-            wins += int(next_close < next_open)
-            losses += int(next_close > next_open)
-
-    decisive = wins + losses
-    accuracy = (100.0 * wins / decisive) if decisive else 0.0
-    return {
-        "signals": wins + losses + ties,
-        "wins": wins,
-        "losses": losses,
-        "ties": ties,
-        "accuracy": round(accuracy, 2),
-    }
+    return _signal_at(candles, len(candles) - 1, "INTRABAR")
