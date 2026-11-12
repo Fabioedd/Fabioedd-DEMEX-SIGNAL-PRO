@@ -19,6 +19,10 @@ class DemoTrader:
         self.wins=0
         self.losses=0
         self.ties=0
+        self.current_win_streak=0
+        self.current_loss_streak=0
+        self.max_win_streak=0
+        self.max_loss_streak=0
         self.next_entry=self.base
         self.soros_step=0
         self.last_signal_key=None
@@ -65,9 +69,21 @@ class DemoTrader:
                     self.connector.reconnect_forever(stop_check=self.stop_check)
             pnl=money(pnl_raw); self.net=money(self.net+pnl)
             self.total_entries += 1
-            if result == "WIN": self.wins += 1
-            elif result == "LOSS": self.losses += 1
-            else: self.ties += 1
+            if result == "WIN":
+                self.wins += 1
+                self.current_win_streak += 1
+                self.current_loss_streak = 0
+            elif result == "LOSS":
+                self.losses += 1
+                self.current_loss_streak += 1
+                self.current_win_streak = 0
+            else:
+                self.ties += 1
+                # TIE interrompe qualquer sequência consecutiva de WIN ou LOSS.
+                self.current_win_streak = 0
+                self.current_loss_streak = 0
+            self.max_win_streak=max(self.max_win_streak,self.current_win_streak)
+            self.max_loss_streak=max(self.max_loss_streak,self.current_loss_streak)
             decisive = self.wins + self.losses
             win_rate = (100.0 * self.wins / decisive) if decisive else 0.0
             # Soros nível 1: apenas uma recuperação após WIN; depois reinicia.
@@ -87,7 +103,11 @@ class DemoTrader:
                      "entry":float(amount),"expiry_minutes":self.expiry,"result":result,
                      "pnl":float(pnl),"session_net":float(self.net),"next_entry":float(self.next_entry),
                      "stopped":self.stopped,"stop_reason":reason,"total_entries":self.total_entries,
-                     "wins":self.wins,"losses":self.losses,"ties":self.ties,"win_rate":round(win_rate,2)}
+                     "wins":self.wins,"losses":self.losses,"ties":self.ties,"win_rate":round(win_rate,2),
+                     "current_win_streak":self.current_win_streak,
+                     "current_loss_streak":self.current_loss_streak,
+                     "max_win_streak":self.max_win_streak,
+                     "max_loss_streak":self.max_loss_streak}
             log.info("RESULTADO %s | P&L R$ %.2f | acumulado R$ %.2f | próxima entrada R$ %.2f",
                      result,pnl,self.net,self.next_entry)
             if self.stopped: log.warning("ROBÔ PARADO: %s",reason)
