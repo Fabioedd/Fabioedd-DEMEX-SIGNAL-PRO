@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-import strategies.my_strategy as sniper
+import strategies.sniper_confluence as sniper
 
 
 def candle(open_, close, high=None, low=None):
