@@ -48,8 +48,8 @@ def filter_market_assets(assets, mode="OTC"):
     return selected
 
 
-def is_close_confirmation_window(seconds_after_close, max_delay=2.0):
-    """Autoriza a entrada na abertura, com tolerância técnica de até 2 segundos."""
+def is_close_confirmation_window(seconds_after_close, max_delay=3.0):
+    """Autoriza a entrada da abertura até, no máximo, 3 segundos depois."""
     try:
         elapsed = float(seconds_after_close)
         limit = float(max_delay)
