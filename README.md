@@ -58,7 +58,7 @@ Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada co
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
-- Os testes da SNIPER verificam Harami, Engolfo, cruzamentos, filtros EMA e exigência de confluência na mesma vela.
+- A estratégia ativa do DEMEX é HARAMI + ENGOLFO (EMA 21/45): reconhece os quatro padrões do indicador Lua e aplica somente os filtros de tendência EMA 21/45. Não exige cruzamento SMA/WMA. Os testes verificam padrões, filtros e ausência de filtros extras.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
 
@@ -67,4 +67,4 @@ Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada co
 O script `demex-auto-update.sh` consulta a branch `main` do GitHub a cada 60 segundos. Ele só aplica atualizações quando o robô está parado, a branch local é `main`, o histórico permite avanço rápido e não há alterações locais em arquivos rastreados. Arquivos locais não rastreados, como `.env`, são preservados. Se dependências mudarem, instala `requirements.txt`; depois valida a sintaxe e executa os testes. Se a validação falhar, reverte o código para o commit anterior. O atualizador nunca inicia, para ou reinicia o robô. Consulte o status com `bash ~/.demex-auto-update.sh status`.
 
 
-A estratégia GO 2024 anterior permanece em `strategies/my_strategy.py` para compatibilidade com os testes e outros componentes legados; o motor principal importa explicitamente `strategies/sniper_confluence.py`.
+A estratégia HARAMI + ENGOLFO ativa fica em `strategies/harami_engolfo_tendencia.py` e é importada pelo motor principal. As estratégias SNIPER e GO 2024 permanecem no repositório como legado/testes, mas não são usadas pelo motor principal.
