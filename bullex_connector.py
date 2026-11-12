@@ -12,6 +12,10 @@ class OrderRejectedError(RuntimeError):
     """A corretora respondeu explicitamente que não abriu a ordem."""
 
 
+class MarketDataUnavailableError(RuntimeError):
+    """A resposta de disponibilidade de mercado veio ausente ou incompleta."""
+
+
 class OrderConfirmationUnknownError(RuntimeError):
     """O envio terminou sem confirmação/ID; não é seguro reenviar."""
 
@@ -149,10 +153,10 @@ class BullexReadOnlyConnector:
             self._require_connection()
             init_info = self.client.get_all_init_v2(force_refresh=True)
             if not isinstance(init_info, dict):
-                raise RuntimeError("A corretora não retornou os dados de disponibilidade dos ativos binários.")
+                raise MarketDataUnavailableError("A corretora não retornou os dados de disponibilidade dos ativos binários.")
             binary = init_info.get("binary")
-            if not isinstance(binary, dict) or not isinstance(binary.get("actives"), dict):
-                raise RuntimeError("A resposta da corretora não contém a lista de ativos BINÁRIOS.")
+            if not isinstance(binary, dict) or not isinstance(binary.get("actives"), dict) or not binary["actives"]:
+                raise MarketDataUnavailableError("A resposta da corretora não contém uma lista válida de ativos BINÁRIOS.")
             now_ts = float(self.client.get_server_timestamp())
             # O mapa de ativos da própria API é a fonte mais confiável para o símbolo
             # usado em get_candles/buy. O campo "name" pode conter sufixos de tipo.
