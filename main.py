@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
-ENTRY_CONFIRMATION_SECONDS = 2.0
+ENTRY_CONFIRMATION_SECONDS = 3.0
 MAX_PENDING_SIGNALS = 1
 _scan_pass_number = 0
 
@@ -379,7 +379,7 @@ def main():
 
                 if confirmed is None:
                     # A corretora ainda não publicou a nova vela; aguarda,
-                    # respeitando a janela técnica de 2 segundos.
+                    # respeitando a janela técnica de até 3 segundos.
                     continue
                 if confirmed is False:
                     logging.info(
@@ -472,8 +472,15 @@ def main():
                     logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
                     trader.stopped = True
             else:
-                # Aguarda a abertura da próxima vela do primeiro sinal detectado.
-                time.sleep(0.10 if pending else scan_delay(settings))
+                # Se o sinal foi expirado/cancelado, volta imediatamente à varredura.
+                # Mantém a pausa curta somente enquanto aguarda a vela; se não houver
+                # ativos (ex.: reconexão/atualização), respeita o intervalo configurado.
+                if pending:
+                    time.sleep(0.10)
+                elif assets:
+                    continue
+                else:
+                    time.sleep(scan_delay(settings))
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
