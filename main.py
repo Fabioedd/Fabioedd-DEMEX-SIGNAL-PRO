@@ -104,7 +104,7 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
             candles = connector.get_candles(
                 asset["symbol"], 60, int(settings.get("candles_count", 250))
             )
-            if len(candles) < 17:
+            if len(candles) < 21:
                 continue
 
             provisional = get_intrabar_signal(candles, settings)
@@ -237,7 +237,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT AHORA BB | Bollinger 20/2 | sequência banda, retração e C1/C2 | confirmação no fechamento e entrada na próxima vela M1."
+            "SCRIPT AHORA DONCHIAN | C1/C2 M15 + Donchian 20 anterior + cor da vela | confirmação no fechamento e entrada na próxima vela M1."
             
         )
         print(
