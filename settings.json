@@ -12,6 +12,9 @@
   "rsi_overbought": 70,
   "rsi_oversold": 30,
   "one_signal_at_a_time": true,
+  "max_signal_candidates": 5,
+  "backtest_candles": 100,
+  "minimum_backtest_accuracy": 70,
   "sound_alert": true,
   "trading": {
     "mode": "DEMO",
