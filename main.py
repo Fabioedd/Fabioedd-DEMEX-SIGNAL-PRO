@@ -232,7 +232,7 @@ def verify_closed_signal(connector, settings, candidate):
 
 
 def verify_intrabar_signal(connector, settings, candidate):
-    """Confirma o sinal ainda durante a própria vela que o produziu."""
+    """Validador legado de sinais intrabar; não é usado no fluxo principal."""
     candles = connector.get_candles(
         candidate["symbol"], 60, int(settings.get("candles_count", 250))
     )
@@ -276,7 +276,7 @@ def verify_intrabar_signal(connector, settings, candidate):
 
 
 def validate_intrabar_signal_immediately_before_order(connector, settings, candidate):
-    """Autoriza somente a vela atual e até 3s depois da detecção intrabar."""
+    """Validador legado: autoriza a vela atual dentro da tolerância configurada."""
     if not candidate.get("intrabar_signal_verified"):
         return False, "sinal intrabar ainda não confirmado"
 
@@ -317,7 +317,7 @@ def validate_signal_immediately_before_order(connector, settings, candidate):
             return False, "a vela do sinal ainda não fechou"
         if elapsed >= 60.0:
             return False, "a vela imediatamente seguinte já passou; entrada descartada"
-        return False, "tolerância de 3 segundos excedida; entrada descartada"
+        return False, "tolerância de 5 segundos excedida; entrada descartada"
 
     return True, "mesma vela do sinal confirmada; ordem autorizada na primeira vela seguinte"
 
