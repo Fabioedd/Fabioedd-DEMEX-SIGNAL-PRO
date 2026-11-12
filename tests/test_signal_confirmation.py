@@ -97,7 +97,7 @@ class SignalConfirmationTests(unittest.TestCase):
                 connector, {}, candidate
             )
         self.assertTrue(valid)
-        self.assertIn("same", reason)
+        self.assertIn("mesma vela", reason)
 
     def test_final_validation_rejects_after_three_second_tolerance(self):
         candidate = self.candidate()
