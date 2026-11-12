@@ -2,49 +2,6 @@ import unittest
 from unittest.mock import patch
 
 from signal_engine import analyze
-from strategies.my_strategy import _signal_at
-
-
-class DemexMacdZeroLineTests(unittest.TestCase):
-    def setUp(self):
-        self.candles = [{"open": 1.0, "close": 1.1} for _ in range(40)]
-
-    def test_call_cross_below_zero_does_not_need_rsi(self):
-        macd_state = (-0.30, -0.20, -0.10, -0.20)
-        with patch("strategies.my_strategy._macd_state", return_value=macd_state):
-            signal = _signal_at(self.candles, len(self.candles) - 1, "TEST")
-        self.assertEqual(signal["direction"], "CALL")
-        self.assertNotIn("rsi", signal)
-        self.assertIn("abaixo da linha zero", signal["reasons"][0])
-
-    def test_put_cross_above_zero_does_not_need_rsi(self):
-        candles = [{"open": 1.1, "close": 1.0} for _ in range(40)]
-        macd_state = (0.30, 0.20, 0.10, 0.20)
-        with patch("strategies.my_strategy._macd_state", return_value=macd_state):
-            signal = _signal_at(candles, len(candles) - 1, "TEST")
-        self.assertEqual(signal["direction"], "PUT")
-        self.assertNotIn("rsi", signal)
-        self.assertIn("acima da linha zero", signal["reasons"][0])
-
-    def test_call_cross_above_zero_is_rejected(self):
-        macd_state = (0.10, 0.20, 0.30, 0.20)
-        with patch("strategies.my_strategy._macd_state", return_value=macd_state):
-            signal = _signal_at(self.candles, len(self.candles) - 1, "TEST")
-        self.assertIsNone(signal)
-
-    def test_put_cross_below_zero_is_rejected(self):
-        candles = [{"open": 1.1, "close": 1.0} for _ in range(40)]
-        macd_state = (-0.10, -0.20, -0.30, -0.20)
-        with patch("strategies.my_strategy._macd_state", return_value=macd_state):
-            signal = _signal_at(candles, len(candles) - 1, "TEST")
-        self.assertIsNone(signal)
-
-    def test_cross_requires_matching_candle_color(self):
-        candles = [{"open": 1.1, "close": 1.0} for _ in range(40)]
-        macd_state = (-0.30, -0.20, -0.10, -0.20)
-        with patch("strategies.my_strategy._macd_state", return_value=macd_state):
-            signal = _signal_at(candles, len(candles) - 1, "TEST")
-        self.assertIsNone(signal)
 
 
 class DemexCustomEngineIntegrationTests(unittest.TestCase):
@@ -52,7 +9,7 @@ class DemexCustomEngineIntegrationTests(unittest.TestCase):
         signal = {
             "direction": "CALL",
             "confidence": 100,
-            "reasons": ["MACD cruzou para cima abaixo de zero"],
+            "reasons": ["Bollinger, retração e toque na C2"],
         }
         with patch("signal_engine.custom_script_signal", return_value=signal):
             result = analyze([{}] * 30, {
