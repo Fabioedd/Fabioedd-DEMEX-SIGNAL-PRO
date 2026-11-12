@@ -58,6 +58,8 @@ class TelegramNotifierTests(unittest.TestCase):
                 "next_entry": 5, "total_entries": 2, "wins": 1,
                 "losses": 1, "ties": 0, "win_rate": 50, "stopped": True,
                 "stop_reason": "STOP LOSS atingido",
+                "current_win_streak": 0, "current_loss_streak": 1,
+                "max_win_streak": 1, "max_loss_streak": 1,
             })
             notifier.send_session_end(
                 reason="STOP LOSS atingido", total_entries=2,
@@ -69,6 +71,8 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertIn("Total de entradas: <b>2</b>", message)
         self.assertIn("WIN: <b>1</b> | LOSS: <b>1</b> | TIE: <b>0</b>", message)
         self.assertIn("Assertividade: <b>50.00%</b>", message)
+        self.assertIn("Sequência atual: WIN <b>0</b> | LOSS <b>1</b>", message)
+        self.assertIn("Recorde na sessão: WIN <b>1</b> seguidos | LOSS <b>1</b> seguidos", message)
         self.assertIn("Entrada inicial: <b>R$ 5.00</b>", message)
         self.assertIn("Total investido nas entradas: <b>R$ 14.20</b>", message)
         self.assertIn("Última entrada realizada: <b>R$ 9.20</b>", message)
