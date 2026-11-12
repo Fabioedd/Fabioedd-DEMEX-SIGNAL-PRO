@@ -4,15 +4,17 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 
 ## Estratégia e operação
 
-- Estratégia personalizada: `strategies/my_strategy.py` (`get_signal`, `get_pre_signal`, `get_intrabar_signal`).
-- Estratégia atual: **SCRIPT AHORA BB**, traduzida para Python:
-  - **PUT/VENDA:** toque na banda superior de Bollinger (SMA 20, desvio 2), retração para baixo confirmada e, depois, toque na C1 (máxima do M15 anterior) em candle verde.
-  - **CALL/COMPRA:** toque na banda inferior de Bollinger (SMA 20, desvio 2), retração para cima confirmada e, depois, toque na C2 (mínima do M15 anterior) em candle vermelho.
-  - A retração exige uma vela posterior ao toque da banda fechando de volta para dentro da banda e na direção da retração. O toque na zona precisa acontecer em uma vela posterior à retração.
-  - A sequência deve ocorrer dentro do mesmo bloco M15 e expira após 15 candles M1.
-  - C1/C2 são reconstruídas a partir dos quinze candles M1 completos que formam a vela M15 anterior. Se os quinze candles necessários não estiverem disponíveis, o sinal é descartado por segurança.
-- O DEMEX recebe candles M1. O backtest simula a entrada na abertura da vela seguinte e o resultado no fechamento dessa vela, sem usar candles futuros para formar o sinal.
-- Sinais que autorizam ordens usam somente o último candle fechado; o método intrabar é apenas diagnóstico e é revalidado no fluxo normal de execução.
+- Estratégia personalizada ativa: **GO 2024**, implementada em Python em `strategies/my_strategy.py`.
+- Tradução da lógica do indicador original:
+  - SMA rápida de 1 período.
+  - SMA lenta de 34 períodos.
+  - Diferença `buffer1 = SMA(1) - SMA(34)`.
+  - Linha de sinal `buffer2 = WMA(buffer1, 5)`.
+  - EMA de preço de 21 períodos e EMA de tendência de 45 períodos.
+  - **CALL:** cruzamento ascendente de buffer1 sobre buffer2, fechamento acima da EMA21 e EMA21 acima da EMA45.
+  - **PUT:** cruzamento descendente de buffer1 abaixo de buffer2, fechamento abaixo da EMA21 e EMA21 abaixo da EMA45.
+  - O seletor original `MaValue=5` é representado por HL2 `(high + low) / 2`; as duas EMAs usam `close`, como no indicador Lua.
+- O DEMEX recebe candles M1. O sinal provisório intrabar é revalidado no candle fechado antes de autorizar a entrada.
 - Modalidade: somente opções binárias. A seleção de ativos usa exclusivamente a chave de payout `binary`; payout de Blitz/Turbo nunca habilita um ativo.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
@@ -46,7 +48,7 @@ Inicie com `python main.py`. A execução automática está habilitada em `setti
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
-- Os testes de SCRIPT AHORA BB verificam as Bandas de Bollinger, a reconstrução da M15, a sequência banda → retração → C1/C2 e a confirmação em candle fechado.
+- Os testes de GO 2024 verificam SMA, WMA, EMA, cruzamentos de compra/venda e confirmação em candle fechado.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
 
