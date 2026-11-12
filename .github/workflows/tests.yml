@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - demex-backtest-84-refresh
+      - feature/otc-availability-refresh-5m
 jobs:
   unittest:
     runs-on: ubuntu-latest
