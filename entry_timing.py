@@ -48,14 +48,19 @@ def filter_market_assets(assets, mode="OTC"):
     return selected
 
 
-def is_close_confirmation_window(seconds_after_close, max_delay=3.0):
-    """Autoriza a entrada da abertura até, no máximo, 3 segundos depois."""
+def is_close_confirmation_tolerance(seconds_after_close, max_delay=3.0):
+    """Limite de tolerância para confirmar a seta e enviar na vela seguinte."""
     try:
         elapsed = float(seconds_after_close)
         limit = float(max_delay)
     except (TypeError, ValueError):
         return False
     return 0.0 <= elapsed <= limit
+
+
+def is_close_confirmation_window(seconds_after_close, max_delay=3.0):
+    """Compatibilidade: o limite é tolerância, não tempo de espera."""
+    return is_close_confirmation_tolerance(seconds_after_close, max_delay)
 
 
 def is_binary_active_open(active, now_timestamp):
