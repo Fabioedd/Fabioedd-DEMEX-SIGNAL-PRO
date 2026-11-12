@@ -439,44 +439,48 @@ def main():
                     if STOP_FILE.exists():
                         trader.stopped = True
                         break
-                    # Última barreira: não enviar ordem só porque o sinal foi
-                    # confirmado alguns instantes antes. A mesma vela e a mesma
-                    # direção precisam continuar confirmadas, ainda dentro de 3s.
-                    try:
-                        still_valid, validation_reason = validate_signal_immediately_before_order(
-                            connector, settings, candidate
-                        )
-                    except Exception as exc:
-                        if is_transport_error(exc):
-                            connector.connected = False
-                            raise ConnectionError(
-                                "Conexão perdida na validação final do sinal."
-                            ) from exc
-                        logging.warning(
-                            "ENTRADA CANCELADA | %s %s | falha na validação final: %s",
-                            candidate["symbol"], candidate["direction"], exc
-                        )
-                        continue
+                    def final_order_check():
+                        # Executado dentro do gerenciador, depois da confirmação
+                        # PRACTICE e imediatamente antes do envio da ordem.
+                        try:
+                            still_valid, validation_reason = validate_signal_immediately_before_order(
+                                connector, settings, candidate
+                            )
+                        except Exception as exc:
+                            if is_transport_error(exc):
+                                connector.connected = False
+                                raise ConnectionError(
+                                    "Conexão perdida na validação final do sinal."
+                                ) from exc
+                            logging.warning(
+                                "ENTRADA CANCELADA | %s %s | falha na validação final: %s",
+                                candidate["symbol"], candidate["direction"], exc
+                            )
+                            return False
 
-                    if not still_valid:
+                        if not still_valid:
+                            logging.info(
+                                "ENTRADA CANCELADA | %s %s | %s. "
+                                "DEMEX continuará procurando novos sinais.",
+                                candidate["symbol"], candidate["direction"], validation_reason
+                            )
+                            return False
+
                         logging.info(
-                            "ENTRADA CANCELADA | %s %s | %s. "
-                            "DEMEX continuará procurando novos sinais.",
+                            "VALIDAÇÃO FINAL APROVADA | %s %s | %s",
                             candidate["symbol"], candidate["direction"], validation_reason
                         )
-                        continue
+                        message = (
+                            "SINAL {} | {} | M1 | entrada na abertura da próxima vela | expiração 1 minuto"
+                            .format(candidate["symbol"], candidate["direction"])
+                        )
+                        alert(message, bool(settings.get("sound_alert", True)))
+                        print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
+                        return True
 
-                    logging.info(
-                        "VALIDAÇÃO FINAL APROVADA | %s %s | %s",
-                        candidate["symbol"], candidate["direction"], validation_reason
+                    summary = trader.execute_and_settle(
+                        candidate, pre_order_check=final_order_check
                     )
-                    message = (
-                        "SINAL {} | {} | M1 | entrada na abertura da próxima vela | expiração 1 minuto"
-                        .format(candidate["symbol"], candidate["direction"])
-                    )
-                    alert(message, bool(settings.get("sound_alert", True)))
-                    print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
-                    summary = trader.execute_and_settle(candidate)
                     if summary:
                         print(
                             "PLACAR | Entradas {} | WIN {} | LOSS {} | TIE {} | "
