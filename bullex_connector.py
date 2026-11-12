@@ -25,7 +25,11 @@ def is_transport_error(exc):
         if isinstance(current, OSError) and current.errno in transport_errnos:
             return True
         name = type(current).__name__.lower()
-        if "connectionclosed" in name or "websocketconnection" in name:
+        message = str(current).lower()
+        if ("connectionclosed" in name or "websocketconnection" in name
+                or "software caused connection abort" in message
+                or "connection reset" in message or "connection aborted" in message
+                or "broken pipe" in message or "websocket is already closed" in message):
             return True
         current = current.__cause__ or current.__context__
     return False
