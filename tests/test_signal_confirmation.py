@@ -149,5 +149,68 @@ class SignalConfirmationTests(unittest.TestCase):
 
 
 
+
+class IntrabarEntryTests(unittest.TestCase):
+    def candidate(self):
+        return {
+            "symbol": "EURUSD-OTC", "active_id": 1, "direction": "CALL",
+            "signal_timestamp": 2640, "close_timestamp": 2700,
+            "detected_at_server_timestamp": 2640.5, "stage": "INTRABAR_ENTRY",
+        }
+
+    def candles(self, current_timestamp=2640):
+        rows = [
+            {"timestamp": index * 60, "open": 1.0, "high": 1.1,
+             "low": 0.9, "close": 1.0}
+            for index in range(45)
+        ]
+        rows[-1]["timestamp"] = current_timestamp
+        return rows
+
+    def connector(self, rows, server_timestamp):
+        class FakeConnector:
+            def get_candles(self, symbol, timeframe_seconds, count):
+                return rows
+            def get_server_timestamp(self):
+                return server_timestamp
+        return FakeConnector()
+
+    def test_confirms_signal_while_same_candle_is_still_open(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(), 2641.5)
+        with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL", "reasons": ["GO 2024"]}):
+            result = main.verify_intrabar_signal(connector, {}, candidate)
+        self.assertTrue(result["intrabar_signal_verified"])
+        self.assertEqual(result["signal_timestamp"], 2640)
+
+    def test_rejects_after_three_seconds_from_detection(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(), 2643.51)
+        with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
+            self.assertFalse(main.verify_intrabar_signal(connector, {}, candidate))
+
+    def test_rejects_when_signal_candle_is_no_longer_current(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(2700), 2700.5)
+        with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
+            self.assertFalse(main.verify_intrabar_signal(connector, {}, candidate))
+
+    def test_rejects_if_intrabar_signal_disappears(self):
+        candidate = self.candidate()
+        connector = self.connector(self.candles(), 2641.0)
+        with patch.object(main, "get_intrabar_signal", return_value=None):
+            self.assertFalse(main.verify_intrabar_signal(connector, {}, candidate))
+
+    def test_final_validation_allows_order_in_signal_candle_within_three_seconds(self):
+        candidate = self.candidate()
+        candidate["intrabar_signal_verified"] = True
+        connector = self.connector(self.candles(), 2642.0)
+        with patch.object(main, "get_intrabar_signal", return_value={"direction": "CALL"}):
+            valid, reason = main.validate_intrabar_signal_immediately_before_order(
+                connector, {}, candidate
+            )
+        self.assertTrue(valid)
+        self.assertIn("própria vela", reason)
+
 if __name__ == "__main__":
     unittest.main()

@@ -124,7 +124,8 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                     "expiry_minutes": 1,
                     "signal_timestamp": candles[-1].get("timestamp"),
                     "close_timestamp": signal_ts + 60,
-                    "stage": "WAIT_NEXT_OPEN",
+                    "detected_at_server_timestamp": server_ts,
+                    "stage": "INTRABAR_ENTRY",
                 }
                 key = "{}|{}|{}".format(
                     candidate.get("symbol"), candidate.get("direction"),
@@ -134,7 +135,7 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                     continue
                 candidates.append(candidate)
                 logging.info(
-                    "PRIMEIRO SINAL DETECTADO | %s %s | próxima abertura M1 às %.0f",
+                    "PRIMEIRO SINAL DETECTADO | %s %s | vela atual M1 até %.0f",
                     candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                 )
                 return candidates
@@ -207,6 +208,68 @@ def verify_closed_signal(connector, settings, candidate):
         "closed_signal_verified": True,
         "signal_close_timestamp": close_timestamp,
     }
+
+
+def verify_intrabar_signal(connector, settings, candidate):
+    """Confirma o sinal ainda durante a própria vela que o produziu."""
+    candles = connector.get_candles(
+        candidate["symbol"], 60, int(settings.get("candles_count", 250))
+    )
+    if len(candles) < 45:
+        return None
+
+    target_timestamp = normalize_timestamp(candidate.get("signal_timestamp"))
+    close_timestamp = normalize_timestamp(candidate.get("close_timestamp"))
+    detected_at = normalize_timestamp(candidate.get("detected_at_server_timestamp"))
+    server_now = normalize_timestamp(connector.get_server_timestamp())
+    if None in (target_timestamp, close_timestamp, detected_at, server_now):
+        return None
+
+    elapsed_since_detection = server_now - detected_at
+    if elapsed_since_detection < 0 or elapsed_since_detection > ENTRY_CONFIRMATION_TOLERANCE_SECONDS:
+        return False
+    if server_now >= close_timestamp:
+        return False
+
+    target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
+    # A vela do sinal precisa continuar sendo a vela atual/em formação.
+    if target_index is None or target_index != len(candles) - 1:
+        return False
+
+    current_signal = get_intrabar_signal(candles, settings)
+    if not current_signal or current_signal.get("direction") != candidate.get("direction"):
+        return False
+
+    return {
+        **candidate,
+        **current_signal,
+        "symbol": candidate["symbol"],
+        "active_id": candidate["active_id"],
+        "signal_timestamp": candidate["signal_timestamp"],
+        "close_timestamp": candidate["close_timestamp"],
+        "detected_at_server_timestamp": detected_at,
+        "timeframe": "M1",
+        "expiry_minutes": 1,
+        "intrabar_signal_verified": True,
+    }
+
+
+def validate_intrabar_signal_immediately_before_order(connector, settings, candidate):
+    """Autoriza somente a vela atual e até 3s depois da detecção intrabar."""
+    if not candidate.get("intrabar_signal_verified"):
+        return False, "sinal intrabar ainda não confirmado"
+
+    try:
+        verified = verify_intrabar_signal(connector, settings, candidate)
+    except Exception:
+        raise
+
+    if verified is None:
+        return False, "não foi possível confirmar a vela atual e o relógio da corretora"
+    if verified is False:
+        return False, "sinal expirado, alterado ou fora da tolerância de 3 segundos"
+
+    return True, "sinal confirmado na própria vela; envio dentro de 3 segundos da detecção"
 
 
 def validate_signal_immediately_before_order(connector, settings, candidate):
@@ -367,7 +430,7 @@ def main():
                 if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "SINAL DETECTADO | %s %s | aguardando somente a abertura da próxima vela %s",
+                        "SINAL DETECTADO | %s %s | preparando entrada na própria vela do sinal",
                         candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                     )
 
@@ -387,29 +450,30 @@ def main():
 
             ready = []
             for key, candidate in list(pending.items()):
-                close_ts = normalize_timestamp(candidate.get("close_timestamp"))
-                if server_now is None or close_ts is None:
+                detected_at = normalize_timestamp(candidate.get("detected_at_server_timestamp"))
+                if server_now is None or detected_at is None:
                     pending.pop(key, None)
                     processed.add(key)
                     continue
-                elapsed = server_now - close_ts
-                if elapsed < 0:
-                    continue
-                if not is_close_confirmation_tolerance(elapsed, ENTRY_CONFIRMATION_TOLERANCE_SECONDS):
+
+                elapsed = server_now - detected_at
+                if not is_close_confirmation_tolerance(
+                    elapsed, ENTRY_CONFIRMATION_TOLERANCE_SECONDS
+                ):
                     logging.info(
-                        "SINAL CANCELADO: %s %s | %.2fs após o fechamento; tolerância máxima excedida.",
+                        "SINAL CANCELADO: %s %s | %.2fs desde a detecção; "
+                        "tolerância máxima de 3 segundos excedida.",
                         candidate["symbol"], candidate["direction"], elapsed
                     )
                     pending.pop(key, None)
                     processed.add(key)
                     continue
 
-                # Confirma o sinal na própria vela que o originou. A ordem
-                # só poderá ser enviada na vela imediatamente seguinte.
+                # Não espera o fechamento: confirma e prepara a ordem na própria vela do sinal.
                 try:
-                    confirmed = verify_closed_signal(connector, settings, candidate)
+                    confirmed = verify_intrabar_signal(connector, settings, candidate)
                 except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao revalidar sinal: %s", exc)
+                    logging.warning("Conexão perdida ao revalidar sinal intrabar: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
                     pending.clear()
@@ -419,7 +483,7 @@ def main():
                 except Exception as exc:
                     if is_transport_error(exc):
                         connector.connected = False
-                        logging.warning("Conexão perdida ao revalidar sinal: %s", exc)
+                        logging.warning("Conexão perdida ao revalidar sinal intrabar: %s", exc)
                         connector.reconnect_forever(stop_check=STOP_FILE.exists)
                         assets = []
                         pending.clear()
@@ -427,19 +491,19 @@ def main():
                         ready = []
                         break
                     logging.warning(
-                        "Não foi possível revalidar %s na abertura: %s",
+                        "Não foi possível revalidar %s na própria vela: %s",
                         candidate["symbol"], exc
                     )
+                    pending.pop(key, None)
+                    processed.add(key)
                     continue
 
                 if confirmed is None:
-                    # A corretora ainda não publicou a vela fechada do sinal.
-                    # Aguarda apenas dentro da janela de 3s; depois o sinal expira.
                     continue
                 if confirmed is False:
                     logging.info(
-                        "SINAL CANCELADO POR REPINTURA: %s %s | "
-                        "não permaneceu válido na abertura da próxima vela.",
+                        "SINAL CANCELADO: %s %s | vela mudou, sinal desapareceu "
+                        "ou limite de 3 segundos foi excedido.",
                         candidate["symbol"], candidate["direction"]
                     )
                     pending.pop(key, None)
@@ -447,14 +511,14 @@ def main():
                     continue
 
                 candidate = confirmed
-                ready.append((close_ts, key, candidate))
+                ready.append((detected_at, key, candidate))
                 break
 
             if ready:
-                _, selected_key, candidate = ready[0]
+                detected_at, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL CONFIRMADO | %s %s | %.2fs após o fechamento; envio restrito à primeira vela seguinte.",
-                    candidate["symbol"], candidate["direction"], server_now - close_ts
+                    "SINAL INTRABAR CONFIRMADO | %s %s | %.2fs desde a detecção; entrada na própria vela M1.",
+                    candidate["symbol"], candidate["direction"], server_now - detected_at
                 )
                 pending.pop(selected_key, None)
                 processed.add(selected_key)
@@ -467,7 +531,7 @@ def main():
                         # Executado dentro do gerenciador, depois da confirmação
                         # PRACTICE e imediatamente antes do envio da ordem.
                         try:
-                            still_valid, validation_reason = validate_signal_immediately_before_order(
+                            still_valid, validation_reason = validate_intrabar_signal_immediately_before_order(
                                 connector, settings, candidate
                             )
                         except Exception as exc:
@@ -495,7 +559,7 @@ def main():
                             candidate["symbol"], candidate["direction"], validation_reason
                         )
                         message = (
-                            "SINAL {} | {} | M1 | entrada somente nos primeiros 3 segundos da vela imediatamente seguinte | expiração 1 minuto"
+                            "SINAL {} | {} | M1 | entrada na própria vela do sinal, até 3 segundos após a detecção | expiração 1 minuto"
                             .format(candidate["symbol"], candidate["direction"])
                         )
                         alert(message, bool(settings.get("sound_alert", True)))
