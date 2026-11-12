@@ -60,7 +60,13 @@ def get_market_assets(connector, settings):
     mode = str(settings.get("market_mode", "OTC")).upper()
     if mode != "OTC":
         raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
-    availability = connector.get_otc_asset_availability()
+    try:
+        availability = connector.get_otc_asset_availability()
+    except Exception as exc:
+        if is_transport_error(exc):
+            connector.connected = False
+            raise ConnectionError("Conexão interrompida ao atualizar a lista OTC.") from exc
+        raise
     available = [
         {"symbol": item["symbol"], "active_id": item["active_id"]}
         for item in availability if item.get("available") is True
