@@ -35,6 +35,39 @@ require_repo() {
     return 1
   }
 }
+robot_is_running() {
+  # O robo mantém o PID no arquivo do lock enquanto segura o flock.
+  # Confirmamos também cmdline, diretório de trabalho e estado do processo
+  # para evitar confundir PID antigo ou outro projeto Python com o DEMEX.
+  local pid proc cmdline proc_cwd proc_state repo_real
+  repo_real="$(cd "$ROOT" && pwd -P)" || return 1
+
+  if [ -r "$ROOT/.demex-robot.lock" ]; then
+    pid="$(tr -cd '0-9' < "$ROOT/.demex-robot.lock" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && [ -r "/proc/$pid/cmdline" ]; then
+      cmdline="$(tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+      proc_cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+      proc_state="$(awk '/^State:/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)"
+      case "$proc_state" in Z|X) ;; *)
+        case "$cmdline" in *main.py*) [ "$proc_cwd" = "$repo_real" ] && return 0 ;; esac
+      esac
+    fi
+  fi
+
+  # Fallback para sessões iniciadas por versões antigas sem arquivo de lock.
+  for proc in /proc/[0-9]*; do
+    [ -r "$proc/cmdline" ] || continue
+    pid="${proc##*/}"
+    proc_cwd="$(readlink -f "$proc/cwd" 2>/dev/null || true)"
+    [ "$proc_cwd" = "$repo_real" ] || continue
+    proc_state="$(awk '/^State:/ {print $2}' "$proc/status" 2>/dev/null || true)"
+    case "$proc_state" in Z|X) continue ;; esac
+    cmdline="$(tr '\\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+    case "$cmdline" in *main.py*) return 0 ;; esac
+  done
+  return 1
+}
+
 working_tree_clean() {
   git diff --quiet && git diff --cached --quiet || return 1
   local path
@@ -193,7 +226,18 @@ sync_once() {
     return 1
   }
 
+  # Nunca troca arquivos do projeto enquanto o processo DEMEX está ativo.
+  # Reconfere imediatamente antes da instalação para reduzir a janela de corrida.
+  if robot_is_running; then
+    log "ATUALIZACAO ADIADA: DEMEX esta em execucao; nenhum arquivo foi alterado."
+    return 0
+  fi
+
   backup_incoming_changes
+  if robot_is_running; then
+    log "ATUALIZACAO ADIADA: DEMEX iniciou durante a preparacao; backup preservado e instalacao cancelada."
+    return 0
+  fi
   git merge --ff-only "refs/remotes/$REMOTE/$MAIN_BRANCH"
   refresh_agent_copy
   log "Atualizacao instalada localmente. O processo do robô nao foi reiniciado."

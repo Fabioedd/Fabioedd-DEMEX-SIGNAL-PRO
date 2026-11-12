@@ -114,6 +114,21 @@ update_once() {
         return 1
     fi
 
+    # O Termux executa uma copia em ~/.demex-auto-update.sh.
+    # Atualiza essa copia somente depois de a nova versao do repositorio passar
+    # por sintaxe e testes; a versao nova sera usada no proximo ciclo/reinicio.
+    if [ "$SCRIPT_PATH" != "$REPO_DIR/demex-auto-update.sh" ] && [ -f "$REPO_DIR/demex-auto-update.sh" ]; then
+        updater_tmp="${SCRIPT_PATH}.new"
+        if cp "$REPO_DIR/demex-auto-update.sh" "$updater_tmp" &&
+           chmod 700 "$updater_tmp" &&
+           mv "$updater_tmp" "$SCRIPT_PATH"; then
+            log "Copia local do atualizador atualizada; a nova versao sera usada no proximo reinicio."
+        else
+            rm -f "$updater_tmp"
+            log "AVISO: codigo do robo atualizado, mas nao foi possivel atualizar a copia local do atualizador."
+        fi
+    fi
+
     log "ATUALIZAÇÃO VALIDADA E CONCLUÍDA. O robô não foi iniciado, parado ou reiniciado."
     return 0
 }
