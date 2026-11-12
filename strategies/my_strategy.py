@@ -230,6 +230,6 @@ def get_signal(candles, config=None):
 
 def get_intrabar_signal(candles, config=None):
     """Sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
-    if not candles or len(candles) < BB_PERIOD + 16:
+    if not candles or len(candles) < BB_PERIOD + 13:
         return None
     return _signal_at(candles, len(candles) - 1, "INTRABAR")
