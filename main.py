@@ -217,8 +217,8 @@ def main():
         telegram = TelegramNotifier.from_env()
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
-            "SCRIPT AHORA RSI EXHAUSTION | RSI({}) | confirmação no fechamento e entrada na vela seguinte."
-            .format(settings.get("rsi_period", 14))
+            "SCRIPT DEMEX ALFA | MACD 7/25/5 | RSI(14) | confirmação no fechamento e entrada na vela seguinte."
+            
         )
         print(
             "Ativos OTC disponíveis: {} | Atualização a cada 15 minutos | "
