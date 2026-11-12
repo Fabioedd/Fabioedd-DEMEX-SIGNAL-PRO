@@ -17,7 +17,6 @@ from robot_lock import acquire_robot_lock
 from entry_timing import (
     filter_market_assets,
     is_candle_still_open,
-    is_close_confirmation_tolerance,
     is_next_candle_entry_window,
 )
 
