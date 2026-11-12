@@ -216,7 +216,7 @@ def main():
             .format(settings.get("rsi_period", 14))
         )
         print(
-            "Ativos OTC disponíveis: {} | Atualização a cada 5 minutos | "
+            "Ativos OTC disponíveis: {} | Atualização a cada 15 minutos | "
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
             .format(len(assets), trader.base, trader.stop, trader.take)
         )
