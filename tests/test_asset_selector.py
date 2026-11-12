@@ -75,6 +75,20 @@ class AssetSelectorTests(unittest.TestCase):
         self.assertEqual(result["accuracy"], 70.0)
         self.assertTrue(result["approved"])
 
+    def test_single_decisive_win_can_qualify_without_minimum_operations(self):
+        candles = make_candles()
+        connector = FakeConnector(candles)
+        asset = {"symbol": "AUDUSD-OTC", "active_id": 79}
+
+        with patch("asset_selector.get_signal_at_index") as signal:
+            signal.side_effect = [{"direction": "CALL"}] + [None] * 198
+            result = backtest_asset(connector, asset, {})
+
+        self.assertEqual(result["operations"], 1)
+        self.assertEqual(result["wins"], 1)
+        self.assertEqual(result["accuracy"], 100.0)
+        self.assertTrue(result["approved"])
+
     def test_insufficient_history_is_not_approved(self):
         connector = FakeConnector(make_candles(240))
         result = backtest_asset(
