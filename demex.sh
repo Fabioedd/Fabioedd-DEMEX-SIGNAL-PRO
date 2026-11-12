@@ -14,6 +14,10 @@ case "${1:-}" in
       echo "Ambiente .venv não encontrado. Crie/instale o ambiente antes de iniciar."
       exit 1
     fi
+    # Inicia também o listener remoto; sem token/chat ID o DEMEX continua funcionando normalmente.
+    if [ -f "telegram-control.sh" ]; then
+      bash telegram-control.sh iniciar || echo "Aviso: controle Telegram não iniciado. Confira TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no .env."
+    fi
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
       echo "DEMEX já está em execução. Use: ./demex.sh status"
       exit 0
