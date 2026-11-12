@@ -18,6 +18,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent
 STOP_FILE = ROOT / ".demex_stop"
 PID_FILE = ROOT / ".demex-telegram-robot.pid"
+SHELL_PID_FILE = ROOT / ".demex.pid"
 LOCK_FILE = ROOT / ".demex-telegram-control.lock"
 ROBOT_LOG = ROOT / ".demex-telegram-robot.log"
 API_BASE = "https://api.telegram.org"
@@ -138,6 +139,8 @@ class TelegramControl:
     def start_robot(self, chat_id):
         existing_pid = find_robot_pid()
         if existing_pid:
+            PID_FILE.write_text(str(existing_pid), encoding="utf-8")
+            SHELL_PID_FILE.write_text(str(existing_pid), encoding="utf-8")
             self.reply(chat_id, "🟡 O DEMEX já está ligado (PID {}).".format(existing_pid))
             return
 
@@ -160,6 +163,7 @@ class TelegramControl:
         log_handle.close()
         self.robot_process = process
         PID_FILE.write_text(str(process.pid), encoding="utf-8")
+        SHELL_PID_FILE.write_text(str(process.pid), encoding="utf-8")
 
         # Aguarda a criação do processo visível em /proc. Isso evita confirmar
         # uma inicialização que falhou ou perdeu a disputa pela trava única.
@@ -189,6 +193,7 @@ class TelegramControl:
             return
 
         PID_FILE.unlink(missing_ok=True)
+        SHELL_PID_FILE.unlink(missing_ok=True)
         self.robot_process = None
         self.reply(
             chat_id,
@@ -241,6 +246,7 @@ class TelegramControl:
         if _pid_is_demex(self.stop_requested_pid):
             return
         PID_FILE.unlink(missing_ok=True)
+        SHELL_PID_FILE.unlink(missing_ok=True)
         STOP_FILE.unlink(missing_ok=True)
         self.reply(self.chat_id, "✅ DEMEX desligado com segurança.")
         self.stop_requested_pid = None
