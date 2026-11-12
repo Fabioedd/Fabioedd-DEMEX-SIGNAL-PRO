@@ -130,12 +130,20 @@ def select_qualified_assets(connector, available_assets, settings, stop_check=No
         if stop_check and stop_check():
             raise InterruptedError("Parada solicitada durante o backtest dos ativos OTC.")
         asset_started = time.monotonic()
-        try:
-            result = backtest_asset(connector, asset, settings)
-        except Exception as exc:
-            if is_transport_error(exc):
-                raise
-            result = {
+        while True:
+            try:
+                result = backtest_asset(connector, asset, settings)
+                break
+            except Exception as exc:
+                if is_transport_error(exc):
+                    logger.warning(
+                        "Conexão interrompida no backtest de %s; reconectando antes de continuar.",
+                        asset["symbol"]
+                    )
+                    connector.connected = False
+                    connector.reconnect_forever(stop_check=stop_check)
+                    continue
+                result = {
                 "symbol": asset["symbol"],
                 "active_id": asset["active_id"],
                 "wins": 0,
