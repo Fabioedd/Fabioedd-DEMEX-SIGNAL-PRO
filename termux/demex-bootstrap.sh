@@ -77,7 +77,7 @@ temporary.write_bytes(content)
 os.chmod(temporary, 0o600)
 os.replace(temporary, destination)
 version_tmp = version_file.with_suffix(".new")
-version_tmp.write_text(tag + "\\n")
+version_tmp.write_text(tag + "\n")
 os.replace(version_tmp, version_file)
 print(f"Atualizador recuperado/atualizado para a Release {tag}.")
 PY
