@@ -122,7 +122,7 @@ def find_telegram_listeners() -> list[dict[str, object]]:
     for proc in Path("/proc").glob("[0-9]*"):
         try:
             raw = (proc / "cmdline").read_bytes()
-            args = [part.decode("utf-8", "ignore") for part in raw.split(b"\\0") if part]
+            args = [part.decode("utf-8", "ignore") for part in raw.split(b"\0") if part]
             if not any(Path(arg).name == "telegram_control.py" for arg in args):
                 continue
             state_text = (proc / "status").read_text(errors="ignore")
