@@ -11,9 +11,65 @@ PID_FILE="${HOME}/.demex-auto-update.pid"
 LOG_FILE="${HOME}/DEMEX_AUTO_UPDATE.log"
 BRANCH="main"
 CHECK_INTERVAL=60
+VENV_DIR="${REPO_DIR}/.venv"
+VENV_PYTHON="${VENV_DIR}/bin/python"
 
 log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE"
+}
+
+bootstrap_python() {
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+    elif command -v python >/dev/null 2>&1; then
+        command -v python
+    else
+        return 1
+    fi
+}
+
+ensure_venv() {
+    if [ -x "$VENV_PYTHON" ]; then
+        return 0
+    fi
+
+    bootstrap="$(bootstrap_python)" || {
+        log "ERRO: Python do Termux não encontrado; não foi possível criar .venv."
+        return 1
+    }
+
+    log "Ambiente .venv ausente; criando com $bootstrap."
+    if ! "$bootstrap" -m venv "$VENV_DIR" >> "$LOG_FILE" 2>&1; then
+        log "ERRO: criação de .venv falhou. Instale/ative o pacote Python do Termux e tente novamente."
+        return 1
+    fi
+
+    if [ ! -x "$VENV_PYTHON" ]; then
+        log "ERRO: .venv foi criada, mas $VENV_PYTHON não é executável."
+        return 1
+    fi
+    return 0
+}
+
+install_venv_requirements() {
+    "$VENV_PYTHON" -m pip install -r "$REPO_DIR/requirements.txt" >> "$LOG_FILE" 2>&1
+}
+
+rollback_update() {
+    local previous_sha="$1"
+    if ! git -C "$REPO_DIR" reset --hard "$previous_sha" >/dev/null 2>&1; then
+        log "ERRO CRÍTICO: não foi possível reverter o código para $previous_sha."
+        return 1
+    fi
+
+    if [ -x "$VENV_PYTHON" ] && [ -f "$REPO_DIR/requirements.txt" ]; then
+        if ! install_venv_requirements; then
+            log "ERRO CRÍTICO: código revertido, mas não foi possível restaurar as dependências da versão anterior."
+            return 1
+        fi
+    fi
+    log "Código restaurado para $previous_sha."
+    return 0
 }
 
 robot_is_running() {
@@ -93,24 +149,40 @@ update_once() {
     new_sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
     log "Código recebido do GitHub: $old_sha -> $new_sha"
 
+    venv_missing=false
+    [ -x "$VENV_PYTHON" ] || venv_missing=true
+    if ! ensure_venv; then
+        rollback_update "$old_sha"
+        return 1
+    fi
+
+    requirements_changed=false
     if ! git -C "$REPO_DIR" diff --quiet "$old_sha" "$new_sha" -- requirements.txt; then
-        log "Dependências alteradas; instalando requirements.txt."
-        if ! python -m pip install -r "$REPO_DIR/requirements.txt" >> "$LOG_FILE" 2>&1; then
-            git -C "$REPO_DIR" reset --hard "$old_sha" >/dev/null 2>&1
-            log "FALHA ao instalar dependências; código revertido para $old_sha. Robô não foi iniciado."
+        requirements_changed=true
+    fi
+
+    if [ "$venv_missing" = true ] || [ "$requirements_changed" = true ]; then
+        if [ "$venv_missing" = true ]; then
+            log "Ambiente virtual preparado; instalando dependências do projeto na .venv."
+        else
+            log "requirements.txt alterado; instalando dependências na .venv."
+        fi
+        if ! install_venv_requirements; then
+            log "FALHA ao instalar dependências na .venv; revertendo código e restaurando requirements anterior."
+            rollback_update "$old_sha"
             return 1
         fi
     fi
 
-    if ! (cd "$REPO_DIR" && python -m py_compile main.py bullex_connector.py strategies/my_strategy.py strategies/sniper_confluence.py strategies/harami_engolfo_tendencia.py) >> "$LOG_FILE" 2>&1; then
-        git -C "$REPO_DIR" reset --hard "$old_sha" >/dev/null 2>&1
-        log "FALHA na verificação de sintaxe; código revertido para $old_sha."
+    if ! (cd "$REPO_DIR" && "$VENV_PYTHON" -m py_compile main.py bullex_connector.py strategies/my_strategy.py strategies/sniper_confluence.py strategies/harami_engolfo_tendencia.py) >> "$LOG_FILE" 2>&1; then
+        log "FALHA na verificação de sintaxe com .venv; revertendo atualização."
+        rollback_update "$old_sha"
         return 1
     fi
 
-    if ! (cd "$REPO_DIR" && python -m unittest discover -s tests -v) >> "$LOG_FILE" 2>&1; then
-        git -C "$REPO_DIR" reset --hard "$old_sha" >/dev/null 2>&1
-        log "FALHA nos testes locais; código revertido para $old_sha."
+    if ! (cd "$REPO_DIR" && "$VENV_PYTHON" -m unittest discover -s tests -v) >> "$LOG_FILE" 2>&1; then
+        log "FALHA nos testes com .venv; revertendo atualização."
+        rollback_update "$old_sha"
         return 1
     fi
 
@@ -129,7 +201,7 @@ update_once() {
         fi
     fi
 
-    log "ATUALIZAÇÃO VALIDADA E CONCLUÍDA. O robô não foi iniciado, parado ou reiniciado."
+    log "ATUALIZAÇÃO VALIDADA E CONCLUÍDA com .venv. O robô não foi iniciado, parado ou reiniciado."
     return 0
 }
 
@@ -184,18 +256,28 @@ show_status() {
     else
         echo "Robô DEMEX: PARADO."
     fi
+    if [ -x "$VENV_PYTHON" ]; then
+        echo "Ambiente Python: .venv encontrado."
+        "$VENV_PYTHON" --version 2>&1
+    else
+        echo "Ambiente Python: .venv AUSENTE (será criado na próxima atualização)."
+    fi
     echo "Últimos registros:"
     tail -n 12 "$LOG_FILE" 2>/dev/null || echo "Ainda sem registros."
 }
 
 case "${1:-}" in
     instalar)
-        for cmd in git curl python pgrep; do
+        for cmd in git curl pgrep; do
             command -v "$cmd" >/dev/null 2>&1 || {
                 echo "Comando necessário não encontrado: $cmd"
                 exit 1
             }
         done
+        bootstrap_python >/dev/null 2>&1 || {
+            echo "Python do Termux não encontrado."
+            exit 1
+        }
         [ -d "$REPO_DIR/.git" ] || {
             echo "Projeto não encontrado em $REPO_DIR"
             exit 1

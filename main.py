@@ -724,6 +724,12 @@ def main():
                     )
                     trader.stopped = True
                     trader.stop_reason = "Confirmação da ordem desconhecida; verificar histórico da BullX"
+                except PermissionError:
+                    # Conta diferente de PRACTICE ou outra trava de segurança:
+                    # não tentar contornar nem continuar enviando ordens.
+                    logging.exception("Trava de segurança da conta acionada; sessão encerrada.")
+                    trader.stopped = True
+                    trader.stop_reason = "Trava de segurança da conta PRACTICE"
                 except RuntimeError as exc:
                     error_text = str(exc).lower()
                     if (
@@ -734,11 +740,26 @@ def main():
                         logging.warning("Ativo %s indisponível/suspenso: %s",
                                         candidate["symbol"], exc)
                     else:
-                        logging.exception("Falha na execução; robô interrompido por segurança.")
-                        trader.stopped = True
-                except Exception:
-                    logging.exception("Falha na execução/resultado; robô interrompido por segurança.")
-                    trader.stopped = True
+                        logging.exception(
+                            "Resposta inesperada da BullX durante a execução. "
+                            "DEMEX vai reconectar e retomar sem encerrar a sessão."
+                        )
+                        connector.connected = False
+                        connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                        assets = []
+                        pending.clear()
+                        next_asset_refresh = 0.0
+                except Exception as exc:
+                    logging.exception(
+                        "Falha inesperada (%s). DEMEX vai reconectar e retomar a análise; "
+                        "nenhuma ordem será repetida automaticamente.",
+                        exc
+                    )
+                    connector.connected = False
+                    connector.reconnect_forever(stop_check=STOP_FILE.exists)
+                    assets = []
+                    pending.clear()
+                    next_asset_refresh = 0.0
             else:
                 # Se o sinal foi expirado/cancelado, volta imediatamente à varredura.
                 # Mantém a pausa curta somente enquanto aguarda a vela; se não houver

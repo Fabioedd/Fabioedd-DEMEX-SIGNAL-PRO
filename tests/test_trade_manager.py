@@ -75,7 +75,7 @@ class TradeManagerTests(unittest.TestCase):
             "trading": {
                 "initial_entry_brl": 5,
                 "stop_loss_brl": 15,
-                "take_profit_brl": 30,
+                "take_profit_brl": 50,
             },
         }
 
@@ -125,6 +125,18 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(len(c.orders), 1)
         self.assertEqual(t.total_entries, 1)
 
+    def test_unexpected_result_response_reconnects_and_rechecks_same_order(self):
+        c = FakeConnector([
+            ValueError("resposta inesperada da corretora"),
+            ("WIN", 4.25),
+        ])
+        t = DemoTrader(c, self.settings())
+        r = t.execute_and_settle(self.signal())
+        self.assertEqual(r["result"], "WIN")
+        self.assertEqual(c.reconnects, 1)
+        self.assertEqual(len(c.orders), 1)
+        self.assertEqual(t.total_entries, 1)
+
     def test_late_order_lookup_ignores_unrelated_request_ids(self):
         c = FakeConnector([])
         c.client.api.buy_multi_option = {"other-request": {"id": 12345}}
@@ -152,11 +164,11 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(fourth["max_loss_streak"], 1)
 
     def test_take_profit_stops_session(self):
-        c = FakeConnector([("WIN", 30.0)])
+        c = FakeConnector([("WIN", 50.0)])
         t = DemoTrader(c, self.settings())
         r = t.execute_and_settle(self.signal())
         self.assertTrue(r["stopped"])
-        self.assertEqual(r["session_net"], 30.0)
+        self.assertEqual(r["session_net"], 50.0)
 
     def test_unknown_confirmation_keeps_process_alive_and_blocks_new_orders(self):
         c = UnknownOrderConnector([])
