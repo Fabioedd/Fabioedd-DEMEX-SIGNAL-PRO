@@ -539,7 +539,7 @@ def main():
                     continue
                 if elapsed > ENTRY_CONFIRMATION_TOLERANCE_SECONDS:
                     logging.info(
-                        "SINAL CANCELADO: %s %s | %.2fs após o fechamento; "
+                        "SINAL CANCELADO: %s %s | %.2fs desde a detecção; "
                         "tolerância de reconhecimento de 5 segundos excedida na mesma M1.",
                         candidate["symbol"], candidate["direction"], elapsed
                     )
@@ -562,7 +562,7 @@ def main():
                 except Exception as exc:
                     if is_transport_error(exc):
                         connector.connected = False
-                        logging.warning("Conexão perdida ao revalidar sinal fechado: %s", exc)
+                        logging.warning("Conexão perdida ao revalidar sinal intrabar: %s", exc)
                         connector.reconnect_forever(stop_check=STOP_FILE.exists)
                         assets = []
                         pending.clear()
@@ -581,8 +581,7 @@ def main():
                     continue
                 if confirmed is False:
                     logging.info(
-                        "SINAL CANCELADO: %s %s | padrão ou filtros EMA não confirmados "
-                        "na vela fechada.",
+                        "SINAL CANCELADO: %s %s | cruzamento ou filtros EMA não permanecem válidos na vela em formação.",
                         candidate["symbol"], candidate["direction"]
                     )
                     pending.pop(key, None)
@@ -596,8 +595,7 @@ def main():
             if ready:
                 detected_at, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL FECHADO CONFIRMADO | %s %s | %.2fs após o fechamento; "
-                    "entrada na próxima vela M1.",
+                    "SINAL INTRABAR CONFIRMADO | %s %s | %.2fs desde a detecção; entrada na mesma vela M1.",
                     candidate["symbol"], candidate["direction"], server_now - detected_at
                 )
                 pending.pop(selected_key, None)
