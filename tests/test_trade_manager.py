@@ -85,6 +85,7 @@ class TradeManagerTests(unittest.TestCase):
                 "stop_loss_brl": 15,
                 "take_profit_brl": 50,
             },
+            "entry_cooldown_seconds": 0,
         }
 
     def signal(self, n=1, symbol="EURUSD-OTC"):
@@ -286,6 +287,23 @@ class TradeManagerTests(unittest.TestCase):
         self.queue_order(t, self.signal(1))
         self.assertIsNone(t.execute_and_settle(self.signal(1)))
         self.assertEqual(len(c.orders), 1)
+
+    def test_global_entry_cooldown_blocks_until_120_seconds_have_elapsed(self):
+        c = FakeConnector([("WIN", 4.25)])
+        settings = self.settings()
+        settings["entry_cooldown_seconds"] = 120
+        t = DemoTrader(c, settings)
+        t.entry_cooldown_until = 220.0
+
+        with patch("trade_manager.time.monotonic", return_value=100.0):
+            self.assertIsNone(t.execute_and_settle(self.signal()))
+        self.assertEqual(len(c.orders), 0)
+
+        with patch("trade_manager.time.monotonic", return_value=220.0):
+            with patch.object(t, "_start_unknown_order_monitor"):
+                self.assertIsNone(t.execute_and_settle(self.signal()))
+        self.assertEqual(len(c.orders), 1)
+        self.assertEqual(t.entry_cooldown_until, 340.0)
 
     def test_stop_interrupts_before_order_submission(self):
         c = FakeConnector([])

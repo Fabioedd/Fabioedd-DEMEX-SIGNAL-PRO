@@ -319,9 +319,10 @@ def main():
         trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
         trader.late_settlement_callback = telegram.send_trade_result
+        trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 SUPER | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 32 | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
+            "INDICADOR GO 2024 SUPER | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 32 | intervalo global de 120s entre entradas | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
             
         )
         selection_label = (
@@ -340,7 +341,8 @@ def main():
         telegram.send_session_start(
             account="PRACTICE/DEMO", market=settings.get("market_mode", "OTC"),
             timeframe="M1", expiry_minutes=trader.expiry, assets_count=len(assets),
-            initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take
+            initial_entry=trader.base, stop_loss=trader.stop, take_profit=trader.take,
+            entry_cooldown_seconds=trader.entry_cooldown_seconds
         )
 
         # Apenas o primeiro sinal encontrado é validado e executado na própria vela M1.

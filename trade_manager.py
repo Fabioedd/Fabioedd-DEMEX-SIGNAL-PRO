@@ -43,6 +43,13 @@ class DemoTrader:
         self._state_lock = threading.RLock()
         self._stopped = False
         self.stop_reason = None
+        self.entry_cooldown_seconds = max(
+            0.0, float(settings.get("entry_cooldown_seconds", 120))
+        )
+        self.entry_cooldown_until = 0.0
+        self.entry_callback = None
+        self._cooldown_active = False
+        self._last_cooldown_log_at = 0.0
 
     @property
     def has_pending_orders(self):
@@ -56,6 +63,68 @@ class DemoTrader:
     @stopped.setter
     def stopped(self, value):
         self._stopped = bool(value)
+
+    def _entry_cooldown_remaining(self):
+        """Retorna o tempo restante da trava global entre entradas."""
+        now = time.monotonic()
+        with self._state_lock:
+            remaining = max(0.0, self.entry_cooldown_until - now)
+            if remaining > 0:
+                if (
+                    not self._cooldown_active
+                    or now - self._last_cooldown_log_at >= 15.0
+                ):
+                    log.warning(
+                        "NOVA ENTRADA BLOQUEADA | intervalo global de %.0fs; "
+                        "liberação em %.1fs.",
+                        self.entry_cooldown_seconds,
+                        remaining,
+                    )
+                    self._last_cooldown_log_at = now
+                self._cooldown_active = True
+            elif self._cooldown_active:
+                log.info(
+                    "INTERVALO CONCLUÍDO | %.0f segundos completos; "
+                    "novas entradas liberadas.",
+                    self.entry_cooldown_seconds,
+                )
+                self._cooldown_active = False
+            return remaining
+
+    def _register_confirmed_entry(self, pending, order_id):
+        """Inicia o intervalo global somente após confirmação da corretora."""
+        now = time.monotonic()
+        with self._state_lock:
+            if pending.get("entry_confirmed"):
+                return
+            pending["entry_confirmed"] = True
+            self.entry_cooldown_until = now + self.entry_cooldown_seconds
+            self._cooldown_active = False
+            self._last_cooldown_log_at = 0.0
+            remaining = self.entry_cooldown_seconds
+
+        log.info(
+            "ENTRADA CONFIRMADA | %s %s | ID %s | próxima entrada liberada "
+            "em %.0f segundos.",
+            pending["signal"]["symbol"],
+            pending["signal"]["direction"],
+            order_id,
+            remaining,
+        )
+        callback = self.entry_callback
+        if callback is not None:
+            try:
+                callback({
+                    "order_id": order_id,
+                    "symbol": pending["signal"]["symbol"],
+                    "direction": pending["signal"]["direction"],
+                    "entry": float(pending["amount"]),
+                    "cooldown_seconds": self.entry_cooldown_seconds,
+                })
+            except Exception:
+                log.exception(
+                    "Entrada confirmada, mas não foi possível enviar a notificação de entrada."
+                )
 
     def _read_late_order_response(self):
         """Consulta exclusivamente o request_id original, nunca uma resposta alheia."""
@@ -183,6 +252,9 @@ class DemoTrader:
 
                 if state == "accepted":
                     order_id = value
+                    accepted_pending = self.pending_unknown_order
+                    if accepted_pending is not None:
+                        self._register_confirmed_entry(accepted_pending, order_id)
                     log.info(
                         "PENDÊNCIA IDENTIFICADA | ID %s | consultando o resultado da mesma ordem, sem reenviar.",
                         order_id
@@ -293,7 +365,11 @@ class DemoTrader:
             thread.start()
 
     def execute_and_settle(self, signal, pre_order_check=None):
+        if self._entry_cooldown_remaining() > 0:
+            return None
         with self._state_lock:
+            if self.entry_cooldown_until > time.monotonic():
+                return None
             if (
                 self.busy
                 or self.stopped
@@ -397,6 +473,7 @@ class DemoTrader:
                 "reason": "aguardando liquidação em segundo plano",
                 "request_ref": None,
             }
+            self._register_confirmed_entry(pending, order_id)
             with self._state_lock:
                 self.pending_unknown_order_queue.append(pending)
             log.info(
