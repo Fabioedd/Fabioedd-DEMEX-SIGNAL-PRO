@@ -7,7 +7,7 @@ O `settings.json` controla o scanner e a execução automática em conta PRACTIC
 - **Mercado:** OTC (`market_mode: "OTC"`).
 - **Tipo de contrato:** família binária compatível com expiração M1. A integração da BullX pode identificar contratos Turbo para essa duração; o robô não faz fallback para Blitz ou Digital.
 - **Timeframe:** M1, com expiração de 1 minuto.
-- **Estratégia ativa:** HARAMI + ENGOLFO com filtros de tendência EMA 21/45, carregada de `strategies/harami_engolfo_tendencia.py`.
+- **Estratégia ativa:** GO 2024 SUPER, carregada de `strategies/my_strategy.py`, com cruzamento SMA(1)-SMA(34) versus WMA(5), preço/EMA(21) e alinhamento EMA(21)/EMA(45).
 - **Varredura:** intervalo de 2 segundos (`scan_interval_seconds: 2`).
 - **Backtest:** desativado (`backtest_enabled: false`). O DEMEX não executa testes históricos nem filtra ativos por assertividade.
 - **Seleção de ativos:** todos os ativos OTC que a BullX informar como disponíveis para a expiração configurada são liberados diretamente para a varredura de sinais.
@@ -16,16 +16,21 @@ O `settings.json` controla o scanner e a execução automática em conta PRACTIC
 - **Gestão financeira:** entrada inicial de R$ 5,00; Soros nível 1; stop-loss de R$ 15,00; take-profit de R$ 50,00.
 - **Execução automática:** habilitada no arquivo, mas protegida por confirmação dupla de PRACTICE na inicialização e imediatamente antes do envio de ordens.
 
-## Estratégia HARAMI + ENGOLFO (EMA 21/45)
+## Estratégia GO 2024 SUPER
 
-A estratégia ativa reconhece Harami de alta/baixa e Engolfo de alta/baixa usando os corpos dos dois candles, conforme as condições do indicador original.
+A estratégia ativa é a tradução Python do indicador Lua em `strategies/my_strategy.py`. A implementação preserva os parâmetros do script enviado:
 
-- **CALL:** padrão de alta, fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
-- **PUT:** padrão de baixa, fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
-- Não exige cruzamento SMA/WMA, RSI, Bollinger ou outros filtros adicionais.
-- O motor de sinais continua usando a estratégia nos candles atuais/fechados; o backtest histórico está desativado e não participa da seleção.
+- SMA rápida: 1 período; SMA lenta: 34 períodos.
+- `buffer1 = SMA(1) - SMA(34)`.
+- `buffer2 = WMA(buffer1, 5)`.
+- Fonte `MaValue=5` traduzida para HL2 ((high + low) / 2); as duas EMAs usam o fechamento, conforme o código Lua.
+- **CALL:** cruzamento ascendente de `buffer1` sobre `buffer2`, fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
+- **PUT:** cruzamento descendente, fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
+- Não acrescenta RSI, Bollinger, padrões de candle ou outros filtros.
 
-Os scripts GO 2024 e SNIPER podem permanecer no repositório como legado, mas não são a estratégia carregada pelo motor principal nesta configuração.
+O DEMEX calcula o sinal na vela M1 fechada e só permite entrada na vela imediatamente seguinte, dentro da janela de 5 segundos e após a confirmação de horário da corretora. A leitura intrabar é provisória e não autoriza ordem por si só.
+
+A estratégia SNIPER permanece disponível separadamente em `strategies/sniper_confluence.py`, mas não é combinada com o GO 2024.
 
 ## Segurança da conta
 
