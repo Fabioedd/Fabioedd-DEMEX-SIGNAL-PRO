@@ -14,7 +14,7 @@ O projeto está migrando para releases estáveis e instalações versionadas.
 
 O workflow `.github/workflows/tests.yml` valida PRs e commits na `main`. Uma tag `v*` executa a mesma validação e, somente depois, publica `demex-source.tar.gz` e `SHA256SUMS` em uma GitHub Release.
 
-O checksum protege contra corrupção e divergência entre pacote e manifesto. SHA256 sozinho não autentica o publicador se ambos os assets forem substituídos; assinatura/atestado verificável fica como reforço futuro.
+O bootstrapper consulta a tag estável registrada e atualiza o módulo principal quando a release muda; se o módulo estiver ausente ou inválido, recupera-o. O checksum protege contra corrupção e divergência entre pacote e manifesto. SHA256 sozinho não autentica o publicador se ambos os assets forem substituídos; assinatura/atestado verificável fica como reforço futuro.
 
 O atualizador usa trava por diretório com identificação de PID e recuperação de trava abandonada. Não usa `flock`. Bloqueia atualizações se detectar o robô ou os agentes antigos ainda ativos.
 
