@@ -20,10 +20,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Validate Bash scripts
+      - name: Validate Bash scripts and embedded bootstrap Python
         run: |
           bash -n demex-auto-update.sh
           bash -n termux/demex-bootstrap.sh
+          awk '/<<'\''PY'\''/{capture=1; next} capture && /^PY$/{exit} capture{print}' termux/demex-bootstrap.sh > /tmp/demex-bootstrap-recovery.py
+          python -m py_compile /tmp/demex-bootstrap-recovery.py
           bash -n demex-agent.sh
           bash -n demex.sh
           bash -n telegram-control.sh
