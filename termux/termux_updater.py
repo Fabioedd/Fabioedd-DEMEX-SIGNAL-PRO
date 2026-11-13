@@ -145,7 +145,15 @@ def stop_telegram_listener(pid: int, timeout: float = 10.0) -> None:
         raise RuntimeError(f"Sem permissão para reiniciar o controle Telegram (PID {pid}).") from exc
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not Path(f"/proc/{pid}").exists():
+        proc = Path(f"/proc/{pid}")
+        if not proc.exists():
+            return
+        try:
+            status_text = (proc / "status").read_text(errors="ignore")
+            state = next((line.split()[1] for line in status_text.splitlines() if line.startswith("State:")), "")
+            if state in {"Z", "X"}:
+                return
+        except (OSError, PermissionError, IndexError):
             return
         time.sleep(0.2)
     raise RuntimeError(
