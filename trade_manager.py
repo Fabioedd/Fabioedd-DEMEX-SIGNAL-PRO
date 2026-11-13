@@ -38,6 +38,7 @@ class DemoTrader:
         self.busy = False
         self.paused = False
         self.pending_unknown_order = None
+        self.pending_unknown_order_queue = []
         self._unknown_monitor_thread = None
         self._state_lock = threading.RLock()
         self._stopped = False
@@ -163,7 +164,11 @@ class DemoTrader:
 
     def _monitor_unknown_order(self):
         """Reconcilia a resposta tardia; libera novas entradas após a expiração M1."""
-        while self.pending_unknown_order is not None and not self.stopped:
+        while (self.pending_unknown_order is not None or self.pending_unknown_order_queue) and not self.stopped:
+            if self.pending_unknown_order is None and self.pending_unknown_order_queue:
+                with self._state_lock:
+                    self.pending_unknown_order = self.pending_unknown_order_queue.pop(0)
+                    self.paused = True
             # Aguarda a chamada original de execute_and_settle terminar seu finally
             # antes de reconciliar; evita corrida sobre a trava busy.
             with self._state_lock:
@@ -192,7 +197,7 @@ class DemoTrader:
                         "ORDEM NÃO EXECUTADA: a BullX devolveu recusa explícita após o timeout "
                         "(%s). DEMEX retomará a análise sem contabilizar entrada.", value
                     )
-                    return
+                    continue
 
                 if state == "accepted":
                     order_id = value
@@ -331,21 +336,26 @@ class DemoTrader:
                     signal["symbol"], signal["direction"], float(amount), self.expiry
                 )
             except OrderConfirmationUnknownError as exc:
+                new_pending = {
+                    "signal": dict(signal),
+                    "amount": amount,
+                    "submitted_at": time.time(),
+                    "reason": str(exc),
+                    "request_ref": getattr(exc, "request_ref", None)
+                        or getattr(self.connector, "pending_order_request", None),
+                }
                 with self._state_lock:
-                    self.paused = True
-                    self.pending_unknown_order = {
-                        "signal": dict(signal),
-                        "amount": amount,
-                        "submitted_at": time.time(),
-                        "reason": str(exc),
-                        "request_ref": getattr(exc, "request_ref", None)
-                            or getattr(self.connector, "pending_order_request", None),
-                    }
+                    if self.pending_unknown_order is None:
+                        self.pending_unknown_order = new_pending
+                        self.paused = True
+                    else:
+                        self.pending_unknown_order_queue.append(new_pending)
                 log.critical(
                     "CONFIRMAÇÃO DESCONHECIDA | %s %s | %s. "
                     "A sessão não será encerrada: DEMEX continuará ativo, "
                     "monitorando a resposta da mesma solicitação. Novas entradas "
-                    "serão liberadas após %d minuto(s), mesmo sem resposta.",
+                    "serão liberadas após %d minuto(s), mesmo sem resposta. "
+                    "Ordens sem confirmação adicionais serão reconciliadas em fila.",
                     self.expiry,
                     signal["symbol"], signal["direction"], exc
                 )
