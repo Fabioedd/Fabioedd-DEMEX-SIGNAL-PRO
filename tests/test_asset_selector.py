@@ -54,7 +54,7 @@ class AssetSelectorTests(unittest.TestCase):
         self.assertEqual(result["accuracy"], 50.0)
         self.assertFalse(result["approved"])
 
-    def test_exactly_70_percent_is_approved_without_minimum_trade_count(self):
+    def test_exactly_70_percent_is_not_approved(self):
         candles = make_candles()
         connector = FakeConnector(candles)
         asset = {"symbol": "GBPUSD-OTC", "active_id": 77}
@@ -74,7 +74,7 @@ class AssetSelectorTests(unittest.TestCase):
         self.assertEqual(result["wins"], 7)
         self.assertEqual(result["losses"], 3)
         self.assertEqual(result["accuracy"], 70.0)
-        self.assertTrue(result["approved"])
+        self.assertFalse(result["approved"])
 
     def test_single_decisive_win_can_qualify_without_minimum_operations(self):
         candles = make_candles()
@@ -104,8 +104,8 @@ class AssetSelectorTests(unittest.TestCase):
             {"symbol": "B-OTC", "active_id": 2},
         ]
         results = [
-            {"symbol": "A-OTC", "active_id": 1, "wins": 7, "losses": 3,
-             "ties": 0, "operations": 10, "accuracy": 70.0, "approved": True,
+            {"symbol": "A-OTC", "active_id": 1, "wins": 8, "losses": 2,
+             "ties": 0, "operations": 10, "accuracy": 80.0, "approved": True,
              "reason": "Aprovado"},
             {"symbol": "B-OTC", "active_id": 2, "wins": 6, "losses": 4,
              "ties": 0, "operations": 10, "accuracy": 60.0, "approved": False,
