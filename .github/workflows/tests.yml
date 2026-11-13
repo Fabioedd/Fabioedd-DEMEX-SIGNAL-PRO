@@ -24,7 +24,7 @@ jobs:
         run: |
           bash -n demex-auto-update.sh
           bash -n termux/demex-bootstrap.sh
-          awk '/<<'\''PY'\''/{capture=1; next} capture && /^PY$/{exit} capture{print}' termux/demex-bootstrap.sh > /tmp/demex-bootstrap-recovery.py
+          awk 'BEGIN{capture=0} /<<.PY./ {capture=1; next} capture && /^PY$/ {exit} capture {print}' termux/demex-bootstrap.sh > /tmp/demex-bootstrap-recovery.py
           python -m py_compile /tmp/demex-bootstrap-recovery.py
           bash -n demex-agent.sh
           bash -n demex.sh
