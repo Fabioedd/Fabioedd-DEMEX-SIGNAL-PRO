@@ -437,7 +437,7 @@ def main():
         trader.late_settlement_callback = telegram.send_trade_result
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR HARAMI + ENGOLFO | padrões originais + filtros EMA 21/45 | sem cruzamento SMA/WMA adicional | confirmação no fechamento e entrada na próxima M1 (até 5s)."
+            "INDICADOR GO 2024 SUPER | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 | cruzamento confirmado no fechamento e entrada na próxima M1 (até 5s)."
             
         )
         selection_label = (
