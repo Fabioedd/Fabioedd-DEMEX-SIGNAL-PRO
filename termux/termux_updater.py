@@ -26,6 +26,8 @@ PROJECT_LINK = HOME / "Fabioedd-DEMEX-SIGNAL-PRO"
 SHARED = MANAGER / "shared"
 LOG = HOME / "DEMEX_AUTO_UPDATE.log"
 KEEP_RELEASES = 3
+CHECK_INTERVAL = 60
+AGENT_PID_FILE = HOME / ".demex-auto-update.pid"
 REQUIRED = ("main.py", "settings.json", "requirements.txt", "demex.sh", "strategies/my_strategy.py")
 
 
@@ -349,6 +351,82 @@ def update() -> int:
             pass
 
 
+def agent_running() -> bool:
+    try:
+        pid = int(AGENT_PID_FILE.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return False
+    return _pid_is_updater(pid)
+
+
+def start_agent() -> int:
+    if agent_running():
+        log(f"Atualizador automático já está ativo (PID {AGENT_PID_FILE.read_text().strip()}).")
+        return 0
+    bootstrapper = HOME / ".demex-bootstrap.sh"
+    if not bootstrapper.is_file():
+        log("Bootstrapper não encontrado. Execute primeiro o inicializador do DEMEX.")
+        return 1
+    try:
+        with LOG.open("a", encoding="utf-8") as output:
+            process = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "loop"],
+                cwd=HOME, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        AGENT_PID_FILE.write_text(str(process.pid), encoding="ascii")
+        time.sleep(0.3)
+        if not _pid_is_updater(process.pid):
+            AGENT_PID_FILE.unlink(missing_ok=True)
+            log("Não foi possível manter o atualizador automático em execução.")
+            return 1
+        log(f"Atualizador automático iniciado (PID {process.pid}); consulta a cada {CHECK_INTERVAL} segundos.")
+        return 0
+    except OSError as exc:
+        log(f"Falha ao iniciar o atualizador automático: {exc}")
+        return 1
+
+
+def stop_agent() -> int:
+    try:
+        pid = int(AGENT_PID_FILE.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        AGENT_PID_FILE.unlink(missing_ok=True)
+        log("Atualizador automático já estava parado.")
+        return 0
+    if _pid_is_updater(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            log(f"Pedido de parada enviado ao atualizador automático (PID {pid}).")
+        except OSError as exc:
+            log(f"Não foi possível parar o atualizador automático: {exc}")
+            return 1
+    AGENT_PID_FILE.unlink(missing_ok=True)
+    return 0
+
+
+def run_loop() -> int:
+    signal.signal(signal.SIGTERM, lambda *_: raise_system_exit())
+    bootstrapper = HOME / ".demex-bootstrap.sh"
+    log(f"Agente automático iniciado; verificações a cada {CHECK_INTERVAL} segundos.")
+    while True:
+        if not bootstrapper.is_file():
+            log("Bootstrapper ausente; nova tentativa no próximo ciclo.")
+        else:
+            try:
+                with LOG.open("a", encoding="utf-8") as output:
+                    subprocess.run(["bash", str(bootstrapper), "atualizar"], cwd=HOME,
+                                   stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                                   check=False)
+            except OSError as exc:
+                log(f"Falha na verificação automática: {exc}")
+        time.sleep(CHECK_INTERVAL)
+
+
+def raise_system_exit() -> None:
+    raise SystemExit(0)
+
+
 def status() -> int:
     print("Atualizador DEMEX: disponível.")
     if CURRENT.is_symlink() and CURRENT.exists():
@@ -359,6 +437,7 @@ def status() -> int:
             print(subprocess.check_output([str(vpy), "--version"], text=True).strip())
     else:
         print("Versão ativa: ainda não instalada.")
+    print(f"Atualizador automático: {'ATIVO' if agent_running() else 'PARADO'}")
     print(f"Robô DEMEX: {'EM EXECUÇÃO' if robot_is_running() else 'PARADO'}")
     print(f"Log: {LOG}")
     return 0
@@ -368,9 +447,15 @@ def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "atualizar"
     if command in {"atualizar", "update", "instalar", "install"}:
         return update()
+    if command == "iniciar":
+        return start_agent()
+    if command == "parar":
+        return stop_agent()
+    if command == "loop":
+        return run_loop()
     if command == "status":
         return status()
-    print("Uso: demex-auto-update.sh {instalar|atualizar|status}")
+    print("Uso: demex-auto-update.sh {instalar|atualizar|iniciar|parar|status}")
     return 2
 
 
