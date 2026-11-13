@@ -4,30 +4,45 @@ O projeto está migrando para releases estáveis e instalações versionadas.
 
 ## Arquitetura
 
-- `termux/demex-bootstrap.sh`: ponto de entrada pequeno e independente. Se o atualizador principal estiver ausente ou inválido, baixa o pacote da última release estável, confere o SHA256 e recupera somente o módulo do atualizador.
-- `termux/termux_updater.py`: consulta a última GitHub Release estável, valida pacote e checksum, prepara uma versão isolada e troca o link `~/.demex/current`.
+- `termux/demex-bootstrap.sh`: ponto de entrada pequeno e independente. Consulta a última Release estável e mantém o módulo principal atualizado; se estiver ausente ou inválido, recupera-o depois de conferir o SHA256 do pacote.
+- `termux/termux_updater.py`: consulta a Release, verifica pacote e checksum, prepara uma versão isolada e troca atomicamente o link `~/.demex/current`.
 - `~/.demex/versions/<tag>`: instalações independentes, cada uma com sua própria `.venv`.
 - `~/.demex/shared`: mantém `.env`, `settings.json` e logs compartilhados entre versões.
-- `~/Fabioedd-DEMEX-SIGNAL-PRO`: caminho de compatibilidade, convertido em link simbólico para a versão ativa após a primeira instalação. O checkout anterior é preservado em `~/.demex/legacy`.
+- `~/Fabioedd-DEMEX-SIGNAL-PRO`: caminho de compatibilidade convertido em link simbólico para a versão ativa. O checkout antigo é preservado em `~/.demex/legacy`.
 
 ## Segurança e publicação
 
-O workflow `.github/workflows/tests.yml` valida PRs e commits na `main`. Uma tag `v*` executa a mesma validação e, somente depois, publica `demex-source.tar.gz` e `SHA256SUMS` em uma GitHub Release.
+O workflow `.github/workflows/tests.yml` valida PRs e commits na `main` com Python 3.13, Bash, módulos rastreados, testes, arquivos essenciais e parâmetros protegidos. Uma tag `v*` só publica `demex-source.tar.gz` e `SHA256SUMS` depois da validação e se o commit da tag já fizer parte do histórico aprovado da `main`.
 
-O bootstrapper consulta a tag estável registrada e atualiza o módulo principal quando a release muda; se o módulo estiver ausente ou inválido, recupera-o. O checksum protege contra corrupção e divergência entre pacote e manifesto. SHA256 sozinho não autentica o publicador se ambos os assets forem substituídos; assinatura/atestado verificável fica como reforço futuro.
+O checksum detecta corrupção ou divergência entre pacote e manifesto. SHA256 sozinho não autentica o publicador se ambos os assets forem substituídos; assinatura/atestado verificável é um reforço futuro.
 
-O atualizador usa trava por diretório com identificação de PID e recuperação de trava abandonada. Não usa `flock`. Bloqueia atualizações se detectar o robô ou os agentes antigos ainda ativos.
+A trava usa diretório e PID, sem depender de `flock`. O atualizador bloqueia a migração se detectar o robô ou um dos agentes antigos em execução. Nunca inicia, para ou reinicia o robô.
 
-## Migração e operação
+## Primeira migração
 
-O script `demex-auto-update.sh` é a ponte de compatibilidade para o arquivo antigo `~/.demex-auto-update.sh`. Ao ser executado a partir do checkout, instala o bootstrapper e o módulo principal no diretório privado do Termux e delega a operação.
+Depois que o PR for integrado na `main` e a primeira Release estável `v*` estiver publicada, execute este bloco único no Termux. Ele para somente os agentes antigos de atualização, exige árvore Git sem alterações rastreadas, atualiza o checkout por fast-forward, instala o novo launcher e ativa a verificação automática. Não inicia o robô.
 
-Depois de integrar este PR, publique uma tag estável `v*` somente após a aprovação do workflow. A primeira execução migra o checkout existente, preserva os arquivos locais importantes e não inicia o robô.
+```bash
+cd "$HOME/Fabioedd-DEMEX-SIGNAL-PRO" &&
+bash ./demex-agent.sh parar &&
+bash "$HOME/.demex-auto-update.sh" parar &&
+git diff --quiet &&
+git diff --cached --quiet &&
+git fetch origin main &&
+git merge --ff-only origin/main &&
+install -m 700 demex-auto-update.sh "$HOME/.demex-auto-update.sh" &&
+bash "$HOME/.demex-auto-update.sh" atualizar &&
+bash "$HOME/.demex-auto-update.sh" iniciar
+```
 
-Comandos:
-- `bash ~/.demex-auto-update.sh atualizar` — atualiza.
-- `bash ~/.demex-auto-update.sh status` — mostra versão e estado.
-- `bash ~/.demex-bootstrap.sh atualizar` — chama diretamente o bootstrapper.
+Se o Git informar alterações rastreadas, o bloco para antes de atualizar; não use `reset --hard` para forçar.
+
+## Comandos depois da migração
+
+- `bash ~/.demex-auto-update.sh atualizar` — verifica e instala a última release estável.
+- `bash ~/.demex-auto-update.sh iniciar` — liga o agente de atualização periódica (consulta a cada 60 segundos).
+- `bash ~/.demex-auto-update.sh parar` — para somente o agente de atualização.
+- `bash ~/.demex-auto-update.sh status` — mostra versão, estado do agente e do robô.
 
 ## Limitações de validação
 
