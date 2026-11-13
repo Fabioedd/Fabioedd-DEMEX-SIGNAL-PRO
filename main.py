@@ -11,7 +11,7 @@ from bullex_connector import (
     is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.my_strategy import get_intrabar_signal, get_signal_at_index  # GO 2024 SUPER
+from strategies.my_strategy import get_intrabar_signal  # GO 2024 SUPER
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
@@ -203,51 +203,6 @@ def find_candle_index_by_timestamp(candles, target_timestamp):
             return index
     return None
 
-
-def verify_closed_signal(connector, settings, candidate):
-    """Confirma a própria vela do sinal, esteja ela no fim ou penúltima na resposta da API."""
-    candles = connector.get_candles(
-        candidate["symbol"], 60, int(settings.get("candles_count", 250))
-    )
-    if len(candles) < 45:
-        return None
-
-    target_timestamp = normalize_timestamp(candidate.get("signal_timestamp"))
-    close_timestamp = normalize_timestamp(candidate.get("close_timestamp"))
-    if target_timestamp is None or close_timestamp is None:
-        return None
-
-    # O timestamp de abertura, sozinho, não prova que a vela fechou:
-    # algumas respostas da API incluem a vela ainda em formação como último item.
-    # Consulta o relógio da corretora para distinguir esse caso do histórico
-    # que retorna somente velas concluídas.
-    server_timestamp = normalize_timestamp(connector.get_server_timestamp())
-    if server_timestamp is None or server_timestamp < close_timestamp:
-        return None
-
-    target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
-    if target_index is None:
-        latest_timestamp = normalize_timestamp(candles[-1].get("timestamp"))
-        if latest_timestamp is not None and latest_timestamp > target_timestamp:
-            return False
-        return None
-
-    # O chamador só chega aqui depois do horário de fechamento da vela.
-    # Calculamos o cruzamento exatamente no candle que gerou o pré-sinal.
-    confirmed = get_signal_at_index(candles, target_index)
-    if not confirmed or confirmed.get("direction") != candidate.get("direction"):
-        return False
-    return {
-        **candidate,
-        **confirmed,
-        "symbol": candidate["symbol"],
-        "active_id": candidate["active_id"],
-        "signal_timestamp": candidate["signal_timestamp"],
-        "timeframe": "M1",
-        "expiry_minutes": 1,
-        "closed_signal_verified": True,
-        "signal_close_timestamp": close_timestamp,
-    }
 
 
 def verify_intrabar_signal(connector, settings, candidate):
