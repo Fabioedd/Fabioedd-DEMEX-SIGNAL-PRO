@@ -27,6 +27,31 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertIn("+4.20 BRL", message)
         self.assertIn("Total investido: <b>R$ 5.00</b>", message)
 
+    def test_opened_trade_message_shows_signal_and_entry_times_without_delay_field(self):
+        notifier = TelegramNotifier("token", "chat")
+        entry = {
+            "symbol": "EURUSD-OTC",
+            "direction": "CALL",
+            "order_id": 123456,
+            "entry": 5.0,
+            "cooldown_seconds": 60,
+            "signal_timestamp": 1_800_000_000,
+            "entry_timestamp": 1_800_000_003,
+            "confidence": 100,
+        }
+        with patch.object(notifier, "send", return_value=True) as send:
+            result = notifier.send_trade_opened(entry)
+
+        self.assertTrue(result)
+        message = send.call_args.args[0]
+        self.assertIn("Horário do sinal:", message)
+        self.assertIn("Horário da entrada:", message)
+        self.assertIn("Valor da entrada: <b>R$ 5.00</b>", message)
+        self.assertIn("Conta: <b>PRACTICE/DEMO</b>", message)
+        self.assertIn("Ordem: <b>123456</b>", message)
+        self.assertIn("60 segundos", message)
+        self.assertNotIn("Tempo entre sinal e entrada", message)
+
     def test_html_escapes_asset_name(self):
         notifier = TelegramNotifier("token", "chat")
         with patch.object(notifier, "send", return_value=True) as send:
