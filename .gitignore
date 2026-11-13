@@ -19,3 +19,7 @@ vendor/
 .demex-agent.sh
 .demex-agent.sh.new
 .demex-telegram-control.lock
+
+# Artefatos locais de execução e dependências instaladas via pip.
+/.demex-robot.lock
+/src/bullexapi/
