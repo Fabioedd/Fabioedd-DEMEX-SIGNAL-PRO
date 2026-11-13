@@ -16,23 +16,25 @@ O workflow `.github/workflows/tests.yml` valida PRs e commits na `main` com Pyth
 
 O checksum detecta corrupção ou divergência entre pacote e manifesto. SHA256 sozinho não autentica o publicador se ambos os assets forem substituídos; assinatura/atestado verificável é um reforço futuro.
 
-A trava usa diretório e PID, sem depender de `flock`. O atualizador bloqueia a migração se detectar o robô ou um dos agentes antigos em execução. Nunca inicia, para ou reinicia o robô.
+A trava usa diretório e PID, sem depender de `flock`. O atualizador bloqueia a migração se detectar o robô ou um dos agentes antigos em execução. Em atualizações posteriores, se o listener Telegram estiver ativo, ele é encerrado com SIGTERM e iniciado novamente a partir da nova versão; se a troca falhar, o listener é restaurado a partir da versão anterior. O atualizador nunca usa SIGKILL e nunca inicia, para ou reinicia o robô. Na primeira migração, se o listener ainda estiver rodando diretamente no checkout antigo, a migração é bloqueada para evitar que o processo fique preso em um diretório que será movido.
 
 ## Primeira migração
 
-Depois que o PR for integrado na `main` e a primeira Release estável `v*` estiver publicada, execute este bloco único no Termux. Ele para somente os agentes antigos de atualização, exige árvore Git sem alterações rastreadas, atualiza o checkout por fast-forward, instala o novo launcher e ativa a verificação automática. Não inicia o robô.
+Depois que o PR for integrado na `main` e a primeira Release estável `v*` estiver publicada, execute este bloco único no Termux. Ele para somente os agentes antigos de atualização e o listener Telegram (não o robô), exige árvore Git sem alterações rastreadas, atualiza o checkout por fast-forward, instala o novo launcher, ativa a verificação automática e inicia novamente o listener Telegram na versão nova. Não inicia o robô.
 
 ```bash
 cd "$HOME/Fabioedd-DEMEX-SIGNAL-PRO" &&
 bash ./demex-agent.sh parar &&
 bash "$HOME/.demex-auto-update.sh" parar &&
+if [ -f telegram-control.sh ]; then bash telegram-control.sh parar; fi &&
 git diff --quiet &&
 git diff --cached --quiet &&
 git fetch origin main &&
 git merge --ff-only origin/main &&
 install -m 700 demex-auto-update.sh "$HOME/.demex-auto-update.sh" &&
 bash "$HOME/.demex-auto-update.sh" atualizar &&
-bash "$HOME/.demex-auto-update.sh" iniciar
+bash "$HOME/.demex-auto-update.sh" iniciar &&
+if [ -f "$HOME/Fabioedd-DEMEX-SIGNAL-PRO/telegram-control.sh" ]; then bash "$HOME/Fabioedd-DEMEX-SIGNAL-PRO/telegram-control.sh" iniciar; fi
 ```
 
 Se o Git informar alterações rastreadas, o bloco para antes de atualizar; não use `reset --hard` para forçar.
