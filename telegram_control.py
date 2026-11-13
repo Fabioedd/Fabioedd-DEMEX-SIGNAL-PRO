@@ -12,8 +12,7 @@ import signal
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
+import shutil
 
 ROOT = Path(__file__).resolve().parent
 STOP_FILE = ROOT / ".demex_stop"
@@ -115,16 +114,35 @@ class TelegramControl:
     def api_call(self, method, payload=None):
         if not self.token:
             raise RuntimeError("Token do Telegram não configurado.")
+        if not shutil.which("curl"):
+            raise RuntimeError("O comando curl não está disponível no Termux.")
         url = "{}/bot{}/{}".format(API_BASE, self.token, method)
-        data = json.dumps(payload or {}).encode("utf-8")
-        request = urllib.request.Request(
-            url, data=data, headers={"Content-Type": "application/json"}, method="POST"
-        )
+        body = json.dumps(payload or {}, ensure_ascii=False)
+        # Send credentials and URL through curl's stdin config, not process arguments.
+        config = "\n".join((
+            "url = {}".format(json.dumps(url)),
+            'request = "POST"',
+            'header = "Content-Type: application/json"',
+            "data = {}".format(json.dumps(body)),
+            "silent",
+            "show-error",
+            "max-time = {}".format(POLL_TIMEOUT + 10),
+            "",
+        ))
         try:
-            with urllib.request.urlopen(request, timeout=POLL_TIMEOUT + 10) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError):
-            # Do not log request URLs or exception text: they may contain the bot token.
+            response = subprocess.run(
+                ["curl", "-4", "--http1.1", "--config", "-"],
+                input=config,
+                capture_output=True,
+                text=True,
+                timeout=POLL_TIMEOUT + 12,
+                check=False,
+            )
+            if response.returncode != 0:
+                raise RuntimeError("Falha de comunicação com o Telegram.")
+            result = json.loads(response.stdout)
+        except (subprocess.SubprocessError, OSError, ValueError):
+            # Never log curl stderr or its config: they may contain the bot token.
             raise RuntimeError("Falha de comunicação com o Telegram.") from None
         if not result.get("ok"):
             raise RuntimeError("Telegram retornou uma resposta inválida.")
