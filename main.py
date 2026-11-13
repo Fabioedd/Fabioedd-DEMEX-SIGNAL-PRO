@@ -761,12 +761,12 @@ def main():
                         candidate["symbol"], candidate["direction"], exc
                     )
                 except OrderConfirmationUnknownError as exc:
-                    # O gerenciador monitora o request_id original e libera a próxima
-                    # entrada após a expiração M1, sem reenviar a ordem anterior.
+                    # A solicitação original fica na fila de reconciliação; o scanner
+                    # continua normalmente e a ordem nunca é reenviada.
                     logging.critical(
                         "CONFIRMAÇÃO DA ORDEM DESCONHECIDA | %s %s | %s. "
-                        "A resposta será reconciliada em segundo plano; após 1 minuto "
-                        "o DEMEX poderá procurar a próxima entrada.",
+                        "A resposta será reconciliada em segundo plano; o DEMEX "
+                        "continua procurando novas entradas.",
                         candidate["symbol"], candidate["direction"], exc
                     )
                 except PermissionError:
