@@ -27,6 +27,11 @@ class DemoTrader:
         self.wins = 0
         self.losses = 0
         self.ties = 0
+        self.current_win_streak = 0
+        self.current_loss_streak = 0
+        self.max_win_streak = 0
+        self.max_loss_streak = 0
+        self.late_settlement_callback = None
         self.next_entry = self.base
         self.soros_step = 0
         self.last_signal_key = None
@@ -56,24 +61,13 @@ class DemoTrader:
         self._stopped = bool(value)
 
     def _read_late_order_response(self):
-        """Lê a resposta tardia do mesmo request_id; nunca envia outra ordem."""
-        api = getattr(self.connector.client, "api", None)
-        requests = getattr(api, "buy_multi_option", None)
-        if not isinstance(requests, dict):
+        """Consulta exclusivamente o request_id original, nunca uma resposta alheia."""
+        pending = self.pending_unknown_order or {}
+        request_ref = pending.get("request_ref")
+        reader = getattr(self.connector, "read_order_confirmation", None)
+        if request_ref is None or reader is None:
             return "pending", None
-        for payload in requests.values():
-            if not isinstance(payload, dict):
-                continue
-            order_id = payload.get("id")
-            if order_id is not None:
-                try:
-                    return "accepted", int(order_id)
-                except (TypeError, ValueError):
-                    continue
-            message = payload.get("message")
-            if message:
-                return "rejected", str(message)
-        return "pending", None
+        return reader(request_ref)
 
     def _apply_settlement(self, signal, amount, order_id, result, pnl_raw):
         """Atualiza placar e gerenciamento financeiro para uma ordem já identificada."""
@@ -83,10 +77,18 @@ class DemoTrader:
             self.total_entries += 1
             if result == "WIN":
                 self.wins += 1
+                self.current_win_streak += 1
+                self.current_loss_streak = 0
             elif result == "LOSS":
                 self.losses += 1
+                self.current_loss_streak += 1
+                self.current_win_streak = 0
             else:
                 self.ties += 1
+                self.current_win_streak = 0
+                self.current_loss_streak = 0
+            self.max_win_streak = max(self.max_win_streak, self.current_win_streak)
+            self.max_loss_streak = max(self.max_loss_streak, self.current_loss_streak)
 
             decisive = self.wins + self.losses
             win_rate = (100.0 * self.wins / decisive) if decisive else 0.0
@@ -130,6 +132,10 @@ class DemoTrader:
                 "losses": self.losses,
                 "ties": self.ties,
                 "win_rate": round(win_rate, 2),
+                "current_win_streak": self.current_win_streak,
+                "current_loss_streak": self.current_loss_streak,
+                "max_win_streak": self.max_win_streak,
+                "max_loss_streak": self.max_loss_streak,
             }
 
         log.info(
@@ -152,6 +158,10 @@ class DemoTrader:
             try:
                 state, value = self._read_late_order_response()
                 if state == "rejected":
+                    pending = self.pending_unknown_order
+                    self.connector.clear_pending_order_request(
+                        pending.get("request_ref") if pending else None
+                    )
                     with self._state_lock:
                         self.paused = False
                         self.pending_unknown_order = None
@@ -180,6 +190,15 @@ class DemoTrader:
                             summary = self._apply_settlement(
                                 pending["signal"], pending["amount"], order_id, result, pnl
                             )
+                            self.connector.clear_pending_order_request(pending.get("request_ref"))
+                            callback = self.late_settlement_callback
+                            if callback is not None:
+                                try:
+                                    callback(summary)
+                                except Exception:
+                                    log.exception(
+                                        "Resultado tardio contabilizado, mas a notificação não foi enviada."
+                                    )
                             log.info(
                                 "ORDEM DESCONHECIDA RESOLVIDA | ID %s | %s | "
                                 "placar %d entradas, %d WIN, %d LOSS | P&L R$ %+.2f",
@@ -254,6 +273,8 @@ class DemoTrader:
                         "amount": amount,
                         "submitted_at": time.time(),
                         "reason": str(exc),
+                        "request_ref": getattr(exc, "request_ref", None)
+                            or getattr(self.connector, "pending_order_request", None),
                     }
                 log.critical(
                     "CONFIRMAÇÃO DESCONHECIDA | %s %s | %s. "
