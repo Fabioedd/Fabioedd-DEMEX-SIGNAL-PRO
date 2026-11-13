@@ -61,14 +61,14 @@ class BullexConnectorTests(unittest.TestCase):
         connector.connected = True
         return connector, client
 
-    def test_order_is_sent_as_binary_and_returns_correlated_id(self):
+    def test_order_uses_broker_expiry_type_without_cross_product_fallback(self):
         api = FakeApi(response={"id": 98765})
         connector, _ = self.make_connector(api)
         with patch("bullex_connector.get_expiration_time", return_value=(1_800_000_060, 0)):
             order_id = connector.place_practice_order("EURUSD-OTC", "CALL", 5.0, 1)
 
         self.assertEqual(order_id, 98765)
-        self.assertEqual(api.sent[:5], (5.0, 76, "call", "binary", 1_800_000_060))
+        self.assertEqual(api.sent[:5], (5.0, 76, "call", "turbo", 1_800_000_060))
         self.assertTrue(api.sent[5].startswith("demex-"))
         self.assertIsNone(connector.pending_order_request)
 
