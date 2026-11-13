@@ -216,9 +216,13 @@ class DemoTrader:
                                     )
                             log.info(
                                 "ORDEM DESCONHECIDA RESOLVIDA | ID %s | %s | "
-                                "placar %d entradas, %d WIN, %d LOSS | P&L R$ %+.2f",
+                                "placar %d entradas, %d WIN, %d LOSS | sequência atual WIN %d/LOSS %d | "
+                                "recorde WIN %d/LOSS %d | P&L R$ %+.2f",
                                 order_id, result, summary["total_entries"],
-                                summary["wins"], summary["losses"], summary["session_net"]
+                                summary["wins"], summary["losses"],
+                                summary["current_win_streak"], summary["current_loss_streak"],
+                                summary["max_win_streak"], summary["max_loss_streak"],
+                                summary["session_net"]
                             )
                             return
                         except Exception as exc:
