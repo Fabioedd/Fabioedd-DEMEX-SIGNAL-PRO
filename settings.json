@@ -12,7 +12,7 @@
   "asset_refresh_interval_seconds": 900,
   "candles_count": 250,
   "strategy_mode": "custom_script",
-  "custom_script_path": "strategies/harami_engolfo_tendencia.py",
+  "custom_script_path": "strategies/my_strategy.py",
   "rsi_period": 14,
   "rsi_overbought": 70,
   "rsi_oversold": 30,
