@@ -163,12 +163,8 @@ class DemoTrader:
             if original_execution_busy:
                 time.sleep(0.05)
                 continue
-            if self.stop_check and self.stop_check():
-                log.warning(
-                    "Parada solicitada pelo usuário durante reconciliação; "
-                    "nenhuma nova ordem será enviada."
-                )
-                return
+            # A parada impede novas entradas, mas não interrompe a consulta
+            # da ordem já enviada: é preciso conhecer seu resultado antes de fechar.
             self._release_unknown_order_if_expired()
             try:
                 state, value = self._read_late_order_response()
@@ -194,7 +190,7 @@ class DemoTrader:
                     while self.pending_unknown_order is not None:
                         try:
                             result, pnl = self.connector.wait_practice_result(
-                                order_id, stop_check=self.stop_check, timeout_seconds=30.0
+                                order_id, stop_check=None, timeout_seconds=30.0
                             )
                             # O resultado pode chegar enquanto o scanner já prepara
                             # outra ordem. Aguarda a execução atual terminar antes de
@@ -207,10 +203,6 @@ class DemoTrader:
                                     if not self.busy:
                                         self.busy = True
                                         break
-                                if self.stop_check and self.stop_check():
-                                    raise InterruptedError(
-                                        "Parada solicitada antes de contabilizar resultado pendente."
-                                    )
                                 time.sleep(0.05)
                             try:
                                 summary = self._apply_settlement(
@@ -249,10 +241,8 @@ class DemoTrader:
                         except TimeoutError:
                             log.warning(
                                 "RESULTADO AINDA NÃO DISPONÍVEL | ID %s | nova consulta em 5 segundos; "
-                                "a pendência segue em segundo plano e o scanner continua.", order_id
+                                "a pendência continua bloqueando novas entradas até o resultado ser conhecido.", order_id
                             )
-                            if self.stop_check and self.stop_check():
-                                return
                             time.sleep(5)
                             continue
                         except Exception as exc:
@@ -261,8 +251,6 @@ class DemoTrader:
                                     "Não foi possível consultar o resultado da ordem %s. "
                                     "DEMEX continuará monitorando a mesma ordem e tentará novamente.", order_id
                                 )
-                                if self.stop_check and self.stop_check():
-                                    return
                                 time.sleep(5)
                                 continue
                             self.connector.connected = False
@@ -270,7 +258,7 @@ class DemoTrader:
                                 "Conexão caiu ao consultar a ordem reconciliada %s; "
                                 "reconectando para consultar a mesma ordem.", order_id
                             )
-                            self.connector.reconnect_forever(stop_check=self.stop_check)
+                            self.connector.reconnect_forever(stop_check=None)
 
                 time.sleep(2)
             except Exception:
