@@ -147,11 +147,11 @@ class DemoTrader:
         return summary
 
     def _release_unknown_order_if_expired(self):
-        # Pendências nunca bloqueiam globalmente novas entradas.
+        # Uma ordem pendente bloqueia novas entradas até ser liquidada ou recusada.
         return False
 
     def _monitor_unknown_order(self):
-        """Reconcilia ordens pendentes em série, sem interromper o scanner."""
+        """Reconcilia a única ordem pendente; o scanner fica bloqueado até a liquidação."""
         while self.pending_unknown_order is not None or self.pending_unknown_order_queue:
             if self.pending_unknown_order is None and self.pending_unknown_order_queue:
                 with self._state_lock:
@@ -306,7 +306,17 @@ class DemoTrader:
 
     def execute_and_settle(self, signal, pre_order_check=None):
         with self._state_lock:
-            if self.busy or self.stopped:
+            if (
+                self.busy
+                or self.stopped
+                or self.pending_unknown_order is not None
+                or bool(self.pending_unknown_order_queue)
+            ):
+                log.warning(
+                    "NOVA ENTRADA BLOQUEADA: já existe uma operação aguardando "
+                    "confirmação ou resultado. O DEMEX só liberará outra entrada "
+                    "depois da liquidação (ou recusa explícita) da ordem atual."
+                )
                 return None
             key = "{}|{}|{}".format(signal["symbol"], signal["direction"], signal.get("signal_timestamp"))
             if key == self.last_signal_key:
@@ -377,8 +387,8 @@ class DemoTrader:
                     self.pending_unknown_order_queue.append(new_pending)
                 log.critical(
                     "CONFIRMAÇÃO DESCONHECIDA | %s %s | %s. "
-                    "A solicitação original ficará em segundo plano; o scanner "
-                    "continua normalmente e novas ordens não serão bloqueadas.",
+                    "A solicitação original ficará em reconciliação; nenhuma nova "
+                    "entrada será permitida até a confirmação do resultado.",
                     signal["symbol"], signal["direction"], exc
                 )
                 self._start_unknown_order_monitor()
@@ -389,8 +399,8 @@ class DemoTrader:
                 signal["symbol"], signal["direction"], amount, order_id
             )
 
-            # A ordem foi confirmada. Registrar e devolver o controle imediatamente:
-            # o monitor único consulta resultados em segundo plano, sem travar a varredura.
+            # A ordem foi confirmada. O monitor consulta o resultado em segundo plano,
+            # mas o gerenciador e o scanner bloqueiam qualquer nova entrada até liquidar.
             pending = {
                 "signal": dict(signal),
                 "amount": amount,
@@ -403,7 +413,7 @@ class DemoTrader:
                 self.pending_unknown_order_queue.append(pending)
             log.info(
                 "ORDEM EM SEGUNDO PLANO | ID %s | %s %s | "
-                "%d pendência(s) aguardando resultado; varredura continua.",
+                "%d pendência(s) aguardando resultado; novas entradas bloqueadas.",
                 order_id, signal["symbol"], signal["direction"],
                 len(self.pending_unknown_order_queue) + (1 if self.pending_unknown_order else 0)
             )
