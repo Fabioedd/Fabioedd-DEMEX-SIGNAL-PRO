@@ -63,6 +63,9 @@ class DemoTrader:
     def _read_late_order_response(self):
         """Consulta exclusivamente o request_id original, nunca uma resposta alheia."""
         pending = self.pending_unknown_order or {}
+        known_order_id = pending.get("order_id")
+        if known_order_id is not None:
+            return "accepted", known_order_id
         request_ref = pending.get("request_ref")
         reader = getattr(self.connector, "read_order_confirmation", None)
         if request_ref is None or reader is None:
@@ -148,6 +151,10 @@ class DemoTrader:
 
     def _release_unknown_order_if_expired(self):
         pending = self.pending_unknown_order or {}
+        # Com ID confirmado, a exposição é conhecida: não liberar outra entrada
+        # enquanto o resultado não tiver sido conciliado.
+        if pending.get("order_id") is not None:
+            return False
         release_after = max(1, self.expiry) * 60
         elapsed = time.time() - float(pending.get("submitted_at", time.time()))
         if self.paused and elapsed >= release_after:
@@ -208,7 +215,9 @@ class DemoTrader:
                     )
                     while self.pending_unknown_order is not None and not self.stopped:
                         try:
-                            result, pnl = self.connector.wait_practice_result(order_id)
+                            result, pnl = self.connector.wait_practice_result(
+                                order_id, stop_check=self.stop_check, timeout_seconds=30.0
+                            )
                             with self._state_lock:
                                 pending = self.pending_unknown_order
                                 if pending is None:
@@ -246,12 +255,29 @@ class DemoTrader:
                                 summary["session_net"]
                             )
                             break
+                        except InterruptedError:
+                            log.warning(
+                                "Parada solicitada durante a espera do resultado da ordem %s. "
+                                "Nenhuma nova entrada será enviada.", order_id
+                            )
+                            return
+                        except TimeoutError:
+                            log.warning(
+                                "RESULTADO AINDA NÃO DISPONÍVEL | ID %s | nova consulta em 5 segundos; "
+                                "a entrada permanece bloqueada.", order_id
+                            )
+                            if self.stop_check and self.stop_check():
+                                return
+                            time.sleep(5)
+                            continue
                         except Exception as exc:
                             if not is_transport_error(exc):
                                 log.exception(
                                     "Não foi possível consultar o resultado da ordem %s. "
-                                    "DEMEX continuará monitorando a ordem e tentará novamente.", order_id
+                                    "DEMEX continuará monitorando a mesma ordem e tentará novamente.", order_id
                                 )
+                                if self.stop_check and self.stop_check():
+                                    return
                                 time.sleep(5)
                                 continue
                             self.connector.connected = False
@@ -368,20 +394,52 @@ class DemoTrader:
 
             # A ordem já foi enviada: em caso de queda, reconectar e consultar
             # o MESMO order_id. Nunca enviar uma segunda ordem para substituir esta.
+            result_deadline = time.monotonic() + 180.0
             while True:
+                if self.stop_check and self.stop_check():
+                    raise InterruptedError("Parada solicitada durante a espera do resultado da ordem.")
+                remaining = result_deadline - time.monotonic()
+                if remaining <= 0:
+                    # O ID já foi confirmado. Transferir para o monitor de resultado
+                    # sem liberar novas entradas e sem reenviar a ordem.
+                    pending = {
+                        "signal": dict(signal),
+                        "amount": amount,
+                        "submitted_at": time.time(),
+                        "order_id": order_id,
+                        "reason": "prazo de espera do resultado esgotado",
+                        "request_ref": None,
+                    }
+                    with self._state_lock:
+                        self.pending_unknown_order = pending
+                        self.paused = True
+                    log.error(
+                        "PRAZO DO RESULTADO ESGOTADO | ID %s | DEMEX manterá novas entradas "
+                        "bloqueadas e continuará consultando exclusivamente essa ordem.",
+                        order_id
+                    )
+                    self._start_unknown_order_monitor()
+                    return None
                 try:
-                    result, pnl_raw = self.connector.wait_practice_result(order_id)
+                    result, pnl_raw = self.connector.wait_practice_result(
+                        order_id, stop_check=self.stop_check, timeout_seconds=remaining
+                    )
                     break
-                except PermissionError:
-                    # Uma mudança/recusa do modo de conta é uma trava de segurança,
-                    # não uma falha transitória que possa ser ignorada.
+                except InterruptedError:
                     raise
+                except PermissionError:
+                    # Uma mudança/recusa do modo de conta é uma trava de segurança.
+                    raise
+                except TimeoutError:
+                    # O método já consumiu o prazo restante; a próxima volta transfere
+                    # a ordem conhecida para o monitor de reconciliação.
+                    continue
                 except Exception as exc:
-                    # O ID já foi confirmado: qualquer resposta inesperada deve
-                    # levar à reconexão e à consulta da MESMA ordem. Nunca reenviar.
+                    if self.stop_check and self.stop_check():
+                        raise InterruptedError("Parada solicitada durante a espera do resultado.")
                     self.connector.connected = False
                     log.warning(
-                        "Falha/ resposta inesperada ao consultar resultado da ordem %s (%s). "
+                        "Falha ao consultar resultado da ordem %s (%s). "
                         "Reconectando para consultar a mesma ordem, sem duplicá-la.",
                         order_id, exc
                     )
