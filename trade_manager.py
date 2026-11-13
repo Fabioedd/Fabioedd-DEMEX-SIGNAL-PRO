@@ -181,15 +181,23 @@ class DemoTrader:
                     while self.paused and not self.stopped:
                         try:
                             result, pnl = self.connector.wait_practice_result(order_id)
-                            pending = self.pending_unknown_order
-                            if pending is None:
-                                return
                             with self._state_lock:
+                                pending = self.pending_unknown_order
+                                if pending is None:
+                                    return
+                                # Reserva o gerenciador durante a contabilização.
+                                # Assim, o loop principal não pode abrir outra ordem
+                                # entre a confirmação tardia e a atualização do saldo.
                                 self.paused = False
                                 self.pending_unknown_order = None
-                            summary = self._apply_settlement(
-                                pending["signal"], pending["amount"], order_id, result, pnl
-                            )
+                                self.busy = True
+                            try:
+                                summary = self._apply_settlement(
+                                    pending["signal"], pending["amount"], order_id, result, pnl
+                                )
+                            finally:
+                                with self._state_lock:
+                                    self.busy = False
                             self.connector.clear_pending_order_request(pending.get("request_ref"))
                             callback = self.late_settlement_callback
                             if callback is not None:
@@ -242,16 +250,18 @@ class DemoTrader:
         thread.start()
 
     def execute_and_settle(self, signal, pre_order_check=None):
-        if self.busy or self.stopped or self.paused:
-            return None
+        with self._state_lock:
+            if self.busy or self.stopped or self.paused:
+                return None
+            key = "{}|{}|{}".format(signal["symbol"], signal["direction"], signal.get("signal_timestamp"))
+            if key == self.last_signal_key:
+                log.warning("Sinal duplicado ignorado: %s", key)
+                return None
+            self.last_signal_key = key
+            self.busy = True
         if self.connector.config.account_type != "PRACTICE" or self.connector.client.get_balance_mode() != "PRACTICE":
+            self.busy = False
             raise PermissionError("Robô bloqueado: conta PRACTICE/DEMO não confirmada.")
-        key = "{}|{}|{}".format(signal["symbol"], signal["direction"], signal.get("signal_timestamp"))
-        if key == self.last_signal_key:
-            log.warning("Sinal duplicado ignorado: %s", key)
-            return None
-        self.last_signal_key = key
-        self.busy = True
         try:
             amount = min(self.next_entry, money(self.stop + self.net))
             if amount <= 0:
