@@ -9,9 +9,9 @@ O `settings.json` controla o scanner e a execução automática em conta PRACTIC
 - **Timeframe:** M1, com expiração de 1 minuto.
 - **Estratégia ativa:** HARAMI + ENGOLFO com filtros de tendência EMA 21/45, carregada de `strategies/harami_engolfo_tendencia.py`.
 - **Varredura:** intervalo de 2 segundos (`scan_interval_seconds: 2`).
-- **Backtest:** 100 candles M1 fechados, precedidos por 60 candles de aquecimento para as EMAs.
-- **Critério de aprovação:** assertividade estritamente maior que 70%, calculada como WIN / (WIN + LOSS). Não há quantidade mínima de operações históricas e não há filtro de payout na seleção.
-- **Atualização dos ativos:** a cada 900 segundos (15 minutos), além da seleção inicial.
+- **Backtest:** desativado (`backtest_enabled: false`). O DEMEX não executa testes históricos nem filtra ativos por assertividade.
+- **Seleção de ativos:** todos os ativos OTC que a BullX informar como disponíveis para a expiração configurada são liberados diretamente para a varredura de sinais.
+- **Atualização dos ativos:** a lista de disponibilidade é renovada a cada 900 segundos (15 minutos), sem backtest.
 - **Entrada:** sinal calculado e confirmado sobre candle fechado; entrada somente nos primeiros 5 segundos da vela M1 seguinte, após nova validação.
 - **Gestão financeira:** entrada inicial de R$ 5,00; Soros nível 1; stop-loss de R$ 15,00; take-profit de R$ 50,00.
 - **Execução automática:** habilitada no arquivo, mas protegida por confirmação dupla de PRACTICE na inicialização e imediatamente antes do envio de ordens.
@@ -23,7 +23,7 @@ A estratégia ativa reconhece Harami de alta/baixa e Engolfo de alta/baixa usand
 - **CALL:** padrão de alta, fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
 - **PUT:** padrão de baixa, fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
 - Não exige cruzamento SMA/WMA, RSI, Bollinger ou outros filtros adicionais.
-- O backtest utiliza a mesma função de sinal da estratégia, sem consultar candles futuros para gerar o sinal.
+- O motor de sinais continua usando a estratégia nos candles atuais/fechados; o backtest histórico está desativado e não participa da seleção.
 
 Os scripts GO 2024 e SNIPER podem permanecer no repositório como legado, mas não são a estratégia carregada pelo motor principal nesta configuração.
 
@@ -45,4 +45,4 @@ bash ~/.demex-auto-update.sh status
 
 ## Limitações importantes
 
-O backtest é um filtro histórico sobre uma amostra curta e não representa probabilidade garantida de vitória nem garante lucro. A integração utiliza uma biblioteca de terceiros não oficial; compatibilidade, autenticação, dados de mercado e execução dependem da BullX e precisam ser confirmados em sessão PRACTICE.
+Com o backtest desativado, todos os ativos OTC disponíveis podem ser analisados; isso não representa probabilidade garantida de vitória nem garante lucro. A integração utiliza uma biblioteca de terceiros não oficial; compatibilidade, autenticação, dados de mercado e execução dependem da BullX e precisam ser confirmados em sessão PRACTICE.
