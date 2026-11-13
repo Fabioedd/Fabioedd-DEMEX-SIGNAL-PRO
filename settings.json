@@ -5,7 +5,7 @@
   "expiry_minutes": 1,
   "minimum_confidence": 70,
   "scan_interval_seconds": 2,
-  "backtest_candles_count": 200,
+  "backtest_candles_count": 100,
   "backtest_warmup_candles": 60,
   "minimum_backtest_accuracy": 70,
   "asset_refresh_interval_seconds": 900,
