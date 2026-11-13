@@ -473,6 +473,12 @@ def main():
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
 
+            # Enquanto um ID confirmado aguarda resultado, o monitor de reconciliação
+            # trabalha em segundo plano; não desperdiçar ciclos analisando sinais.
+            if trader.paused:
+                _wait_for_market_data_retry(1.0, stop_check=STOP_FILE.exists)
+                continue
+
             if not pending and time.monotonic() >= next_asset_refresh:
                 try:
                     available_assets = get_market_assets(
