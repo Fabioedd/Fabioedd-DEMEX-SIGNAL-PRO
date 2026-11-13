@@ -197,6 +197,24 @@ def start_telegram_listener(version_dir: Path) -> int:
         "Confira ~/.demex/shared/telegram-control.log."
     )
 
+def ensure_telegram_listener(version_dir: Path, listeners: list[dict[str, object]]) -> int | None:
+    """Ensure the active release has one Telegram listener; never starts the robot."""
+    expected_script = (version_dir / "telegram_control.py").resolve()
+    active = []
+    for listener in listeners:
+        try:
+            script = Path(str(listener.get("script", ""))).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if script == expected_script:
+            active.append(int(listener["pid"]))
+        else:
+            stop_telegram_listener(int(listener["pid"]))
+    if active:
+        return active[0]
+    return start_telegram_listener(version_dir)
+
+
 def _pid_is_updater(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -398,7 +416,10 @@ def update() -> int:
         final_dir = VERSIONS / tag
         if CURRENT.is_symlink() and CURRENT.exists() and CURRENT.resolve() == final_dir.resolve():
             if all((CURRENT / item).is_file() for item in REQUIRED) and (CURRENT / ".venv/bin/python").is_file():
-                log(f"DEMEX já está atualizado na versão {tag}.")
+                listener_pid = ensure_telegram_listener(CURRENT.resolve(), listeners)
+                if listener_pid:
+                    log(f"Controle Telegram ativo na versão {tag} (PID {listener_pid}).")
+                log(f"DEMEX já está atualizado na versão {tag}; serviço Telegram verificado.")
                 return 0
             raise RuntimeError("A versão ativa está incompleta. Não será sobrescrita automaticamente; a versão anterior precisa ser recuperada.")
 
