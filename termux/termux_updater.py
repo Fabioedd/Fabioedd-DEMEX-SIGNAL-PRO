@@ -82,7 +82,7 @@ def safe_extract(archive_path: Path, destination: Path) -> None:
 def legacy_sync_is_running() -> bool:
     for proc in Path("/proc").glob("[0-9]*"):
         try:
-            command = (proc / "cmdline").read_bytes().replace(b"\\0", b" ").decode(errors="ignore")
+            command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
             if "demex-agent.sh" in command and any(token in command for token in (" _run", " sync-once", " sincronizar")):
                 return True
             if ".demex-auto-update.sh" in command and " loop" in command:
