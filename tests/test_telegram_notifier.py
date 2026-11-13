@@ -107,5 +107,23 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertIn("-5.00 BRL", message)
 
 
+    def test_send_uses_ipv4_http11_curl_and_hides_token_from_arguments(self):
+        notifier = TelegramNotifier("secret-token", "9246590305")
+        response = type("Response", (), {"returncode": 0, "stdout": '{"ok": true, "result": {"message_id": 1}}'})()
+        with patch("telegram_notifier.shutil.which", return_value="/usr/bin/curl"):
+            with patch("telegram_notifier.subprocess.run", return_value=response) as run:
+                self.assertTrue(notifier.send("teste"))
+        args, kwargs = run.call_args
+        self.assertEqual(args[0], ["curl", "-4", "--http1.1", "--config", "-"])
+        self.assertNotIn("secret-token", " ".join(args[0]))
+        self.assertIn("secret-token", kwargs["input"])
+        self.assertIn("Content-Type: application/json", kwargs["input"])
+
+    def test_send_returns_false_on_transport_failure_without_leaking_error(self):
+        notifier = TelegramNotifier("secret-token", "9246590305")
+        with patch("telegram_notifier.shutil.which", return_value="/usr/bin/curl"):
+            with patch("telegram_notifier.subprocess.run", side_effect=OSError("network error")):
+                self.assertFalse(notifier.send("teste"))
+
 if __name__ == "__main__":
     unittest.main()
