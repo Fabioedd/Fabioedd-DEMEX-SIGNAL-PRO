@@ -21,7 +21,7 @@ import main
 
 
 class IntrabarEntryTests(unittest.TestCase):
-    SIGNAL_TIMESTAMP = 2640
+    SIGNAL_TIMESTAMP = 3540
 
     def candidate(self):
         return {
@@ -43,7 +43,7 @@ class IntrabarEntryTests(unittest.TestCase):
                 "low": 0.9,
                 "close": 1.0,
             }
-            for index in range(45)
+            for index in range(60)
         ]
         if current_timestamp is not None:
             rows[-1]["timestamp"] = current_timestamp
@@ -145,7 +145,7 @@ class IntrabarEntryTests(unittest.TestCase):
         settings = {
             "timeframe": "M1",
             "trade_type": "binary",
-            "candles_count": 45,
+            "candles_count": 60,
         }
         assets = [{"symbol": "EURUSD-OTC", "active_id": 1}]
 

@@ -16,7 +16,7 @@ def make_trending_candles(invert=False, count=45):
     closes = [100.0]
     drift = 0.02
     for index in range(100):
-        if index in (55, 70):
+        if index in (70, 85):
             drift = rng.choice((0.05, -0.05, 0.0))
         closes.append(closes[-1] + drift + rng.gauss(0, 0.12))
     if invert:
@@ -48,7 +48,7 @@ class GO2024Tests(unittest.TestCase):
         self.assertAlmostEqual(result[3], 3.0)
 
     def test_call_uses_original_cross_and_both_ema_filters(self):
-        data = make_trending_candles(count=45)
+        data = make_trending_candles(count=60)
         with patch("strategies.my_strategy._adx_series", return_value=[40.0] * len(data)):
             result = get_intrabar_signal(data)
         self.assertIsNotNone(result)
@@ -57,7 +57,7 @@ class GO2024Tests(unittest.TestCase):
         self.assertEqual(len(result["reasons"]), 4)
 
     def test_closed_candle_confirmation(self):
-        data = make_trending_candles(count=46)
+        data = make_trending_candles(count=61)
         with patch("strategies.my_strategy._adx_series", return_value=[40.0] * len(data)):
             result = get_signal(data)
         self.assertIsNotNone(result)
@@ -65,26 +65,26 @@ class GO2024Tests(unittest.TestCase):
         self.assertEqual(result["stage"], "CLOSED")
 
     def test_put_uses_original_cross_and_both_ema_filters(self):
-        data = make_trending_candles(invert=True, count=45)
+        data = make_trending_candles(invert=True, count=60)
         with patch("strategies.my_strategy._adx_series", return_value=[40.0] * len(data)):
             result = get_intrabar_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "PUT")
 
-    def test_adx_below_32_blocks_call_and_put(self):
+    def test_adx_below_35_blocks_call_and_put(self):
         for invert in (False, True):
-            data = make_trending_candles(invert=invert, count=45)
+            data = make_trending_candles(invert=invert, count=60)
             with self.subTest(direction="PUT" if invert else "CALL"):
-                with patch("strategies.my_strategy._adx_series", return_value=[31.99] * len(data)):
+                with patch("strategies.my_strategy._adx_series", return_value=[34.99] * len(data)):
                     self.assertIsNone(get_intrabar_signal(data))
 
     def test_unavailable_adx_blocks_signal(self):
-        data = make_trending_candles(count=45)
+        data = make_trending_candles(count=60)
         with patch("strategies.my_strategy._adx_series", return_value=[None] * len(data)):
             self.assertIsNone(get_intrabar_signal(data))
 
     def test_insufficient_history_does_not_signal(self):
-        self.assertIsNone(get_intrabar_signal(make_trending_candles(count=44)))
+        self.assertIsNone(get_intrabar_signal(make_trending_candles(count=59)))
 
 
 if __name__ == "__main__":
