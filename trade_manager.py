@@ -290,6 +290,10 @@ class DemoTrader:
                 )
                 try:
                     self.connector.reconnect_forever(stop_check=self.stop_check)
+                except (InterruptedError, PermissionError):
+                    with self._state_lock:
+                        self.busy = False
+                    raise
                 except Exception:
                     log.exception("Falha na reconexão durante a confirmação da conta; nova tentativa.")
                     time.sleep(5)
