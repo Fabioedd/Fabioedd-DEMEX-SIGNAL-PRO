@@ -45,6 +45,11 @@ class DemoTrader:
         self.stop_reason = None
 
     @property
+    def has_pending_orders(self):
+        with self._state_lock:
+            return self.pending_unknown_order is not None or bool(self.pending_unknown_order_queue)
+
+    @property
     def stopped(self):
         return self._stopped
 
@@ -195,7 +200,7 @@ class DemoTrader:
                         "O DEMEX consultará o resultado desta mesma ordem, sem reenviar.",
                         order_id
                     )
-                    while self.pending_unknown_order is not None and not self.stopped:
+                    while self.pending_unknown_order is not None:
                         try:
                             result, pnl = self.connector.wait_practice_result(
                                 order_id, stop_check=self.stop_check, timeout_seconds=30.0
@@ -354,7 +359,6 @@ class DemoTrader:
                 with self._state_lock:
                     if self.pending_unknown_order is None:
                         self.pending_unknown_order = new_pending
-                        self.paused = True
                     else:
                         self.pending_unknown_order_queue.append(new_pending)
                 log.critical(
