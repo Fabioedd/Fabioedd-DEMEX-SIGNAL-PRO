@@ -16,7 +16,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
-- Seleção automática: a cada ciclo, o DEMEX identifica os ativos OTC disponíveis no grupo correspondente à expiração e executa novamente o backtest dos últimos 100 candles M1 fechados de cada ativo, usando exatamente HARAMI + ENGOLFO com EMA 21/45. São contabilizados WIN, LOSS e TIE; a assertividade é WIN / (WIN + LOSS), sem mínimo de operações e sem filtro de payout. Só são aprovados ativos com assertividade estritamente acima de 70%. O resultado completo substitui a lista anterior; apenas os aprovados entram na varredura de sinais e nas entradas. O histórico de aquecimento da EMA (60 candles) é buscado antes dos 100 candles avaliados. O DEMEX registra progresso, tempo decorrido e estimativa de tempo restante durante cada ciclo.
+- Seleção automática: o backtest histórico está desativado (`backtest_enabled: false`). O DEMEX libera diretamente para a varredura todos os ativos OTC que a BullX informar como disponíveis para a expiração configurada. A lista de disponibilidade é renovada a cada 15 minutos, sem executar backtest.
 
 ## Trava de segurança
 
@@ -64,7 +64,7 @@ Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identi
 ## Testes e limitações
 
 - Execute os testes com `python -m unittest discover -s tests`.
-- A estratégia ativa do DEMEX é HARAMI + ENGOLFO (EMA 21/45): reconhece os quatro padrões do indicador Lua e aplica somente os filtros de tendência EMA 21/45. Não exige cruzamento SMA/WMA. O backtest reproduz essa mesma função de sinal candle a candle, sem olhar candles futuros.
+- A estratégia ativa do DEMEX é HARAMI + ENGOLFO (EMA 21/45): reconhece os quatro padrões do indicador Lua e aplica somente os filtros de tendência EMA 21/45. Não exige cruzamento SMA/WMA. O backtest histórico está desativado na configuração atual; a lógica de geração e confirmação dos sinais permanece ativa.
 - Conexão real, formato dos candles, ativos OTC e execução/retorno de ordens ainda precisam ser validados localmente com sessão PRACTICE. Não foi possível executar uma sessão autenticada a partir do GitHub.
 - A biblioteca é de terceiros e pode mudar. Não há garantia de lucro nem de execução sem falhas.
 
