@@ -518,6 +518,7 @@ def main():
 
             scan_started = None
             scan_elapsed = None
+            candidates = []
             try:
                 if pending:
                     candidates = []
@@ -803,7 +804,7 @@ def main():
                 elif assets:
                     # Mantém 2s entre inícios de varreduras sem somar 2s
                     # ao tempo gasto pela própria consulta dos ativos.
-                    remaining = scan_delay(settings) - (scan_elapsed or 0.0)
+                    remaining = scan_delay(settings) - (time.monotonic() - scan_started if scan_started is not None else scan_delay(settings))
                     if remaining > 0:
                         _wait_for_market_data_retry(remaining, stop_check=STOP_FILE.exists)
                 else:
