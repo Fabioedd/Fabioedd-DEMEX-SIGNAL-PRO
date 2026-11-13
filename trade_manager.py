@@ -94,6 +94,7 @@ class DemoTrader:
     def _register_confirmed_entry(self, pending, order_id):
         """Inicia o intervalo global somente após confirmação da corretora."""
         now = time.monotonic()
+        confirmed_at = time.time()
         with self._state_lock:
             if pending.get("entry_confirmed"):
                 return
@@ -120,6 +121,10 @@ class DemoTrader:
                     "direction": pending["signal"]["direction"],
                     "entry": float(pending["amount"]),
                     "cooldown_seconds": self.entry_cooldown_seconds,
+                    "signal_timestamp": pending["signal"].get("detected_at_server_timestamp"),
+                    "entry_timestamp": confirmed_at,
+                    "reasons": pending["signal"].get("reasons", []),
+                    "confidence": pending["signal"].get("confidence"),
                 })
             except Exception:
                 log.exception(
