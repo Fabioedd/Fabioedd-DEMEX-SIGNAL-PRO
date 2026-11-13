@@ -11,7 +11,7 @@ from bullex_connector import (
     is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.harami_engolfo_tendencia import get_intrabar_signal, get_signal_at_index
+from strategies.my_strategy import get_intrabar_signal, get_signal_at_index  # GO 2024 SUPER
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
