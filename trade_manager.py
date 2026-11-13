@@ -36,6 +36,7 @@ class DemoTrader:
         self.soros_step = 0
         self.last_signal_key = None
         self.busy = False
+        self.paused = False  # compatibilidade; pendências não ativam pausa global
         self.pending_unknown_order = None
         self.pending_unknown_order_queue = []
         self._unknown_monitor_thread = None
