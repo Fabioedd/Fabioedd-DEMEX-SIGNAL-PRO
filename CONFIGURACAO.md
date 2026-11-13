@@ -1,16 +1,48 @@
 # Configuração do DEMEX Signal PRO
 
-O `settings.json` controla o scanner e o robô automático PRACTICE.
+O `settings.json` controla o scanner e a execução automática em conta PRACTICE/DEMO.
 
-- **Mercado:** `market_mode` aceita OTC ou mercado aberto.
-- **Payout:** somente payout da modalidade binária é considerado; Blitz/Turbo não libera ativo.
-- **Backtest:** o filtro histórico mantém os critérios configurados no projeto: taxa de acerto estritamente acima de 70%, sem exigir quantidade mínima de operações históricas.
-- **Atualização:** a lista de ativos aprovados é recalculada na inicialização e a cada 30 minutos, enquanto o scanner continua trabalhando entre as atualizações.
-- **Entrada:** o sinal GO 2024 é revalidado na vela M1 fechada; a entrada ocorre somente nos primeiros 5 segundos da vela imediatamente seguinte, com expiração de 1 minuto.
-- **Execução:** somente opções binárias em conta PRACTICE/DEMO, com confirmação dupla da conta. A conta REAL é bloqueada.
+## Configuração atualmente ativa
 
-A taxa histórica é apenas um filtro estatístico sobre uma amostra curta; não representa probabilidade garantida de vitória e não garante lucro. Faça a primeira validação observando a conta PRACTICE.
+- **Mercado:** OTC (`market_mode: "OTC"`).
+- **Tipo de contrato:** família binária compatível com expiração M1. A integração da BullX pode identificar contratos Turbo para essa duração; o robô não faz fallback para Blitz ou Digital.
+- **Timeframe:** M1, com expiração de 1 minuto.
+- **Estratégia ativa:** HARAMI + ENGOLFO com filtros de tendência EMA 21/45, carregada de `strategies/harami_engolfo_tendencia.py`.
+- **Varredura:** intervalo de 2 segundos (`scan_interval_seconds: 2`).
+- **Backtest:** 100 candles M1 fechados, precedidos por 60 candles de aquecimento para as EMAs.
+- **Critério de aprovação:** assertividade estritamente maior que 70%, calculada como WIN / (WIN + LOSS). Não há quantidade mínima de operações históricas e não há filtro de payout na seleção.
+- **Atualização dos ativos:** a cada 900 segundos (15 minutos), além da seleção inicial.
+- **Entrada:** sinal calculado e confirmado sobre candle fechado; entrada somente nos primeiros 5 segundos da vela M1 seguinte, após nova validação.
+- **Gestão financeira:** entrada inicial de R$ 5,00; Soros nível 1; stop-loss de R$ 15,00; take-profit de R$ 50,00.
+- **Execução automática:** habilitada no arquivo, mas protegida por confirmação dupla de PRACTICE na inicialização e imediatamente antes do envio de ordens.
 
-## Estratégia ativa: GO 2024
+## Estratégia HARAMI + ENGOLFO (EMA 21/45)
 
-O modo `custom_script` carrega `strategies/my_strategy.py`. A conversão Python preserva os períodos e condições do indicador enviado: SMA(1), SMA(34), WMA(5), EMA(21) e EMA(45). Não altera os parâmetros de execução, gestão financeira, conexão ou segurança do robô.
+A estratégia ativa reconhece Harami de alta/baixa e Engolfo de alta/baixa usando os corpos dos dois candles, conforme as condições do indicador original.
+
+- **CALL:** padrão de alta, fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
+- **PUT:** padrão de baixa, fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
+- Não exige cruzamento SMA/WMA, RSI, Bollinger ou outros filtros adicionais.
+- O backtest utiliza a mesma função de sinal da estratégia, sem consultar candles futuros para gerar o sinal.
+
+Os scripts GO 2024 e SNIPER podem permanecer no repositório como legado, mas não são a estratégia carregada pelo motor principal nesta configuração.
+
+## Segurança da conta
+
+O DEMEX foi configurado exclusivamente para PRACTICE/DEMO. O envio de ordens exige que `BULLEX_ACCOUNT_TYPE=PRACTICE` no ambiente e que a sessão autenticada confirme `get_balance_mode() == "PRACTICE"`. A validação é repetida imediatamente antes do envio. Se a confirmação falhar, a ordem é bloqueada.
+
+As credenciais BullX ficam somente no arquivo local `.env`; nunca as publique no GitHub. A conexão real, os ativos disponíveis e a resposta de ordens precisam ser verificados no próprio Termux com a conta PRACTICE. Testes automatizados do GitHub não autenticam na conta do usuário e não comprovam disponibilidade da corretora em tempo real.
+
+## Atualização automática
+
+O atualizador `demex-auto-update.sh` consulta a branch `main` a cada 60 segundos. Só instala atualizações quando a branch local é `main`, os arquivos rastreados não têm alterações locais, o histórico permite avanço fast-forward e o DEMEX está parado. Depois atualiza dependências quando necessário, verifica a sintaxe e executa os testes; se a validação falhar, tenta reverter o código. O atualizador não inicia, para nem reinicia o robô.
+
+Consulte o estado local com:
+
+```bash
+bash ~/.demex-auto-update.sh status
+```
+
+## Limitações importantes
+
+O backtest é um filtro histórico sobre uma amostra curta e não representa probabilidade garantida de vitória nem garante lucro. A integração utiliza uma biblioteca de terceiros não oficial; compatibilidade, autenticação, dados de mercado e execução dependem da BullX e precisam ser confirmados em sessão PRACTICE.
