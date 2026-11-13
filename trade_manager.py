@@ -49,9 +49,9 @@ class DemoTrader:
 
     @stopped.setter
     def stopped(self, value):
-        # Uma confirmação desconhecida não encerra a sessão: após a expiração,
-        # novas entradas podem seguir. A parada explícita do usuário continua valendo.
-        if value and self.pending_unknown_order is not None and not (self.stop_check and self.stop_check()):
+        # main.py converte a confirmação desconhecida em pausa recuperável.
+        # A parada explícita do usuário continua autoritária.
+        if value and self.paused and not (self.stop_check and self.stop_check()):
             log.warning(
                 "ENCERRAMENTO AUTOMÁTICO ADIADO: existe uma ordem com confirmação "
                 "desconhecida. DEMEX permanece ativo em reconciliação, sem novas entradas."
@@ -145,6 +145,22 @@ class DemoTrader:
             log.warning("ROBÔ PARADO: %s", reason)
         return summary
 
+    def _release_unknown_order_if_expired(self):
+        pending = self.pending_unknown_order or {}
+        release_after = max(1, self.expiry) * 60
+        elapsed = time.time() - float(pending.get("submitted_at", time.time()))
+        if self.paused and elapsed >= release_after:
+            with self._state_lock:
+                self.paused = False
+            log.warning(
+                "TEMPO DA ORDEM DESCONHECIDA ESGOTADO (%d min). "
+                "DEMEX liberado para procurar a próxima entrada; "
+                "a resposta da ordem anterior continuará sendo monitorada.",
+                self.expiry
+            )
+            return True
+        return False
+
     def _monitor_unknown_order(self):
         """Reconcilia a resposta tardia; libera novas entradas após a expiração M1."""
         while self.pending_unknown_order is not None and not self.stopped:
@@ -161,18 +177,7 @@ class DemoTrader:
                     "nenhuma nova ordem será enviada."
                 )
                 return
-            pending = self.pending_unknown_order or {}
-            release_after = max(1, self.expiry) * 60
-            elapsed = time.time() - float(pending.get("submitted_at", time.time()))
-            if self.paused and elapsed >= release_after:
-                with self._state_lock:
-                    self.paused = False
-                log.warning(
-                    "TEMPO DA ORDEM DESCONHECIDA ESGOTADO (%d min). "
-                    "DEMEX liberado para procurar a próxima entrada; "
-                    "a resposta da ordem anterior continuará sendo monitorada.",
-                    self.expiry
-                )
+            self._release_unknown_order_if_expired()
             try:
                 state, value = self._read_late_order_response()
                 if state == "rejected":
@@ -340,7 +345,8 @@ class DemoTrader:
                     "CONFIRMAÇÃO DESCONHECIDA | %s %s | %s. "
                     "A sessão não será encerrada: DEMEX continuará ativo, "
                     "monitorando a resposta da mesma solicitação. Novas entradas "
-                    "ficam bloqueadas até a ordem ser identificada ou recusada.",
+                    "serão liberadas após %d minuto(s), mesmo sem resposta.",
+                    self.expiry,
                     signal["symbol"], signal["direction"], exc
                 )
                 self._start_unknown_order_monitor()
