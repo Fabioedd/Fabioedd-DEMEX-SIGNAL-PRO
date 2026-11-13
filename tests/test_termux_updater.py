@@ -86,7 +86,7 @@ class UpdaterSafetyTests(unittest.TestCase):
                 updater.acquire_lock(lock)
             self.assertEqual((lock / "owner").read_text(), str(os.getpid()))
 
-    def _run_update(self, temp, *, robot=False, install_error=None, test_error=None, no_space=False, network_error=None, legacy=False):
+    def _run_update(self, temp, *, robot=False, install_error=None, test_error=None, no_space=False, network_error=None, legacy=False, listeners=None):
         manager = Path(temp) / ".demex"
         versions = manager / "versions"
         shared = manager / "shared"
@@ -111,6 +111,9 @@ class UpdaterSafetyTests(unittest.TestCase):
                 PROJECT_LINK=project, LOG=Path(temp) / "updater.log",
             ), patch.object(updater, "robot_is_running", return_value=robot), \
                  patch.object(updater, "legacy_sync_is_running", return_value=False), \
+                 patch.object(updater, "find_telegram_listeners", return_value=listeners or []), \
+                 patch.object(updater, "stop_telegram_listener") as stop_listener, \
+                 patch.object(updater, "start_telegram_listener", return_value=4321) as start_listener, \
                  patch.object(updater, "latest_release", return_value=("v2", {"demex-source.tar.gz":"archive", "SHA256SUMS":"sums"})), \
                  patch.object(updater, "request_bytes", side_effect=network_error or [archive, checksum]), \
                  patch.object(updater.shutil, "disk_usage", return_value=SimpleNamespace(free=0 if no_space else 2 * 1024**3)):
@@ -125,7 +128,7 @@ class UpdaterSafetyTests(unittest.TestCase):
                      patch.object(updater, "validate_version", side_effect=test_error), \
                      patch.object(updater, "prune_versions"):
                     result = updater.update()
-            return result, current, project, shared, manager
+            return result, current, project, shared, manager, stop_listener.call_count, start_listener.call_count
         finally:
             os.chdir(old_cwd)
 
@@ -163,9 +166,32 @@ class UpdaterSafetyTests(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertEqual(os.readlink(current), "versions/v1")
 
+
+    def test_active_versioned_telegram_listener_is_restarted_after_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            old_root = str(Path(temp) / ".demex" / "versions" / "v1")
+            result, current, *_rest, stopped, started = self._run_update(
+                temp, listeners=[{"pid": 1234, "cwd": old_root}]
+            )
+            self.assertEqual(result, 0)
+            self.assertEqual(os.readlink(current), "versions/v2")
+            self.assertEqual(stopped, 1)
+            self.assertEqual(started, 1)
+
+    def test_legacy_telegram_listener_blocks_first_migration_without_stopping_robot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result, current, project, *_ = self._run_update(
+                temp, legacy=True,
+                listeners=[{"pid": 2345, "cwd": str(Path(temp) / "Fabioedd-DEMEX-SIGNAL-PRO")}],
+            )
+            self.assertEqual(result, 2)
+            self.assertEqual(os.readlink(current), "versions/v1")
+            self.assertTrue(project.is_dir())
+            self.assertFalse(project.is_symlink())
+
     def test_successful_migration_preserves_configuration_and_switches_version(self):
         with tempfile.TemporaryDirectory() as temp:
-            result, current, project, shared, manager = self._run_update(temp, legacy=True)
+            result, current, project, shared, manager, *_ = self._run_update(temp, legacy=True)
             self.assertEqual(result, 0)
             self.assertEqual(os.readlink(current), "versions/v2")
             self.assertTrue(project.is_symlink())
