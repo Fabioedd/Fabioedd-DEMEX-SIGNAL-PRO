@@ -375,79 +375,80 @@ class BullexReadOnlyConnector:
                     logger.debug("Não foi possível encerrar o socket antigo da ordem resolvida: %s",exc)
 
     def wait_practice_result(self, order_id, stop_check=None, timeout_seconds=180.0):
-        """Consulta o resultado até o prazo global, respeitando /stop."""
-        with self.api_lock:
-            if self.config.account_type != "PRACTICE":
-                raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-            target_id = int(order_id)
-            total_timeout = max(0.1, float(timeout_seconds))
-            deadline = time.monotonic() + total_timeout
+        """Consulta resultado sem manter api_lock durante a espera da corretora."""
+        if self.config.account_type != "PRACTICE":
+            raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
+        target_id = int(order_id)
+        total_timeout = max(0.1, float(timeout_seconds))
+        deadline = time.monotonic() + total_timeout
 
-            while True:
-                if stop_check and stop_check():
-                    raise InterruptedError("Parada solicitada durante a consulta do resultado.")
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        "Prazo global de {:.0f} segundos esgotado aguardando o resultado da ordem {}."
-                        .format(total_timeout, target_id)
-                    )
+        while True:
+            if stop_check and stop_check():
+                raise InterruptedError("Parada solicitada durante a consulta do resultado.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Prazo global de {:.0f} segundos esgotado aguardando o resultado da ordem {}."
+                    .format(total_timeout, target_id)
+                )
 
+            # O lock protege apenas a chamada síncrona de consulta. Durante a
+            # espera pela resposta, o scanner pode consultar candles/ativos.
+            with self.api_lock:
                 self._require_connection()
                 if self.client.get_balance_mode() != "PRACTICE":
                     raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-
                 client = self.client
                 client.api.get_options_v2_data = None
                 client.api.get_options_v2(20, "binary,turbo")
-                query_deadline = min(deadline, time.monotonic() + 10.0)
 
-                while client.api.get_options_v2_data is None:
-                    if stop_check and stop_check():
-                        raise InterruptedError("Parada solicitada durante a consulta do resultado.")
-                    if not client.check_connect():
-                        self.connected = False
-                        raise ConnectionError("Conexão BullX caiu ao consultar o resultado da ordem.")
-                    remaining = min(deadline, query_deadline) - time.monotonic()
-                    if remaining <= 0:
-                        if time.monotonic() >= deadline:
-                            raise TimeoutError(
-                                "Prazo global de {:.0f} segundos esgotado aguardando o resultado da ordem {}."
-                                .format(total_timeout, target_id)
-                            )
-                        break
-                    time.sleep(min(0.05, remaining))
-
-                data = client.api.get_options_v2_data
-                if data is not None:
-                    message = data.get("msg", {}) if isinstance(data, dict) else {}
-                    closed_list = message.get("closed_options", []) if isinstance(message, dict) else []
-                    for option in closed_list:
-                        if not isinstance(option, dict):
-                            continue
-                        option_id = option.get("id")
-                        option_ids = option_id if isinstance(option_id, list) else [option_id]
-                        matched = any(
-                            str(value) == str(target_id)
-                            for value in option_ids if value is not None
-                        )
-                        if not matched:
-                            continue
-                        state = str(option.get("win", "")).lower()
-                        if state == "equal":
-                            return "TIE", 0.0
-                        amount = float(option.get("amount", 0))
-                        pnl = float(option.get("win_amount", 0)) - amount
-                        if state == "loose":
-                            pnl = -amount
-                        if state not in {"win", "loose"}:
-                            # Um registro incompleto não é resultado válido.
-                            break
-                        return ("WIN" if state == "win" else "LOSS"), round(pnl, 2)
-
+            query_deadline = min(deadline, time.monotonic() + 10.0)
+            while client.api.get_options_v2_data is None:
                 if stop_check and stop_check():
                     raise InterruptedError("Parada solicitada durante a consulta do resultado.")
-                time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                if not client.check_connect():
+                    self.connected = False
+                    raise ConnectionError("Conexão BullX caiu ao consultar o resultado da ordem.")
+                remaining = min(deadline, query_deadline) - time.monotonic()
+                if remaining <= 0:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            "Prazo global de {:.0f} segundos esgotado aguardando o resultado da ordem {}."
+                            .format(total_timeout, target_id)
+                        )
+                    break
+                time.sleep(min(0.05, remaining))
+
+            data = client.api.get_options_v2_data
+            if data is not None:
+                message = data.get("msg", {}) if isinstance(data, dict) else {}
+                closed_list = message.get("closed_options", []) if isinstance(message, dict) else []
+                for option in closed_list:
+                    if not isinstance(option, dict):
+                        continue
+                    option_id = option.get("id")
+                    option_ids = option_id if isinstance(option_id, list) else [option_id]
+                    matched = any(
+                        str(value) == str(target_id)
+                        for value in option_ids if value is not None
+                    )
+                    if not matched:
+                        continue
+                    state = str(option.get("win", "")).lower()
+                    if state == "equal":
+                        return "TIE", 0.0
+                    amount = float(option.get("amount", 0))
+                    pnl = float(option.get("win_amount", 0)) - amount
+                    if state == "loose":
+                        pnl = -amount
+                    if state not in {"win", "loose"}:
+                        break
+                    return ("WIN" if state == "win" else "LOSS"), round(pnl, 2)
+
+            if stop_check and stop_check():
+                raise InterruptedError("Parada solicitada durante a consulta do resultado.")
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
     def get_server_timestamp(self):
         with self.api_lock:
             self._require_connection()
