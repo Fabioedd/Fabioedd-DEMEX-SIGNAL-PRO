@@ -343,6 +343,9 @@ def update() -> int:
     except (OSError, tarfile.TarError, ValueError, RuntimeError, KeyError) as exc:
         log(f"ATUALIZAÇÃO NÃO CONCLUÍDA: {exc}. A versão ativa foi preservada.")
         return 1
+    except Exception as exc:
+        log(f"ERRO INESPERADO DURANTE A ATUALIZAÇÃO: {type(exc).__name__}: {exc}. A versão ativa foi preservada.")
+        return 1
     finally:
         try:
             (lock / "owner").unlink(missing_ok=True)
