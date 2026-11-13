@@ -1,7 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from asset_selector import backtest_asset, select_qualified_assets
+from asset_selector import backtest_asset, select_qualified_assets, get_signal_at_index
+from strategies.my_strategy import get_signal_at_index as go_2024_signal_at_index
 
 
 class FakeConnector:
@@ -31,6 +32,9 @@ def make_candles(count=261):
 
 
 class AssetSelectorTests(unittest.TestCase):
+    def test_backtest_uses_same_go_2024_signal_function_as_main_strategy(self):
+        self.assertIs(get_signal_at_index, go_2024_signal_at_index)
+
     def test_backtest_uses_100_closed_candles_and_next_candle_result(self):
         candles = make_candles()
         connector = FakeConnector(candles)
