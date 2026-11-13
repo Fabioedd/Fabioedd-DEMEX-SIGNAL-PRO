@@ -94,7 +94,7 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         "operations": 0,
         "accuracy": 0.0,
         "approved": False,
-        "candles_used": min(window, len(closed)),
+        "candles_used": 0,
     }
     if len(closed) < window + warmup + 1:
         base["reason"] = (
@@ -103,6 +103,7 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         ).format(window + warmup + 1, warmup, window, len(closed))
         return base
 
+    base["candles_used"] = window
     first_signal_index = len(closed) - window - 1
     for index in range(first_signal_index, len(closed) - 1):
         signal = get_signal_at_index(closed, index)
