@@ -173,10 +173,9 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                 continue
             candidates.append(candidate)
             logging.info(
-                "SINAL INTRABAR DETECTADO | %s %s | entrada na MESMA M1 | "
-                "vela fecha em %.0f | tolerância de reconhecimento %.1fs",
-                candidate["symbol"], candidate["direction"], close_ts,
-                ENTRY_CONFIRMATION_TOLERANCE_SECONDS
+                "SINAL INTRABAR DETECTADO | %s %s | entrada imediata na MESMA M1 | "
+                "vela fecha em %.0f",
+                candidate["symbol"], candidate["direction"], close_ts
             )
             logging.info("VARREDURA %d | %d ativos examinados até o primeiro sinal; %d sinal encontrado.",
                          _scan_pass_number, analyzed_count, len(candidates))
