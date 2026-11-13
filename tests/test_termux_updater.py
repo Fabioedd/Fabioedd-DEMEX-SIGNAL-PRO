@@ -178,6 +178,22 @@ class UpdaterSafetyTests(unittest.TestCase):
             self.assertEqual(stopped, 1)
             self.assertEqual(started, 1)
 
+
+    def test_unrelated_telegram_listener_is_never_stopped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            unrelated = str(Path(temp) / "another-project" / "telegram_control.py")
+            result, current, *_rest, stopped, started = self._run_update(
+                temp, listeners=[{
+                    "pid": 9876,
+                    "cwd": str(Path(temp) / "another-project"),
+                    "script": unrelated,
+                }]
+            )
+            self.assertEqual(result, 0)
+            self.assertEqual(os.readlink(current), "versions/v2")
+            self.assertEqual(stopped, 0)
+            self.assertEqual(started, 0)
+
     def test_legacy_telegram_listener_blocks_first_migration_without_stopping_robot(self):
         with tempfile.TemporaryDirectory() as temp:
             result, current, project, *_ = self._run_update(
