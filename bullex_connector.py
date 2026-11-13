@@ -280,6 +280,9 @@ class BullexReadOnlyConnector:
             option_type="turbo" if expiry_index < 5 else "binary"
             request_id="demex-"+uuid.uuid4().hex
             client=self.client
+            # Cria mapa de respostas próprio desta sessão e evita confundir
+            # mensagens antigas ou de outro cliente da biblioteca.
+            client.api.buy_multi_option={}
             request_ref={
                 "client":client,
                 "request_id":request_id,
@@ -322,7 +325,7 @@ class BullexReadOnlyConnector:
                     if message:
                         self.pending_order_request=None
                         raise OrderRejectedError(
-                            "A BullX recusou explicitamente a ordem binária: {}".format(message)
+                            "A BullX recusou explicitamente o contrato: {}".format(message)
                         )
                 time.sleep(0.01)
 
@@ -393,12 +396,14 @@ class BullexReadOnlyConnector:
                     time.sleep(0.05)
 
                 data=client.api.get_options_v2_data
-                closed_list=data.get("msg",{}).get("closed_options",[]) if isinstance(data,dict) else []
+                message=data.get("msg",{}) if isinstance(data,dict) else {}
+                closed_list=message.get("closed_options",[]) if isinstance(message,dict) else []
                 for option in closed_list:
+                    if not isinstance(option,dict):
+                        continue
                     option_id=option.get("id")
-                    matched=(option_id==target_id) or (
-                        isinstance(option_id,list) and target_id in option_id
-                    )
+                    option_ids=option_id if isinstance(option_id,list) else [option_id]
+                    matched=any(str(value)==str(target_id) for value in option_ids if value is not None)
                     if not matched:
                         continue
                     state=str(option.get("win","")).lower()
