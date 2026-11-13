@@ -356,8 +356,7 @@ class DemoTrader:
                     "monitorando a resposta da mesma solicitação. Novas entradas "
                     "serão liberadas após %d minuto(s), mesmo sem resposta. "
                     "Ordens sem confirmação adicionais serão reconciliadas em fila.",
-                    self.expiry,
-                    signal["symbol"], signal["direction"], exc
+                    signal["symbol"], signal["direction"], exc, self.expiry
                 )
                 self._start_unknown_order_monitor()
                 raise
