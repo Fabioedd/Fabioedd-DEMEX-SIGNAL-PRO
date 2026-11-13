@@ -346,11 +346,22 @@ def main():
         # Apenas o primeiro sinal encontrado é validado e executado na própria vela M1.
         pending = {}
         processed = set()
+        stop_notice_sent = False
 
         while not trader.stopped or trader.has_pending_orders:
             if STOP_FILE.exists():
                 trader.stopped = True
-                print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
+                pending.clear()
+                if trader.has_pending_orders:
+                    if not stop_notice_sent:
+                        print(
+                            "PARADA SOLICITADA: nenhuma nova entrada será iniciada. "
+                            "Aguardando o resultado da única operação em andamento..."
+                        )
+                        stop_notice_sent = True
+                    _wait_for_market_data_retry(0.2)
+                    continue
+                print("PARADA SOLICITADA: nenhuma operação pendente; encerrando a sessão.")
                 break
 
             # Ao atingir take/stop, não abrir novas entradas. O monitor continua
