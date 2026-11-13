@@ -187,6 +187,22 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(len(c.orders), 1)
         self.assertEqual(t.total_entries, 0)
 
+    def test_unknown_order_releases_new_entries_after_one_minute(self):
+        c = UnknownOrderConnector([])
+        t = DemoTrader(c, self.settings())
+        t.paused = True
+        t.pending_unknown_order = {
+            "signal": self.signal(1),
+            "amount": t.base,
+            "submitted_at": 100.0,
+            "request_ref": None,
+        }
+        with patch("trade_manager.time.time", return_value=161.0):
+            self.assertTrue(t._release_unknown_order_if_expired())
+        self.assertFalse(t.paused)
+        self.assertIsNone(t.execute_and_settle(self.signal(2)))
+        self.assertEqual(len(c.orders), 0)
+
     def test_late_order_id_is_reconciled_and_session_resumes(self):
         c = FakeConnector([("WIN", 4.25)])
         c.client.api.buy_multi_option = {"original-request": {"id": 987654}}
