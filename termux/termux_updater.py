@@ -123,13 +123,22 @@ def find_telegram_listeners() -> list[dict[str, object]]:
         try:
             raw = (proc / "cmdline").read_bytes()
             args = [part.decode("utf-8", "ignore") for part in raw.split(b"\0") if part]
-            if not any(Path(arg).name == "telegram_control.py" for arg in args):
+            script_arg = next((arg for arg in args if Path(arg).name == "telegram_control.py"), None)
+            if script_arg is None:
                 continue
             state_text = (proc / "status").read_text(errors="ignore")
             state = next((line.split()[1] for line in state_text.splitlines() if line.startswith("State:")), "")
             if state in {"Z", "X"}:
                 continue
-            found.append({"pid": int(proc.name), "cwd": str((proc / "cwd").resolve())})
+            cwd = (proc / "cwd").resolve()
+            script_path = Path(script_arg)
+            if not script_path.is_absolute():
+                script_path = cwd / script_path
+            found.append({
+                "pid": int(proc.name),
+                "cwd": str(cwd),
+                "script": str(script_path.resolve()),
+            })
         except (OSError, PermissionError, ValueError, IndexError):
             continue
     return found
@@ -339,7 +348,11 @@ def update() -> int:
     listeners = find_telegram_listeners()
     if listeners and PROJECT_LINK.exists() and not PROJECT_LINK.is_symlink():
         legacy_root = str(PROJECT_LINK.resolve())
-        if any(item["cwd"] == legacy_root for item in listeners):
+        if any(
+            item.get("cwd") == legacy_root
+            or (item.get("script") and str(Path(str(item["script"])).resolve().parent) == legacy_root)
+            for item in listeners
+        ):
             log(
                 "ATUALIZAÇÃO BLOQUEADA: o controle Telegram ainda está executando "
                 "diretamente do checkout antigo. Encerre somente o listener Telegram "
