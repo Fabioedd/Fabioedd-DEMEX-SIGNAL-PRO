@@ -9,7 +9,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from termux import termux_updater as updater
 
@@ -57,9 +57,8 @@ class UpdaterSafetyTests(unittest.TestCase):
             stop.assert_not_called()
 
     def test_latest_release_resolves_redirect_without_rest_api(self):
-        response = SimpleNamespace(
-            geturl=lambda: "https://github.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/releases/tag/v1.0.2"
-        )
+        response = MagicMock()
+        response.geturl.return_value = "https://github.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/releases/tag/v1.0.2"
         with patch.object(updater.urllib.request, "urlopen", return_value=response) as open_url:
             tag, assets = updater.latest_release()
         self.assertEqual(tag, "v1.0.2")
@@ -71,7 +70,8 @@ class UpdaterSafetyTests(unittest.TestCase):
         self.assertNotIn("api.github.com", open_url.call_args.args[0].full_url)
 
     def test_latest_release_rejects_unexpected_redirect(self):
-        response = SimpleNamespace(geturl=lambda: "https://github.com/login")
+        response = MagicMock()
+        response.geturl.return_value = "https://github.com/login"
         with patch.object(updater.urllib.request, "urlopen", return_value=response):
             with self.assertRaises(RuntimeError):
                 updater.latest_release()
