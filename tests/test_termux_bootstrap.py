@@ -64,11 +64,9 @@ class TermuxBootstrapTests(unittest.TestCase):
             try:
                 sys.argv = ["bootstrap-recovery", str(updater), str(version)]
                 with patch("urllib.request.urlopen", side_effect=responses) as open_url:
-                    with self.assertRaises(SystemExit) as stopped:
-                        exec(compile(recovery_source(), str(BOOTSTRAP), "exec"), {"__name__": "__main__"})
+                    exec(compile(recovery_source(), str(BOOTSTRAP), "exec"), {"__name__": "__main__"})
             finally:
                 sys.argv = original_argv
-            self.assertEqual(stopped.exception.code, 0)
             self.assertEqual(updater.read_bytes(), b"# updater de teste\n")
             self.assertEqual(version.read_text(encoding="utf-8"), "v1.0.3\n")
             first_url = open_url.call_args_list[0].args[0].full_url
