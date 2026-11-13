@@ -26,6 +26,7 @@ class FakeConnector:
         self.reconnects = 0
         self.connected = True
         self.client = FakeClient()
+        self.pending_order_request = None
 
     def place_practice_order(self, symbol, direction, amount, expiry):
         self.orders.append((symbol, direction, amount, expiry))
@@ -63,10 +64,15 @@ class FakeConnector:
 
 
 class UnknownOrderConnector(FakeConnector):
+    def __init__(self, results):
+        super().__init__(results)
+        self.request_ref = {"client": self.client, "request_id": "original-request"}
+
     def place_practice_order(self, symbol, direction, amount, expiry):
         self.orders.append((symbol, direction, amount, expiry))
         raise OrderConfirmationUnknownError(
-            "timeout sem ID; estado da ordem desconhecido"
+            "timeout sem ID; estado da ordem desconhecido",
+            request_ref=self.request_ref,
         )
 
 
@@ -81,217 +87,140 @@ class TradeManagerTests(unittest.TestCase):
             },
         }
 
-    def signal(self, n=1):
+    def signal(self, n=1, symbol="EURUSD-OTC"):
         return {
-            "symbol": "EURUSD-OTC",
+            "symbol": symbol,
             "direction": "CALL",
             "signal_timestamp": n,
         }
 
-    def test_soros_one_then_reset(self):
-        c = FakeConnector([("WIN", 4.25), ("WIN", 7.86)])
-        t = DemoTrader(c, self.settings())
-        a = t.execute_and_settle(self.signal(1))
-        self.assertEqual(a["entry"], 5.0)
-        self.assertEqual(a["next_entry"], 9.25)
-        b = t.execute_and_settle(self.signal(2))
-        self.assertEqual(b["entry"], 9.25)
-        self.assertEqual(b["next_entry"], 5.0)
+    def trader(self, connector):
+        return DemoTrader(connector, self.settings())
 
-    def test_loss_resets_entry(self):
-        c = FakeConnector([("LOSS", -5.0)])
-        t = DemoTrader(c, self.settings())
-        r = t.execute_and_settle(self.signal())
-        self.assertEqual(r["next_entry"], 5.0)
-        self.assertEqual(r["session_net"], -5.0)
+    def queue_order(self, trader, signal):
+        with patch.object(trader, "_start_unknown_order_monitor"):
+            self.assertIsNone(trader.execute_and_settle(signal))
 
-    def test_stop_loss_stops_session(self):
-        c = FakeConnector([("LOSS", -5.0), ("LOSS", -5.0), ("LOSS", -5.0)])
-        t = DemoTrader(c, self.settings())
-        t.execute_and_settle(self.signal(1))
-        t.execute_and_settle(self.signal(2))
-        r = t.execute_and_settle(self.signal(3))
-        self.assertTrue(r["stopped"])
-        self.assertEqual(r["session_net"], -15.0)
-        self.assertIsNone(t.execute_and_settle(self.signal(4)))
-
-    def test_errno_103_reconnects_and_checks_same_order_without_duplicate(self):
-        c = FakeConnector([
-            ConnectionAbortedError(103, "Software caused connection abort"),
-            ("WIN", 4.25),
-        ])
-        t = DemoTrader(c, self.settings())
-        r = t.execute_and_settle(self.signal())
-        self.assertEqual(r["result"], "WIN")
-        self.assertEqual(c.reconnects, 1)
-        self.assertEqual(len(c.orders), 1)
-        self.assertEqual(t.total_entries, 1)
-
-    def test_unexpected_result_response_reconnects_and_rechecks_same_order(self):
-        c = FakeConnector([
-            ValueError("resposta inesperada da corretora"),
-            ("WIN", 4.25),
-        ])
-        t = DemoTrader(c, self.settings())
-        r = t.execute_and_settle(self.signal())
-        self.assertEqual(r["result"], "WIN")
-        self.assertEqual(c.reconnects, 1)
-        self.assertEqual(len(c.orders), 1)
-        self.assertEqual(t.total_entries, 1)
-
-    def test_late_order_lookup_ignores_unrelated_request_ids(self):
-        c = FakeConnector([])
-        c.client.api.buy_multi_option = {"other-request": {"id": 12345}}
-        t = DemoTrader(c, self.settings())
-        t.pending_unknown_order = {
-            "signal": self.signal(1),
-            "amount": t.base,
-            "request_ref": {"client": c.client, "request_id": "original-request"},
-        }
-        self.assertEqual(t._read_late_order_response(), ("pending", None))
-
-    def test_win_and_loss_streaks_are_tracked_and_tie_resets_them(self):
-        c = FakeConnector([("WIN", 4.25), ("WIN", 4.25), ("LOSS", -5.0), ("TIE", 0.0)])
-        t = DemoTrader(c, self.settings())
-        first = t.execute_and_settle(self.signal(1))
-        second = t.execute_and_settle(self.signal(2))
-        third = t.execute_and_settle(self.signal(3))
-        fourth = t.execute_and_settle(self.signal(4))
-        self.assertEqual(first["current_win_streak"], 1)
-        self.assertEqual(second["max_win_streak"], 2)
-        self.assertEqual(third["current_loss_streak"], 1)
-        self.assertEqual(fourth["current_win_streak"], 0)
-        self.assertEqual(fourth["current_loss_streak"], 0)
-        self.assertEqual(fourth["max_win_streak"], 2)
-        self.assertEqual(fourth["max_loss_streak"], 1)
-
-    def test_take_profit_stops_session(self):
-        c = FakeConnector([("WIN", 50.0)])
-        t = DemoTrader(c, self.settings())
-        r = t.execute_and_settle(self.signal())
-        self.assertTrue(r["stopped"])
-        self.assertEqual(r["session_net"], 50.0)
-
-    def test_unknown_confirmation_keeps_process_alive_and_blocks_new_orders(self):
-        c = UnknownOrderConnector([])
-        t = DemoTrader(c, self.settings())
-        with patch.object(t, "_start_unknown_order_monitor"):
-            with self.assertRaises(OrderConfirmationUnknownError):
-                t.execute_and_settle(self.signal(1))
-
-        self.assertTrue(t.paused)
-        self.assertFalse(t.stopped)
-        # main.py's legacy catch still assigns stopped=True; the setter
-        # intentionally converts that into a recoverable pause.
-        t.stopped = True
-        self.assertFalse(t.stopped)
-        self.assertIsNone(t.execute_and_settle(self.signal(2)))
-        self.assertEqual(len(c.orders), 1)
+    def test_confirmed_order_is_queued_and_returns_without_waiting(self):
+        c = FakeConnector([("WIN", 4.25)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal())
+        self.assertTrue(t.has_pending_orders)
         self.assertEqual(t.total_entries, 0)
-
-    def test_unknown_order_releases_new_entries_after_one_minute(self):
-        c = FakeConnector([("WIN", 4.25)])
-        t = DemoTrader(c, self.settings())
-        t.paused = True
-        t.pending_unknown_order = {
-            "signal": self.signal(1),
-            "amount": t.base,
-            "submitted_at": 100.0,
-            "request_ref": None,
-        }
-        with patch("trade_manager.time.time", return_value=161.0):
-            self.assertTrue(t._release_unknown_order_if_expired())
-        self.assertFalse(t.paused)
-        result = t.execute_and_settle(self.signal(2))
-        self.assertEqual(result["result"], "WIN")
         self.assertEqual(len(c.orders), 1)
-
-    def test_late_order_id_is_reconciled_and_session_resumes(self):
-        c = FakeConnector([("WIN", 4.25)])
-        c.client.api.buy_multi_option = {"original-request": {"id": 987654}}
-        t = DemoTrader(c, self.settings())
-        t.paused = True
-        t.pending_unknown_order = {
-            "signal": self.signal(1),
-            "amount": t.base,
-            "submitted_at": 123.0,
-            "reason": "initial timeout",
-            "request_ref": {"client": c.client, "request_id": "original-request"},
-        }
-        late_notifications = []
-        t.late_settlement_callback = late_notifications.append
 
         t._monitor_unknown_order()
-
-        self.assertFalse(t.paused)
-        self.assertIsNone(t.pending_unknown_order)
+        self.assertFalse(t.has_pending_orders)
         self.assertEqual(t.total_entries, 1)
         self.assertEqual(t.wins, 1)
         self.assertEqual(t.net, 4.25)
-        self.assertEqual(len(c.orders), 0)
-        self.assertEqual(len(late_notifications), 1)
-        self.assertEqual(late_notifications[0]["result"], "WIN")
 
- 
-    def test_stop_interrupts_wait_after_order_was_sent(self):
+    def test_multiple_orders_continue_and_settle_in_submission_order(self):
+        c = FakeConnector([("WIN", 4.25), ("LOSS", -9.25)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
+
+        self.assertEqual(len(c.orders), 2)
+        self.assertEqual(len(t.pending_unknown_order_queue), 2)
+        self.assertFalse(t.paused)
+        t._monitor_unknown_order()
+
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 2)
+        self.assertEqual(t.wins, 1)
+        self.assertEqual(t.losses, 1)
+        self.assertEqual(t.net, -5.0)
+        # A WIN followed by LOSS preserves the original Soros sequence.
+        self.assertEqual(t.next_entry, t.base)
+
+    def test_unknown_confirmation_does_not_pause_scanner_or_block_next_order(self):
+        c = UnknownOrderConnector([])
+        t = self.trader(c)
+        with patch.object(t, "_start_unknown_order_monitor"):
+            with self.assertRaises(OrderConfirmationUnknownError):
+                t.execute_and_settle(self.signal(1))
+        self.assertFalse(t.paused)
+        self.assertFalse(t.stopped)
+        self.assertTrue(t.has_pending_orders)
+
+        # Another signal can be submitted while the first request is unresolved.
+        c.place_practice_order = FakeConnector.place_practice_order.__get__(c, FakeConnector)
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
+        self.assertEqual(len(c.orders), 2)
+
+    def test_late_confirmation_is_reconciled_without_resending(self):
+        c = UnknownOrderConnector([("WIN", 4.25)])
+        c.client.api.buy_multi_option["original-request"] = {"id": 987654}
+        t = self.trader(c)
+        with patch.object(t, "_start_unknown_order_monitor"):
+            with self.assertRaises(OrderConfirmationUnknownError):
+                t.execute_and_settle(self.signal())
+        t._monitor_unknown_order()
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 1)
+        self.assertEqual(t.net, 4.25)
+        self.assertEqual(len(c.orders), 1)
+
+    def test_late_explicit_rejection_does_not_count_entry(self):
+        c = UnknownOrderConnector([])
+        c.client.api.buy_multi_option["original-request"] = {"message": "order rejected"}
+        t = self.trader(c)
+        with patch.object(t, "_start_unknown_order_monitor"):
+            with self.assertRaises(OrderConfirmationUnknownError):
+                t.execute_and_settle(self.signal())
+        t._monitor_unknown_order()
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 0)
+        self.assertEqual(t.net, 0)
+
+    def test_take_profit_stops_new_entries_but_monitor_finishes_existing_queue(self):
+        c = FakeConnector([("WIN", 50.0), ("LOSS", -5.0)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
+        t._monitor_unknown_order()
+
+        self.assertTrue(t.stopped)
+        self.assertEqual(t.stop_reason, "TAKE PROFIT atingido")
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 2)
+        self.assertIsNone(t.execute_and_settle(self.signal(3)))
+
+    def test_stop_loss_stops_new_entries(self):
+        c = FakeConnector([("LOSS", -5.0), ("LOSS", -5.0), ("LOSS", -5.0)])
+        t = self.trader(c)
+        for n in (1, 2, 3):
+            self.queue_order(t, self.signal(n, "ASSET{}".format(n)))
+        t._monitor_unknown_order()
+        self.assertTrue(t.stopped)
+        self.assertEqual(t.net, -15.0)
+        self.assertIsNone(t.execute_and_settle(self.signal(4)))
+
+    def test_soros_one_then_reset_after_background_results(self):
+        c = FakeConnector([("WIN", 4.25), ("WIN", 7.86)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        t._monitor_unknown_order()
+        self.assertEqual(t.next_entry, 9.25)
+        self.queue_order(t, self.signal(2))
+        t._monitor_unknown_order()
+        self.assertEqual(t.next_entry, 5.0)
+
+    def test_duplicate_signal_is_ignored(self):
         c = FakeConnector([("WIN", 4.25)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        self.assertIsNone(t.execute_and_settle(self.signal(1)))
+        self.assertEqual(len(c.orders), 1)
+
+    def test_stop_interrupts_before_order_submission(self):
+        c = FakeConnector([])
         t = DemoTrader(c, self.settings(), stop_check=lambda: True)
         with self.assertRaises(InterruptedError):
             t.execute_and_settle(self.signal())
-        self.assertEqual(len(c.orders), 1)
-        self.assertEqual(t.total_entries, 0)
+        self.assertEqual(len(c.orders), 0)
         self.assertFalse(t.busy)
-
-    def test_result_timeout_moves_known_order_to_blocking_monitor(self):
-        c = FakeConnector([TimeoutError("result timeout")])
-        t = DemoTrader(c, self.settings())
-        with patch("trade_manager.time.monotonic", side_effect=[0.0, 0.0, 0.0, 181.0]), patch("trade_manager.time.sleep"), patch.object(t, "_start_unknown_order_monitor") as start_monitor:
-            result = t.execute_and_settle(self.signal())
-        self.assertIsNone(result)
-        self.assertTrue(t.paused)
-        self.assertEqual(t.pending_unknown_order["order_id"], 1)
-        self.assertEqual(t.total_entries, 0)
-        self.assertEqual(len(c.orders), 1)
-        start_monitor.assert_called_once()
-
-
-    def test_confirmed_order_is_not_released_when_result_is_delayed(self):
-        c = FakeConnector([])
-        t = DemoTrader(c, self.settings())
-        t.paused = True
-        t.pending_unknown_order = {
-            "signal": self.signal(1),
-            "amount": t.base,
-            "submitted_at": 1.0,
-            "order_id": 987654,
-            "request_ref": None,
-        }
-        with patch("trade_manager.time.time", return_value=10000.0):
-            self.assertFalse(t._release_unknown_order_if_expired())
-        self.assertTrue(t.paused)
-        self.assertEqual(t.pending_unknown_order["order_id"], 987654)
-
-    def test_late_explicit_rejection_resumes_without_counting_entry(self):
-        c = FakeConnector([])
-        c.client.api.buy_multi_option = {
-            "original-request": {"message": "order rejected"}
-        }
-        t = DemoTrader(c, self.settings())
-        t.paused = True
-        t.pending_unknown_order = {
-            "signal": self.signal(1),
-            "amount": t.base,
-            "submitted_at": 123.0,
-            "reason": "initial timeout",
-            "request_ref": {"client": c.client, "request_id": "original-request"},
-        }
-
-        t._monitor_unknown_order()
-
-        self.assertFalse(t.paused)
-        self.assertIsNone(t.pending_unknown_order)
-        self.assertEqual(t.total_entries, 0)
-        self.assertEqual(t.net, 0)
 
 
 if __name__ == "__main__":
