@@ -321,7 +321,7 @@ def main():
         trader.late_settlement_callback = telegram.send_trade_result
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 SUPER | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
+            "INDICADOR GO 2024 SUPER | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 32 | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
             
         )
         selection_label = (
@@ -553,7 +553,7 @@ def main():
                     continue
                 if confirmed is False:
                     logging.info(
-                        "SINAL CANCELADO: %s %s | cruzamento ou filtros EMA não permanecem válidos na vela em formação.",
+                        "SINAL CANCELADO: %s %s | cruzamento, filtros EMA ou ADX(14) >= 32 não permanecem válidos na vela em formação.",
                         candidate["symbol"], candidate["direction"]
                     )
                     pending.pop(key, None)
