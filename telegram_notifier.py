@@ -107,24 +107,24 @@ class TelegramNotifier:
         confluences = html.escape(" + ".join(str(item) for item in reasons) or "GO 2024 FILTRADO")
         confidence = entry.get("confidence")
         confidence_line = (
-            "Confiança do sinal: <b>{:.0f}%</b>\\n".format(float(confidence))
+            "Confiança do sinal: <b>{:.0f}%</b>\n".format(float(confidence))
             if isinstance(confidence, (int, float)) else ""
         )
         signal_time = local_time(entry.get("signal_timestamp"))
         entry_time = local_time(entry.get("entry_timestamp"))
         return self.send(
-            "🎯 <b>DEMEX SIGNAL PRO</b>\\n"
-            "🟢 <b>SINAL CONFIRMADO</b>\\n"
-            "Ativo: <b>{}</b>\\nDireção: <b>{}</b>\\n"
-            "Indicador: <b>GO 2024 FILTRADO</b>\\n"
-            "Confluências: <b>{}</b>\\n"
+            "🎯 <b>DEMEX SIGNAL PRO</b>\n"
+            "🟢 <b>SINAL CONFIRMADO</b>\n"
+            "Ativo: <b>{}</b>\nDireção: <b>{}</b>\n"
+            "Indicador: <b>GO 2024 FILTRADO</b>\n"
+            "Confluências: <b>{}</b>\n"
             "{}"
-            "⏱️ <b>HORÁRIOS</b>\\n"
-            "Horário do sinal: <b>{}</b>\\n"
-            "Horário da entrada: <b>{}</b>\\n\\n"
-            "💰 <b>INFORMAÇÕES DA OPERAÇÃO</b>\\n"
-            "Valor da entrada: <b>R$ {:.2f}</b>\\n"
-            "Conta: <b>PRACTICE/DEMO</b>\\nOrdem: <b>{}</b>\\n"
+            "⏱️ <b>HORÁRIOS</b>\n"
+            "Horário do sinal: <b>{}</b>\n"
+            "Horário da entrada: <b>{}</b>\n\n"
+            "💰 <b>INFORMAÇÕES DA OPERAÇÃO</b>\n"
+            "Valor da entrada: <b>R$ {:.2f}</b>\n"
+            "Conta: <b>PRACTICE/DEMO</b>\nOrdem: <b>{}</b>\n"
             "Próxima entrada liberada em: <b>{} segundos</b>."
             .format(symbol, direction, confluences, confidence_line,
                     signal_time, entry_time, amount, order_id, cooldown)
