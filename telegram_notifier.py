@@ -101,10 +101,7 @@ class TelegramNotifier:
             except (TypeError, ValueError, OSError, OverflowError):
                 return "—"
 
-        reasons = entry.get("reasons") or []
-        if isinstance(reasons, str):
-            reasons = [reasons]
-        confluences = html.escape(" + ".join(str(item) for item in reasons) or "GO 2024 FILTRADO")
+        confluences = "SMA 1/34 + WMA 5 | EMA 21/45 | ADX 14"
         confidence = entry.get("confidence")
         confidence_line = (
             "Confiança do sinal: <b>{:.0f}%</b>\n".format(float(confidence))
