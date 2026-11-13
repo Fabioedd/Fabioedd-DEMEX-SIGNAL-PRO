@@ -1,5 +1,6 @@
 import random
 import unittest
+from unittest.mock import patch
 
 from strategies.my_strategy import (
     _ema_series,
@@ -48,24 +49,39 @@ class GO2024Tests(unittest.TestCase):
 
     def test_call_uses_original_cross_and_both_ema_filters(self):
         data = make_trending_candles(count=45)
-        result = get_intrabar_signal(data)
+        with patch("strategies.my_strategy._adx_series", return_value=[40.0] * len(data)):
+            result = get_intrabar_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "CALL")
         self.assertEqual(result["stage"], "INTRABAR")
-        self.assertEqual(len(result["reasons"]), 3)
+        self.assertEqual(len(result["reasons"]), 4)
 
     def test_closed_candle_confirmation(self):
         data = make_trending_candles(count=46)
-        result = get_signal(data)
+        with patch("strategies.my_strategy._adx_series", return_value=[40.0] * len(data)):
+            result = get_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "CALL")
         self.assertEqual(result["stage"], "CLOSED")
 
     def test_put_uses_original_cross_and_both_ema_filters(self):
         data = make_trending_candles(invert=True, count=45)
-        result = get_intrabar_signal(data)
+        with patch("strategies.my_strategy._adx_series", return_value=[40.0] * len(data)):
+            result = get_intrabar_signal(data)
         self.assertIsNotNone(result)
         self.assertEqual(result["direction"], "PUT")
+
+    def test_adx_below_32_blocks_call_and_put(self):
+        for invert in (False, True):
+            data = make_trending_candles(invert=invert, count=45)
+            with self.subTest(direction="PUT" if invert else "CALL"):
+                with patch("strategies.my_strategy._adx_series", return_value=[31.99] * len(data)):
+                    self.assertIsNone(get_intrabar_signal(data))
+
+    def test_unavailable_adx_blocks_signal(self):
+        data = make_trending_candles(count=45)
+        with patch("strategies.my_strategy._adx_series", return_value=[None] * len(data)):
+            self.assertIsNone(get_intrabar_signal(data))
 
     def test_insufficient_history_does_not_signal(self):
         self.assertIsNone(get_intrabar_signal(make_trending_candles(count=44)))
