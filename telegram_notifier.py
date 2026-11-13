@@ -67,7 +67,7 @@ class TelegramNotifier:
 
     def send_session_start(self, account, market, timeframe, expiry_minutes,
                             assets_count, initial_entry, stop_loss, take_profit,
-                            entry_cooldown_seconds=120):
+                            entry_cooldown_seconds=60):
         self.initial_entry = float(initial_entry)
         self.stop_loss = float(stop_loss)
         self.take_profit = float(take_profit)
@@ -78,8 +78,8 @@ class TelegramNotifier:
             "🟦 <b>DEMEX INICIADO</b>\n"
             "Conta: <b>{}</b>\nMercado: <b>{}</b>\n"
             "Período: <b>{}</b> | Expiração: <b>{} min</b>\n"
-            "Estratégia: <b>GO 2024 SUPER</b>\n"
-            "Indicadores: <b>SMA 1/34 + WMA 5 | EMA 21/45 | ADX 14 >= 32</b>\n"
+            "Estratégia: <b>GO 2024 FILTRADO</b>\n"
+            "Indicadores: <b>SMA 1/34 + WMA 5 | EMA 21/45 | ADX 14 >= 35</b>\n"
             "Intervalo entre entradas: <b>{} segundos</b>\n"
             "Ativos monitorados: <b>{}</b>\nEntrada inicial: <b>R$ {:.2f}</b>\n"
             "Stop Loss: <b>R$ {:.2f}</b> | Take Profit: <b>R$ {:.2f}</b>"
@@ -94,12 +94,12 @@ class TelegramNotifier:
         direction = html.escape(str(entry.get("direction", "—")))
         order_id = html.escape(str(entry.get("order_id", "—")))
         amount = float(entry.get("entry", 0))
-        cooldown = int(entry.get("cooldown_seconds", 120))
+        cooldown = int(entry.get("cooldown_seconds", 60))
         return self.send(
             "🚀 <b>ENTRADA CONFIRMADA PELA CORRETORA</b>\n"
             "Ativo: <b>{}</b> | Direção: <b>{}</b>\n"
             "Valor: <b>R$ {:.2f}</b> | Ordem: <b>{}</b>\n"
-            "🔒 Próxima entrada liberada em: <b>{} segundos (2 minutos)</b>."
+            "🔒 Próxima entrada liberada em: <b>{} segundos (1 minuto)</b>."
             .format(symbol, direction, amount, order_id, cooldown)
         )
 

@@ -1,18 +1,16 @@
-"""GO 2024 — tradução fiel do indicador Lua para o motor Python do DEMEX.
+"""GO 2024 FILTRADO — tradução fiel do indicador Lua enviado pelo usuário.
 
-Lógica original preservada:
-- SMA rápida: 1 período.
-- SMA lenta: 34 períodos.
-- buffer1 = SMA rápida - SMA lenta.
-- buffer2 = WMA de buffer1: 5 períodos.
-- EMA de preço: 21 períodos.
-- EMA de tendência: 45 períodos.
-- CALL: cruzamento ascendente + fechamento acima da EMA21 + EMA21 acima da EMA45.
-- PUT: cruzamento descendente + fechamento abaixo da EMA21 + EMA21 abaixo da EMA45.
+Regras preservadas:
+- Fonte MaValue=5: HL2 ((high + low) / 2), conforme a seleção usada no projeto.
+- buffer1 = SMA(1) - SMA(34); buffer2 = WMA(buffer1, 5).
+- EMA(21) e EMA(45) calculadas sobre close.
+- ADX(14) com suavização EMA de Wilder definida no Lua: período 2*n-1 (27)
+  aplicado a TR, +DM, -DM, DX e ADX.
+- CALL: cruzamento ascendente, close > EMA21 > EMA45 e ADX >= 35.
+- PUT: cruzamento descendente, close < EMA21 < EMA45 e ADX >= 35.
 
-O seletor original MaValue=5 (inputs.titles) é traduzido para HL2
-((high + low) / 2), mantendo close como fonte dos filtros EMA, como no Lua.
-get_signal confirma a última vela fechada; get_intrabar_signal é provisório.
+A leitura intrabar é provisória; a autorização final continua sob as validações
+de vela, relógio da corretora e confirmação de ordem do DEMEX.
 """
 from __future__ import annotations
 
@@ -23,7 +21,8 @@ EMA_FILTER_PERIOD = 21
 EMA_TREND_PERIOD = 45
 SOURCE_SELECTION = 5
 ADX_PERIOD = 14
-ADX_MINIMUM = 32.0
+ADX_MINIMUM = 35.0
+ADX_SMOOTHING_PERIOD = 2 * ADX_PERIOD - 1
 
 
 def _number(candle, key):
@@ -35,9 +34,8 @@ def _number(candle, key):
 
 
 def _price_series(candles):
-    """Fonte MaValue=5: HL2; filtros EMA usam close."""
-    source = []
-    closes = []
+    """MaValue=5 traduzido para HL2; EMAs usam close."""
+    source, closes = [], []
     for candle in candles:
         high = _number(candle, "high")
         low = _number(candle, "low")
@@ -61,19 +59,6 @@ def _sma_series(values, period):
     return result
 
 
-def _ema_series(values, period):
-    result = [None] * len(values)
-    if len(values) < period:
-        return result
-    current = sum(values[:period]) / period
-    result[period - 1] = current
-    alpha = 2.0 / (period + 1.0)
-    for index in range(period, len(values)):
-        current = alpha * values[index] + (1.0 - alpha) * current
-        result[index] = current
-    return result
-
-
 def _wma_series(values, period):
     result = [None] * len(values)
     denominator = period * (period + 1) / 2.0
@@ -87,10 +72,34 @@ def _wma_series(values, period):
     return result
 
 
+def _ema_series(values, period):
+    """EMA com semente SMA; ignora None até encontrar uma janela válida."""
+    result = [None] * len(values)
+    if period < 1:
+        return result
+    valid_indices = []
+    seed_values = []
+    current = None
+    alpha = 2.0 / (period + 1.0)
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        if current is None:
+            seed_values.append(value)
+            valid_indices.append(index)
+            if len(seed_values) == period:
+                current = sum(seed_values) / period
+                result[index] = current
+            continue
+        current = alpha * value + (1.0 - alpha) * current
+        result[index] = current
+    return result
+
+
 def _adx_series(candles, period=ADX_PERIOD):
-    """ADX de Wilder; retorna None até completar o aquecimento de 2*period."""
+    """Reproduz a suavização do Lua: EMA(2*period-1) em todas as séries."""
     result = [None] * len(candles)
-    if period < 2 or len(candles) < 2 * period:
+    if period < 1 or len(candles) < 3 * period:
         return result
 
     highs, lows, closes = [], [], []
@@ -104,47 +113,53 @@ def _adx_series(candles, period=ADX_PERIOD):
         lows.append(low)
         closes.append(close)
 
-    true_ranges, plus_moves, minus_moves = [0.0], [0.0], [0.0]
-    for index in range(1, len(candles)):
+    true_ranges = []
+    plus_moves = []
+    minus_moves = []
+    for index in range(len(candles)):
+        if index == 0:
+            true_ranges.append(highs[index] - lows[index])
+            plus_moves.append(0.0)
+            minus_moves.append(0.0)
+            continue
         up_move = highs[index] - highs[index - 1]
         down_move = lows[index - 1] - lows[index]
-        plus_moves.append(up_move if up_move > down_move and up_move > 0 else 0.0)
-        minus_moves.append(down_move if down_move > up_move and down_move > 0 else 0.0)
+        plus_moves.append(
+            up_move if up_move > down_move and up_move > 0 else 0.0
+        )
+        minus_moves.append(
+            down_move if down_move > up_move and down_move > 0 else 0.0
+        )
         true_ranges.append(max(
             highs[index] - lows[index],
             abs(highs[index] - closes[index - 1]),
             abs(lows[index] - closes[index - 1]),
         ))
 
-    smooth_tr = sum(true_ranges[1:period + 1])
-    smooth_plus = sum(plus_moves[1:period + 1])
-    smooth_minus = sum(minus_moves[1:period + 1])
-    dx_values = []
-    previous_adx = None
+    smoothing = 2 * period - 1
+    smoothed_tr = _ema_series(true_ranges, smoothing)
+    smoothed_plus = _ema_series(plus_moves, smoothing)
+    smoothed_minus = _ema_series(minus_moves, smoothing)
 
-    for index in range(period, len(candles)):
-        if index > period:
-            smooth_tr += true_ranges[index] - smooth_tr / period
-            smooth_plus += plus_moves[index] - smooth_plus / period
-            smooth_minus += minus_moves[index] - smooth_minus / period
+    dx = [None] * len(candles)
+    for index in range(len(candles)):
+        tr = smoothed_tr[index]
+        plus = smoothed_plus[index]
+        minus = smoothed_minus[index]
+        if tr is None or plus is None or minus is None:
+            continue
+        if tr <= 0:
+            dx[index] = 0.0
+            continue
+        plus_di = 100.0 * plus / tr
+        minus_di = 100.0 * minus / tr
+        di_sum = plus_di + minus_di
+        dx[index] = (
+            0.0 if di_sum <= 0
+            else 100.0 * abs(plus_di - minus_di) / di_sum
+        )
 
-        if smooth_tr <= 0:
-            dx = 0.0
-        else:
-            plus_di = 100.0 * smooth_plus / smooth_tr
-            minus_di = 100.0 * smooth_minus / smooth_tr
-            di_sum = plus_di + minus_di
-            dx = 0.0 if di_sum <= 0 else 100.0 * abs(plus_di - minus_di) / di_sum
-
-        dx_values.append(dx)
-        if len(dx_values) == period:
-            previous_adx = sum(dx_values) / period
-            result[index] = previous_adx
-        elif previous_adx is not None:
-            previous_adx = ((previous_adx * (period - 1)) + dx) / period
-            result[index] = previous_adx
-
-    return result
+    return _ema_series(dx, smoothing)
 
 
 def _calculate(candles):
@@ -173,62 +188,78 @@ def _signal_at(candles, index, stage):
         return None
 
     buffer1, buffer2, ema_filter, ema_trend, closes, adx = calculated
-    current = (buffer1[index], buffer2[index], ema_filter[index], ema_trend[index], adx[index])
+    current = (
+        buffer1[index], buffer2[index], ema_filter[index],
+        ema_trend[index], adx[index],
+    )
     previous = (buffer1[index - 1], buffer2[index - 1])
     if any(value is None for value in current + previous):
         return None
     if adx[index] < ADX_MINIMUM:
         return None
 
-    cross_up = buffer1[index] > buffer2[index] and buffer1[index - 1] < buffer2[index - 1]
-    cross_down = buffer1[index] < buffer2[index] and buffer1[index - 1] > buffer2[index - 1]
+    cross_up = (
+        buffer1[index] > buffer2[index]
+        and buffer1[index - 1] < buffer2[index - 1]
+    )
+    cross_down = (
+        buffer1[index] < buffer2[index]
+        and buffer1[index - 1] > buffer2[index - 1]
+    )
 
-    if cross_up and closes[index] > ema_filter[index] and ema_filter[index] > ema_trend[index]:
+    if (
+        cross_up
+        and closes[index] > ema_filter[index]
+        and ema_filter[index] > ema_trend[index]
+    ):
         return {
             "direction": "CALL",
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "GO 2024: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
+                "GO 2024 FILTRADO: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
                 "Preço acima da EMA(21)",
                 "EMA(21) acima da EMA(45)",
-                "Filtro ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
+                "ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
             ],
         }
 
-    if cross_down and closes[index] < ema_filter[index] and ema_filter[index] < ema_trend[index]:
+    if (
+        cross_down
+        and closes[index] < ema_filter[index]
+        and ema_filter[index] < ema_trend[index]
+    ):
         return {
             "direction": "PUT",
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "GO 2024: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
+                "GO 2024 FILTRADO: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
                 "Preço abaixo da EMA(21)",
                 "EMA(21) abaixo da EMA(45)",
-                "Filtro ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
+                "ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
             ],
         }
-
     return None
 
 
 def get_signal_at_index(candles, index):
-    """Calcula o sinal confirmado exatamente na vela indicada pelo timestamp."""
-    if not candles or len(candles) < EMA_TREND_PERIOD or index < 1 or index >= len(candles):
+    """Calcula o sinal exatamente no candle indicado."""
+    if not candles or len(candles) < 60 or index < 1 or index >= len(candles):
         return None
     return _signal_at(candles, index, "CLOSED")
 
 
 def get_signal(candles, config=None):
-    """Confirma o cruzamento na última vela M1 concluída."""
-    if not candles or len(candles) < EMA_TREND_PERIOD + 1:
+    """Confirma o sinal na última vela fechada; descarta a última recebida."""
+    if not candles or len(candles) < 61:
         return None
     closed = candles[:-1]
     return get_signal_at_index(closed, len(closed) - 1)
 
 
 def get_intrabar_signal(candles, config=None):
-    """Calcula sinal provisório na vela M1 em formação; não autoriza ordem sozinho."""
-    if not candles or len(candles) < EMA_TREND_PERIOD:
+    """Sinal provisório na vela M1 em formação."""
+    if not candles or len(candles) < 60:
         return None
     return _signal_at(candles, len(candles) - 1, "INTRABAR")

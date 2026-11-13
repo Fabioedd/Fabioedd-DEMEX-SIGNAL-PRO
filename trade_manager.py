@@ -44,7 +44,7 @@ class DemoTrader:
         self._stopped = False
         self.stop_reason = None
         self.entry_cooldown_seconds = max(
-            0.0, float(settings.get("entry_cooldown_seconds", 120))
+            0.0, float(settings.get("entry_cooldown_seconds", 60))
         )
         self.entry_cooldown_until = 0.0
         self.entry_callback = None

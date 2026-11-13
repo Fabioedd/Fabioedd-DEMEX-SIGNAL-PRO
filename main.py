@@ -11,7 +11,7 @@ from bullex_connector import (
     is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.my_strategy import get_intrabar_signal  # GO 2024 SUPER
+from strategies.my_strategy import get_intrabar_signal  # GO 2024 FILTRADO
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
@@ -147,7 +147,7 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
         analyzed_count += 1
         try:
             candles = connector.get_candles(asset["symbol"], 60, int(settings.get("candles_count", 250)))
-            if len(candles) < 45:
+            if len(candles) < 60:
                 continue
             server_ts = normalize_timestamp(connector.get_server_timestamp())
             if server_ts is None:
@@ -208,7 +208,7 @@ def find_candle_index_by_timestamp(candles, target_timestamp):
 def verify_intrabar_signal(connector, settings, candidate):
     """Revalida o sinal enquanto a mesma vela M1 ainda está aberta."""
     candles = connector.get_candles(candidate["symbol"], 60, int(settings.get("candles_count", 250)))
-    if len(candles) < 45:
+    if len(candles) < 60:
         return None
     target_ts = normalize_timestamp(candidate.get("signal_timestamp"))
     close_ts = normalize_timestamp(candidate.get("close_timestamp"))
@@ -322,7 +322,7 @@ def main():
         trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 SUPER | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 32 | intervalo global de 120s entre entradas | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
+            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | intervalo global de 60s entre entradas | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
             
         )
         selection_label = (
@@ -555,7 +555,7 @@ def main():
                     continue
                 if confirmed is False:
                     logging.info(
-                        "SINAL CANCELADO: %s %s | cruzamento, filtros EMA ou ADX(14) >= 32 não permanecem válidos na vela em formação.",
+                        "SINAL CANCELADO: %s %s | cruzamento, filtros EMA ou ADX(14) >= 35 não permanecem válidos na vela em formação.",
                         candidate["symbol"], candidate["direction"]
                     )
                     pending.pop(key, None)
