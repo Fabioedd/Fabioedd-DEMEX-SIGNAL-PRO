@@ -150,32 +150,15 @@ class DemoTrader:
         return summary
 
     def _release_unknown_order_if_expired(self):
-        pending = self.pending_unknown_order or {}
-        # Com ID confirmado, a exposição é conhecida: não liberar outra entrada
-        # enquanto o resultado não tiver sido conciliado.
-        if pending.get("order_id") is not None:
-            return False
-        release_after = max(1, self.expiry) * 60
-        elapsed = time.time() - float(pending.get("submitted_at", time.time()))
-        if self.paused and elapsed >= release_after:
-            with self._state_lock:
-                self.paused = False
-            log.warning(
-                "TEMPO DA ORDEM DESCONHECIDA ESGOTADO (%d min). "
-                "DEMEX liberado para procurar a próxima entrada; "
-                "a resposta da ordem anterior continuará sendo monitorada.",
-                self.expiry
-            )
-            return True
+        # Pendências nunca bloqueiam globalmente novas entradas.
         return False
 
     def _monitor_unknown_order(self):
         """Reconcilia a resposta tardia; libera novas entradas após a expiração M1."""
-        while (self.pending_unknown_order is not None or self.pending_unknown_order_queue) and not self.stopped:
+        while self.pending_unknown_order is not None or self.pending_unknown_order_queue:
             if self.pending_unknown_order is None and self.pending_unknown_order_queue:
                 with self._state_lock:
                     self.pending_unknown_order = self.pending_unknown_order_queue.pop(0)
-                    self.paused = True
             # Aguarda a chamada original de execute_and_settle terminar seu finally
             # antes de reconciliar; evita corrida sobre a trava busy.
             with self._state_lock:
@@ -198,7 +181,6 @@ class DemoTrader:
                         pending.get("request_ref") if pending else None
                     )
                     with self._state_lock:
-                        self.paused = False
                         self.pending_unknown_order = None
                     log.warning(
                         "ORDEM NÃO EXECUTADA: a BullX devolveu recusa explícita após o timeout "
@@ -225,7 +207,6 @@ class DemoTrader:
                                 # Reserva o gerenciador durante a contabilização.
                                 # Assim, o loop principal não pode abrir outra ordem
                                 # entre a confirmação tardia e a atualização do saldo.
-                                self.paused = False
                                 self.pending_unknown_order = None
                                 self.busy = True
                             try:
@@ -309,7 +290,7 @@ class DemoTrader:
 
     def execute_and_settle(self, signal, pre_order_check=None):
         with self._state_lock:
-            if self.busy or self.stopped or self.paused:
+            if self.busy or self.stopped:
                 return None
             key = "{}|{}|{}".format(signal["symbol"], signal["direction"], signal.get("signal_timestamp"))
             if key == self.last_signal_key:
@@ -392,69 +373,26 @@ class DemoTrader:
                 signal["symbol"], signal["direction"], amount, order_id
             )
 
-            # A ordem já foi enviada: em caso de queda, reconectar e consultar
-            # o MESMO order_id. Nunca enviar uma segunda ordem para substituir esta.
-            result_deadline = time.monotonic() + 180.0
-            while True:
-                if self.stop_check and self.stop_check():
-                    raise InterruptedError("Parada solicitada durante a espera do resultado da ordem.")
-                remaining = result_deadline - time.monotonic()
-                if remaining <= 0:
-                    # O ID já foi confirmado. Transferir para o monitor de resultado
-                    # sem liberar novas entradas e sem reenviar a ordem.
-                    pending = {
-                        "signal": dict(signal),
-                        "amount": amount,
-                        "submitted_at": time.time(),
-                        "order_id": order_id,
-                        "reason": "prazo de espera do resultado esgotado",
-                        "request_ref": None,
-                    }
-                    with self._state_lock:
-                        self.pending_unknown_order = pending
-                        self.paused = True
-                    log.error(
-                        "PRAZO DO RESULTADO ESGOTADO | ID %s | DEMEX manterá novas entradas "
-                        "bloqueadas e continuará consultando exclusivamente essa ordem.",
-                        order_id
-                    )
-                    self._start_unknown_order_monitor()
-                    return None
-                try:
-                    result, pnl_raw = self.connector.wait_practice_result(
-                        order_id, stop_check=self.stop_check, timeout_seconds=remaining
-                    )
-                    break
-                except InterruptedError:
-                    raise
-                except PermissionError:
-                    # Uma mudança/recusa do modo de conta é uma trava de segurança.
-                    raise
-                except TimeoutError:
-                    # Timeout de uma consulta isolada pode ocorrer antes do prazo global.
-                    # Aguardar brevemente evita um ciclo de repetição acelerado.
-                    remaining_after_timeout = result_deadline - time.monotonic()
-                    if remaining_after_timeout > 0:
-                        time.sleep(min(0.5, remaining_after_timeout))
-                    continue
-                except Exception as exc:
-                    if self.stop_check and self.stop_check():
-                        raise InterruptedError("Parada solicitada durante a espera do resultado.")
-                    self.connector.connected = False
-                    log.warning(
-                        "Falha ao consultar resultado da ordem %s (%s). "
-                        "Reconectando para consultar a mesma ordem, sem duplicá-la.",
-                        order_id, exc
-                    )
-                    try:
-                        self.connector.reconnect_forever(stop_check=self.stop_check)
-                    except InterruptedError:
-                        raise
-                    except Exception:
-                        log.exception("Reconexão falhou durante a consulta da ordem; nova tentativa.")
-                        time.sleep(5)
-
-            return self._apply_settlement(signal, amount, order_id, result, pnl_raw)
+            # A ordem foi confirmada. Registrar e devolver o controle imediatamente:
+            # o monitor único consulta resultados em segundo plano, sem travar a varredura.
+            pending = {
+                "signal": dict(signal),
+                "amount": amount,
+                "submitted_at": time.time(),
+                "order_id": order_id,
+                "reason": "aguardando liquidação em segundo plano",
+                "request_ref": None,
+            }
+            with self._state_lock:
+                self.pending_unknown_order_queue.append(pending)
+            log.info(
+                "ORDEM EM SEGUNDO PLANO | ID %s | %s %s | "
+                "%d pendência(s) aguardando resultado; varredura continua.",
+                order_id, signal["symbol"], signal["direction"],
+                len(self.pending_unknown_order_queue) + (1 if self.pending_unknown_order else 0)
+            )
+            self._start_unknown_order_monitor()
+            return None
         finally:
             with self._state_lock:
                 self.busy = False
