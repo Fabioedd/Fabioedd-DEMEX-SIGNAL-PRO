@@ -203,10 +203,6 @@ class DemoTrader:
                                     if not self.busy:
                                         self.busy = True
                                         break
-                                if self.stop_check and self.stop_check():
-                                    raise InterruptedError(
-                                        "Parada solicitada antes de contabilizar resultado pendente."
-                                    )
                                 time.sleep(0.05)
                             try:
                                 summary = self._apply_settlement(
@@ -245,10 +241,8 @@ class DemoTrader:
                         except TimeoutError:
                             log.warning(
                                 "RESULTADO AINDA NÃO DISPONÍVEL | ID %s | nova consulta em 5 segundos; "
-                                "a pendência segue em segundo plano e o scanner continua.", order_id
+                                "a pendência continua bloqueando novas entradas até o resultado ser conhecido.", order_id
                             )
-                            if self.stop_check and self.stop_check():
-                                return
                             time.sleep(5)
                             continue
                         except Exception as exc:
@@ -257,8 +251,6 @@ class DemoTrader:
                                     "Não foi possível consultar o resultado da ordem %s. "
                                     "DEMEX continuará monitorando a mesma ordem e tentará novamente.", order_id
                                 )
-                                if self.stop_check and self.stop_check():
-                                    return
                                 time.sleep(5)
                                 continue
                             self.connector.connected = False
