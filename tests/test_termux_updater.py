@@ -9,7 +9,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from termux import termux_updater as updater
 
@@ -55,6 +55,28 @@ class UpdaterSafetyTests(unittest.TestCase):
             self.assertEqual(pid, 1234)
             start.assert_not_called()
             stop.assert_not_called()
+
+    def test_latest_release_resolves_redirect_without_rest_api(self):
+        response = MagicMock()
+        response.geturl.return_value = "https://github.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/releases/tag/v1.0.2"
+        response.__enter__.return_value = response
+        with patch.object(updater.urllib.request, "urlopen", return_value=response) as open_url:
+            tag, assets = updater.latest_release()
+        self.assertEqual(tag, "v1.0.2")
+        self.assertEqual(
+            assets["demex-source.tar.gz"],
+            "https://github.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/releases/download/v1.0.2/demex-source.tar.gz",
+        )
+        self.assertTrue(assets["SHA256SUMS"].endswith("/v1.0.2/SHA256SUMS"))
+        self.assertNotIn("api.github.com", open_url.call_args.args[0].full_url)
+
+    def test_latest_release_rejects_unexpected_redirect(self):
+        response = MagicMock()
+        response.geturl.return_value = "https://github.com/login"
+        response.__enter__.return_value = response
+        with patch.object(updater.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(RuntimeError):
+                updater.latest_release()
 
     def test_sha256_matches_known_value(self):
         self.assertEqual(updater.sha256(b"abc"), hashlib.sha256(b"abc").hexdigest())
