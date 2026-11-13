@@ -8,7 +8,6 @@ from entry_timing import (
     is_candle_still_open,
     is_close_confirmation_tolerance,
     is_close_confirmation_window,
-    is_next_candle_entry_window,
 )
 
 
@@ -20,31 +19,16 @@ class CandleEntryTimingTests(unittest.TestCase):
         self.assertFalse(is_candle_still_open(-0.1))
         self.assertFalse(is_candle_still_open(None))
 
-    def test_three_seconds_are_confirmation_tolerance_not_a_wait_period(self):
-        self.assertTrue(is_close_confirmation_tolerance(0.0))
-        self.assertTrue(is_close_confirmation_tolerance(0.05))
-        self.assertTrue(is_close_confirmation_tolerance(0.5))
-        self.assertTrue(is_close_confirmation_tolerance(2.0))
-        self.assertTrue(is_close_confirmation_tolerance(3.0))
-        self.assertFalse(is_close_confirmation_tolerance(3.01))
-        self.assertFalse(is_close_confirmation_tolerance(5.0))
-        self.assertFalse(is_close_confirmation_tolerance(-0.1))
-        self.assertFalse(is_close_confirmation_tolerance(None))
-        # A função antiga continua disponível para compatibilidade.
+    def test_five_seconds_are_recognition_tolerance_not_a_wait_period(self):
+        self.assertTrue(is_close_confirmation_tolerance(0.0, 5.0))
+        self.assertTrue(is_close_confirmation_tolerance(0.05, 5.0))
+        self.assertTrue(is_close_confirmation_tolerance(2.0, 5.0))
+        self.assertTrue(is_close_confirmation_tolerance(5.0, 5.0))
+        self.assertFalse(is_close_confirmation_tolerance(5.01, 5.0))
+        self.assertFalse(is_close_confirmation_tolerance(-0.1, 5.0))
+        self.assertFalse(is_close_confirmation_tolerance(None, 5.0))
+        # A janela antiga fica disponível por compatibilidade, mas não é usada no fluxo principal.
         self.assertTrue(is_close_confirmation_window(1.0))
-
-    def test_entry_is_allowed_only_at_start_of_immediately_following_candle(self):
-        self.assertTrue(is_next_candle_entry_window(0.0))
-        self.assertTrue(is_next_candle_entry_window(0.5))
-        self.assertTrue(is_next_candle_entry_window(3.0))
-        self.assertTrue(is_next_candle_entry_window(5.0, 5.0, 60.0))
-        self.assertFalse(is_next_candle_entry_window(5.01, 5.0, 60.0))
-        self.assertFalse(is_next_candle_entry_window(-0.01))
-        self.assertFalse(is_next_candle_entry_window(3.01))
-        self.assertFalse(is_next_candle_entry_window(59.99))
-        self.assertFalse(is_next_candle_entry_window(60.0))
-        self.assertFalse(is_next_candle_entry_window(60.01))
-        self.assertFalse(is_next_candle_entry_window(None))
 
     def test_pending_signal_limit(self):
         self.assertTrue(can_add_pending_signal(0))
