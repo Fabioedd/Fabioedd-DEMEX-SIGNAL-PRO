@@ -115,6 +115,71 @@ def robot_is_running() -> bool:
     return False
 
 
+
+def find_telegram_listeners() -> list[dict[str, object]]:
+    """Locate every live Telegram listener, including stale versioned installs."""
+    found = []
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            raw = (proc / "cmdline").read_bytes()
+            args = [part.decode("utf-8", "ignore") for part in raw.split(b"\\0") if part]
+            if not any(Path(arg).name == "telegram_control.py" for arg in args):
+                continue
+            state_text = (proc / "status").read_text(errors="ignore")
+            state = next((line.split()[1] for line in state_text.splitlines() if line.startswith("State:")), "")
+            if state in {"Z", "X"}:
+                continue
+            found.append({"pid": int(proc.name), "cwd": str((proc / "cwd").resolve())})
+        except (OSError, PermissionError, ValueError, IndexError):
+            continue
+    return found
+
+
+def stop_telegram_listener(pid: int, timeout: float = 10.0) -> None:
+    """Ask one listener to exit; never force-kill it or touch the robot."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError as exc:
+        raise RuntimeError(f"Sem permissão para reiniciar o controle Telegram (PID {pid}).") from exc
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not Path(f"/proc/{pid}").exists():
+            return
+        time.sleep(0.2)
+    raise RuntimeError(
+        f"O controle Telegram (PID {pid}) não encerrou no prazo. "
+        "Atualização cancelada; o robô não foi alterado."
+    )
+
+
+def start_telegram_listener(version_dir: Path) -> int:
+    """Start the listener from the newly active version and verify it stays alive."""
+    script = version_dir / "telegram_control.py"
+    python = version_dir / ".venv" / "bin" / "python"
+    if not script.is_file() or not python.is_file():
+        raise RuntimeError("A versão não contém o controle Telegram ou seu Python virtual.")
+    SHARED.mkdir(parents=True, exist_ok=True)
+    log_path = SHARED / "telegram-control.log"
+    with log_path.open("a", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            [str(python), str(script)], cwd=version_dir,
+            stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if Path(f"/proc/{process.pid}").exists() and process.poll() is None:
+            return process.pid
+        if process.poll() is not None:
+            break
+        time.sleep(0.1)
+    raise RuntimeError(
+        "O controle Telegram não permaneceu ativo na nova versão. "
+        "Confira ~/.demex/shared/telegram-control.log."
+    )
+
 def _pid_is_updater(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -263,6 +328,17 @@ def update() -> int:
         log("ATUALIZAÇÃO BLOQUEADA: agente antigo de sincronização ainda está ativo. Encerre-o antes da migração para evitar duas atualizações concorrentes.")
         return 2
 
+    listeners = find_telegram_listeners()
+    if listeners and PROJECT_LINK.exists() and not PROJECT_LINK.is_symlink():
+        legacy_root = str(PROJECT_LINK.resolve())
+        if any(item["cwd"] == legacy_root for item in listeners):
+            log(
+                "ATUALIZAÇÃO BLOQUEADA: o controle Telegram ainda está executando "
+                "diretamente do checkout antigo. Encerre somente o listener Telegram "
+                "antes da primeira migração; o robô não precisa ser desligado."
+            )
+            return 2
+
     lock = MANAGER / "update.lock"
     try:
         acquire_lock(lock)
@@ -270,6 +346,9 @@ def update() -> int:
         log(f"ATUALIZAÇÃO BLOQUEADA: {exc}")
         return 2
 
+    stopped_listeners: list[int] = []
+    previous_listener_version: Path | None = None
+    listener_restarted = False
     try:
         tag, assets = latest_release()
         if not tag.replace(".", "").replace("-", "").replace("_", "").isalnum():
@@ -322,6 +401,16 @@ def update() -> int:
         vpy = install_dependencies(final_dir)
         validate_version(final_dir, vpy)
 
+        # A listener usa caminhos absolutos da versão em que foi iniciado.
+        # Reinicie apenas esse serviço (nunca o robô) para não deixar /start
+        # apontando para uma instalação antiga.
+        if CURRENT.is_symlink() and CURRENT.exists():
+            previous_listener_version = CURRENT.resolve()
+        for listener in listeners:
+            pid = int(listener["pid"])
+            stop_telegram_listener(pid)
+            stopped_listeners.append(pid)
+
         previous = atomic_current_switch(tag)
         try:
             for required in REQUIRED:
@@ -330,6 +419,10 @@ def update() -> int:
             if not (CURRENT / ".venv/bin/python").is_file():
                 raise RuntimeError("Ambiente virtual não encontrado após ativação.")
             migrate_project_link()
+            if stopped_listeners:
+                new_pid = start_telegram_listener(final_dir)
+                listener_restarted = True
+                log(f"Controle Telegram reiniciado na versão {tag} (PID {new_pid}).")
         except Exception:
             restore_current(previous)
             raise
@@ -350,6 +443,16 @@ def update() -> int:
         log(f"ERRO INESPERADO DURANTE A ATUALIZAÇÃO: {type(exc).__name__}: {exc}. A versão ativa foi preservada.")
         return 1
     finally:
+        if stopped_listeners and not listener_restarted and previous_listener_version is not None:
+            try:
+                restored_pid = start_telegram_listener(previous_listener_version)
+                log(f"Controle Telegram restaurado na versão anterior (PID {restored_pid}).")
+            except Exception as restart_error:
+                log(
+                    "ATENÇÃO: não foi possível restaurar automaticamente o controle Telegram: "
+                    f"{type(restart_error).__name__}. O robô não foi alterado; "
+                    "consulte o log e reinicie somente o listener quando possível."
+                )
         try:
             (lock / "owner").unlink(missing_ok=True)
             lock.rmdir()
