@@ -33,6 +33,29 @@ def make_release_archive():
 
 
 class UpdaterSafetyTests(unittest.TestCase):
+    def test_same_release_recovers_missing_telegram_listener(self):
+        with tempfile.TemporaryDirectory() as temp:
+            version = Path(temp) / "v1"
+            version.mkdir()
+            with patch.object(updater, "start_telegram_listener", return_value=4321) as start:
+                pid = updater.ensure_telegram_listener(version, [])
+            self.assertEqual(pid, 4321)
+            start.assert_called_once_with(version)
+
+    def test_same_release_keeps_listener_on_active_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            version = Path(temp) / "v1"
+            version.mkdir()
+            script = version / "telegram_control.py"
+            script.touch()
+            listener = {"pid": 1234, "script": str(script)}
+            with patch.object(updater, "start_telegram_listener") as start, \
+                 patch.object(updater, "stop_telegram_listener") as stop:
+                pid = updater.ensure_telegram_listener(version, [listener])
+            self.assertEqual(pid, 1234)
+            start.assert_not_called()
+            stop.assert_not_called()
+
     def test_sha256_matches_known_value(self):
         self.assertEqual(updater.sha256(b"abc"), hashlib.sha256(b"abc").hexdigest())
 
