@@ -228,6 +228,20 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(t.total_entries, 0)
         self.assertEqual(t.net, 0)
 
+    def test_stop_request_does_not_abandon_an_already_submitted_order(self):
+        c = FakeConnector([("WIN", 4.25)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+
+        # A parada chega depois que a ordem já foi enviada à corretora.
+        t.stop_check = lambda: True
+        t._monitor_unknown_order()
+
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 1)
+        self.assertEqual(t.wins, 1)
+        self.assertEqual(t.net, 4.25)
+
     def test_take_profit_stops_after_the_single_active_order_settles(self):
         c = FakeConnector([("WIN", 50.0)])
         t = self.trader(c)
