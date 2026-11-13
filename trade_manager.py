@@ -212,7 +212,6 @@ class DemoTrader:
                                 # Reserva o gerenciador durante a contabilização.
                                 # Assim, o loop principal não pode abrir outra ordem
                                 # entre a confirmação tardia e a atualização do saldo.
-                                self.pending_unknown_order = None
                                 self.busy = True
                             try:
                                 summary = self._apply_settlement(
@@ -220,6 +219,7 @@ class DemoTrader:
                                 )
                             finally:
                                 with self._state_lock:
+                                    self.pending_unknown_order = None
                                     self.busy = False
                             self.connector.clear_pending_order_request(pending.get("request_ref"))
                             callback = self.late_settlement_callback
