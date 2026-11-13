@@ -81,6 +81,7 @@ def safe_extract(archive_path: Path, destination: Path) -> None:
 
 def robot_is_running() -> bool:
     managed_root = str(MANAGER.resolve())
+    project_root = str(PROJECT_LINK.resolve()) if PROJECT_LINK.exists() else str(PROJECT_LINK)
     for proc in Path("/proc").glob("[0-9]*"):
         try:
             command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
@@ -89,7 +90,10 @@ def robot_is_running() -> bool:
             state = next((line.split()[1] for line in state_text.splitlines() if line.startswith("State:")), "")
             if state in {"Z", "X"}:
                 continue
-            if "main.py" in command and cwd.startswith(managed_root):
+            if "main.py" in command and (
+                cwd == project_root or cwd.startswith(managed_root + os.sep)
+                or cwd.startswith(project_root + os.sep)
+            ):
                 return True
         except (OSError, PermissionError, IndexError):
             continue
@@ -231,6 +235,9 @@ def prune_versions(active_tag: str) -> None:
 
 
 def update() -> int:
+    # Evita manter o diretório de trabalho dentro do checkout que será movido
+    # para legacy durante a migração inicial.
+    os.chdir(HOME)
     MANAGER.mkdir(parents=True, exist_ok=True)
     VERSIONS.mkdir(parents=True, exist_ok=True)
     SHARED.mkdir(parents=True, exist_ok=True)
@@ -251,8 +258,10 @@ def update() -> int:
             raise RuntimeError("A tag da release contém caracteres não permitidos.")
         final_dir = VERSIONS / tag
         if CURRENT.is_symlink() and CURRENT.exists() and CURRENT.resolve() == final_dir.resolve():
-            log(f"DEMEX já está atualizado na versão {tag}.")
-            return 0
+            if all((CURRENT / item).is_file() for item in REQUIRED) and (CURRENT / ".venv/bin/python").is_file():
+                log(f"DEMEX já está atualizado na versão {tag}.")
+                return 0
+            raise RuntimeError("A versão ativa está incompleta. Não será sobrescrita automaticamente; a versão anterior precisa ser recuperada.")
 
         archive_data = request_bytes(assets["demex-source.tar.gz"], timeout=180)
         checksum_data = request_bytes(assets["SHA256SUMS"])
