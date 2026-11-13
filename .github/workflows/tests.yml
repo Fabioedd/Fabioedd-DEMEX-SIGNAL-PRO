@@ -6,11 +6,10 @@ on:
     branches: [main]
     tags: ["v*"]
 
-permissions:
-  contents: write
-
 jobs:
   validate:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +54,8 @@ jobs:
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
