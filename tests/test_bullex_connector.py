@@ -106,6 +106,43 @@ class BullexConnectorTests(unittest.TestCase):
             with self.assertRaises(OrderRejectedError):
                 connector.place_practice_order("EURUSD-OTC", "CALL", 5.0, 1)
 
+
+    def test_asset_availability_uses_turbo_group_for_one_minute_expiry(self):
+        api = FakeApi()
+        client = FakeClient(api)
+        client.get_all_init_v2 = lambda force_refresh=True: {
+            "turbo": {"actives": {"76": {"enabled": True, "is_suspended": False}}},
+            "binary": {"actives": {"76": {"enabled": False, "is_suspended": False}}},
+        }
+        with patch("bullex_connector.Bullex", return_value=client):
+            connector = BullexReadOnlyConnector(
+                BullexConfig("demo@example.com", "not-a-real-password", "PRACTICE")
+            )
+        connector.connected = True
+        with patch("bullex_connector.get_expiration_time", return_value=(1_800_000_060, 0)):
+            result = connector.get_otc_asset_availability(expiry_minutes=1)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["option_type"], "turbo")
+        self.assertTrue(result[0]["available"])
+
+    def test_asset_availability_uses_binary_group_when_expiry_index_is_binary(self):
+        api = FakeApi()
+        client = FakeClient(api)
+        client.get_all_init_v2 = lambda force_refresh=True: {
+            "turbo": {"actives": {"76": {"enabled": False, "is_suspended": False}}},
+            "binary": {"actives": {"76": {"enabled": True, "is_suspended": False}}},
+        }
+        with patch("bullex_connector.Bullex", return_value=client):
+            connector = BullexReadOnlyConnector(
+                BullexConfig("demo@example.com", "not-a-real-password", "PRACTICE")
+            )
+        connector.connected = True
+        with patch("bullex_connector.get_expiration_time", return_value=(1_800_000_060, 5)):
+            result = connector.get_otc_asset_availability(expiry_minutes=5)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["option_type"], "binary")
+        self.assertTrue(result[0]["available"])
+
     def test_result_is_retrieved_from_closed_order_history(self):
         api = FakeApi()
         connector, _ = self.make_connector(api)
