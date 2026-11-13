@@ -61,7 +61,7 @@ class IntrabarEntryTests(unittest.TestCase):
 
     def test_revalidates_signal_while_original_candle_is_open(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(), 2641.5)
+        connector = self.connector(self.candles(), 3541.5)
         with patch.object(
             main,
             "get_intrabar_signal",
@@ -76,7 +76,7 @@ class IntrabarEntryTests(unittest.TestCase):
 
     def test_five_seconds_are_recognition_tolerance_from_detection(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(), 2645.51)
+        connector = self.connector(self.candles(), 3545.51)
         with patch.object(
             main, "get_intrabar_signal", return_value={"direction": "CALL"}
         ):
@@ -99,7 +99,7 @@ class IntrabarEntryTests(unittest.TestCase):
 
     def test_rejects_signal_if_it_disappears(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(), 2641.0)
+        connector = self.connector(self.candles(), 3541.0)
         with patch.object(main, "get_intrabar_signal", return_value=None):
             result = main.verify_intrabar_signal(connector, {}, candidate)
 
@@ -107,7 +107,7 @@ class IntrabarEntryTests(unittest.TestCase):
 
     def test_rejects_signal_if_direction_changes(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(), 2641.0)
+        connector = self.connector(self.candles(), 3541.0)
         with patch.object(
             main, "get_intrabar_signal", return_value={"direction": "PUT"}
         ):
@@ -118,7 +118,7 @@ class IntrabarEntryTests(unittest.TestCase):
     def test_final_order_validation_accepts_only_same_open_candle(self):
         candidate = self.candidate()
         candidate["intrabar_signal_verified"] = True
-        connector = self.connector(self.candles(), 2642.0)
+        connector = self.connector(self.candles(), 3542.0)
         with patch.object(
             main, "get_intrabar_signal", return_value={"direction": "CALL"}
         ):
@@ -131,7 +131,7 @@ class IntrabarEntryTests(unittest.TestCase):
 
     def test_final_order_validation_rejects_unverified_candidate(self):
         candidate = self.candidate()
-        connector = self.connector(self.candles(), 2642.0)
+        connector = self.connector(self.candles(), 3542.0)
         valid, reason = main.validate_signal_immediately_before_order(
             connector, {}, candidate
         )
