@@ -55,14 +55,6 @@ class DemoTrader:
 
     @stopped.setter
     def stopped(self, value):
-        # main.py converte a confirmação desconhecida em pausa recuperável.
-        # A parada explícita do usuário continua autoritária.
-        if value and self.paused and not (self.stop_check and self.stop_check()):
-            log.warning(
-                "ENCERRAMENTO AUTOMÁTICO ADIADO: existe uma ordem com confirmação "
-                "desconhecida. DEMEX permanece ativo em reconciliação, sem novas entradas."
-            )
-            return
         self._stopped = bool(value)
 
     def _read_late_order_response(self):
@@ -379,11 +371,9 @@ class DemoTrader:
                         self.pending_unknown_order_queue.append(new_pending)
                 log.critical(
                     "CONFIRMAÇÃO DESCONHECIDA | %s %s | %s. "
-                    "A sessão não será encerrada: DEMEX continuará ativo, "
-                    "monitorando a resposta da mesma solicitação. Novas entradas "
-                    "serão liberadas após %d minuto(s), mesmo sem resposta. "
-                    "Ordens sem confirmação adicionais serão reconciliadas em fila.",
-                    signal["symbol"], signal["direction"], exc, self.expiry
+                    "A solicitação original ficará em segundo plano; o scanner "
+                    "continua normalmente e novas ordens não serão bloqueadas.",
+                    signal["symbol"], signal["direction"], exc
                 )
                 self._start_unknown_order_monitor()
                 raise
