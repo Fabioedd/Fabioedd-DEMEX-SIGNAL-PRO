@@ -97,6 +97,7 @@ class AssetSelectorTests(unittest.TestCase):
         )
         self.assertFalse(result["approved"])
         self.assertEqual(result["operations"], 0)
+        self.assertEqual(result["candles_used"], 0)
 
     def test_selection_returns_only_approved_assets_and_rechecks_all(self):
         assets = [
