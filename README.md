@@ -16,7 +16,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
 - Resultado e P&L vêm do retorno da corretora; o terminal informa WIN/LOSS/TIE, valor da operação e acumulado.
-- Seleção automática: a cada ciclo, o DEMEX identifica os ativos OTC binários disponíveis e executa novamente o backtest dos últimos 100 candles M1 fechados de cada ativo, usando exatamente HARAMI + ENGOLFO com EMA 21/45. São contabilizados WIN, LOSS e TIE; a assertividade é WIN / (WIN + LOSS), sem mínimo de operações e sem filtro de payout. Só são aprovados ativos com assertividade estritamente acima de 70%. O resultado completo substitui a lista anterior; apenas os aprovados entram na varredura de sinais e nas entradas. O histórico de aquecimento da EMA (60 candles) é buscado antes dos 100 candles avaliados. O DEMEX registra progresso, tempo decorrido e estimativa de tempo restante durante cada ciclo.
+- Seleção automática: a cada ciclo, o DEMEX identifica os ativos OTC disponíveis no grupo correspondente à expiração e executa novamente o backtest dos últimos 100 candles M1 fechados de cada ativo, usando exatamente HARAMI + ENGOLFO com EMA 21/45. São contabilizados WIN, LOSS e TIE; a assertividade é WIN / (WIN + LOSS), sem mínimo de operações e sem filtro de payout. Só são aprovados ativos com assertividade estritamente acima de 70%. O resultado completo substitui a lista anterior; apenas os aprovados entram na varredura de sinais e nas entradas. O histórico de aquecimento da EMA (60 candles) é buscado antes dos 100 candles avaliados. O DEMEX registra progresso, tempo decorrido e estimativa de tempo restante durante cada ciclo.
 
 ## Trava de segurança
 
@@ -39,18 +39,14 @@ BULLEX_PASSWORD=sua_senha
 BULLEX_ACCOUNT_TYPE=PRACTICE
 ```
 
-Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia ordens binárias após conexão e confirmação da conta PRACTICE.
+Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia contratos compatíveis com a expiração configurada após conexão e confirmação da conta PRACTICE.
 
 
-## Controle remoto pelo Telegram
+## Notificações pelo Telegram
 
-O projeto inclui comandos privados para ligar e desligar o DEMEX pelo Telegram. Configure `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env` (nunca publique o token). Inicie o listener uma vez com:
+O Telegram é usado apenas para notificações de início de sessão, resultado de cada operação e relatório final. Configure `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env`; nunca publique o token. O Telegram não envia comandos para abrir ou repetir operações.
 
-```bash
-bash telegram-control.sh iniciar
-```
-
-Depois, envie `/start`, `/stop`, `/status` ou `/help` em uma conversa privada com seu bot. O comando `/stop` solicita parada segura e aguarda a operação em andamento terminar. Ao iniciar pelo `bash demex.sh iniciar`, o listener também é iniciado automaticamente quando as credenciais estão configuradas. Detalhes em [TELEGRAM_CONTROL.md](TELEGRAM_CONTROL.md).
+Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identificador da solicitação original, não reenvia a ordem e bloqueia novas entradas até identificar se a corretora aceitou ou recusou aquela mesma solicitação. Se a resposta chegar depois, consulta o resultado pelo histórico da corretora, atualiza o placar e tenta enviar a notificação tardia.
 
 ## Testes e limitações
 
