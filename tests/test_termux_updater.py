@@ -172,7 +172,7 @@ class UpdaterSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             old_root = str(Path(temp) / ".demex" / "versions" / "v1")
             result, current, *_rest, stopped, started = self._run_update(
-                temp, listeners=[{"pid": 1234, "cwd": old_root}]
+                temp, listeners=[{"pid": 1234, "cwd": old_root, "script": str(Path(old_root) / "telegram_control.py")}]
             )
             self.assertEqual(result, 0)
             self.assertEqual(os.readlink(current), "versions/v2")
@@ -199,7 +199,11 @@ class UpdaterSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             result, current, project, *_ = self._run_update(
                 temp, legacy=True,
-                listeners=[{"pid": 2345, "cwd": str(Path(temp) / "Fabioedd-DEMEX-SIGNAL-PRO")}],
+                listeners=[{
+                    "pid": 2345,
+                    "cwd": str(Path(temp) / "Fabioedd-DEMEX-SIGNAL-PRO"),
+                    "script": str(Path(temp) / "Fabioedd-DEMEX-SIGNAL-PRO" / "telegram_control.py"),
+                }],
             )
             self.assertEqual(result, 2)
             self.assertEqual(os.readlink(current), "versions/v1")
