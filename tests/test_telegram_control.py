@@ -100,22 +100,22 @@ class TelegramCommandTests(unittest.TestCase):
     def test_api_call_uses_curl_config_stdin_and_parses_result(self):
         control = TelegramControl("secret-token", "9246590305")
         response = Mock(returncode=0, stdout='{"ok": true, "result": {"id": 7}}')
-        with patch("telegram_control.shutil.which", return_value="/usr/bin/curl"), \\
-             patch("telegram_control.subprocess.run", return_value=response) as run:
-            result = control.api_call("getMe", {"timeout": 10})
+        with patch("telegram_control.shutil.which", return_value="/usr/bin/curl"):
+            with patch("telegram_control.subprocess.run", return_value=response) as run:
+                result = control.api_call("getMe", {"timeout": 10})
         self.assertEqual(result, {"id": 7})
         args, kwargs = run.call_args
         self.assertEqual(args[0], ["curl", "--config", "-"])
         self.assertNotIn("secret-token", " ".join(args[0]))
         self.assertIn("secret-token", kwargs["input"])
-        self.assertIn('data = "{\\\\\"timeout\\\\\": 10}"', kwargs["input"])
+        self.assertIn('data = "{\\\"timeout\\\": 10}"', kwargs["input"])
 
     def test_api_call_hides_transport_errors(self):
         control = TelegramControl("secret-token", "9246590305")
-        with patch("telegram_control.shutil.which", return_value="/usr/bin/curl"), \\
-             patch("telegram_control.subprocess.run", side_effect=OSError("network error")):
-            with self.assertRaisesRegex(RuntimeError, "Falha de comunicação"):
-                control.api_call("getMe")
+        with patch("telegram_control.shutil.which", return_value="/usr/bin/curl"):
+            with patch("telegram_control.subprocess.run", side_effect=OSError("network error")):
+                with self.assertRaisesRegex(RuntimeError, "Falha de comunicação"):
+                    control.api_call("getMe")
 
 if __name__ == "__main__":
     unittest.main()
