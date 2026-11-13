@@ -61,13 +61,12 @@ def _price(candle, key):
 
 
 def backtest_asset(connector, asset, settings, server_timestamp=None):
-    """Testa os últimos 200 candles M1 fechados; entrada na vela seguinte e expiração M1."""
-    window = int(settings.get("backtest_candles_count", 200))
+    """Testa os últimos 100 candles M1 fechados; entrada na vela seguinte e expiração M1."""
+    window = int(settings.get("backtest_candles_count", 100))
     warmup = int(settings.get("backtest_warmup_candles", 60))
-    if window != 200:
-        # A janela pedida pelo projeto é fixa em 200; a configuração só pode
-        # manter esse valor para evitar uma alteração acidental de critério.
-        window = 200
+    if window != 100:
+        # A janela pedida pelo projeto é fixa em 100 candles avaliados.
+        window = 100
     if warmup < 45:
         warmup = 45
 
@@ -153,7 +152,7 @@ def select_qualified_assets(connector, available_assets, settings, stop_check=No
     durations = []
 
     logger.info(
-        "BACKTEST OTC INICIADO | %d ativos disponíveis | 200 candles M1 fechados por ativo | "
+        "BACKTEST OTC INICIADO | %d ativos disponíveis | 100 candles M1 fechados por ativo | "
         "aprovação a partir de %.1f%%.",
         total, float(settings.get("minimum_backtest_accuracy", 70.0))
     )
