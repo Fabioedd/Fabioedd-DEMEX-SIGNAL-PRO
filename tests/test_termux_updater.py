@@ -1,13 +1,34 @@
 import hashlib
 import io
 import os
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from termux import termux_updater as updater
+
+
+def make_release_archive():
+    buffer = io.BytesIO()
+    files = {
+        "demex/main.py": b"print('DEMEX')\n",
+        "demex/settings.json": b'{"scan_interval_seconds": 2, "entry_cooldown_seconds": 60}\n',
+        "demex/requirements.txt": b"\n",
+        "demex/demex.sh": b"#!/bin/bash\n",
+        "demex/strategies/my_strategy.py": b"def get_intrabar_signal(*args): return None\n",
+    }
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, content in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return buffer.getvalue()
 
 
 class UpdaterSafetyTests(unittest.TestCase):
@@ -64,6 +85,93 @@ class UpdaterSafetyTests(unittest.TestCase):
             with patch.object(updater, "_pid_is_updater", return_value=False):
                 updater.acquire_lock(lock)
             self.assertEqual((lock / "owner").read_text(), str(os.getpid()))
+
+    def _run_update(self, temp, *, robot=False, install_error=None, test_error=None, no_space=False, network_error=None, legacy=False):
+        manager = Path(temp) / ".demex"
+        versions = manager / "versions"
+        shared = manager / "shared"
+        versions.mkdir(parents=True)
+        shared.mkdir()
+        current = manager / "current"
+        old_version = versions / "v1"
+        old_version.mkdir()
+        current.symlink_to(Path("versions") / "v1")
+        project = Path(temp) / "Fabioedd-DEMEX-SIGNAL-PRO"
+        if legacy:
+            project.mkdir()
+            (project / ".env").write_text("TOKEN=local-secret\n")
+            (project / "settings.json").write_text('{"scan_interval_seconds":2,"entry_cooldown_seconds":60}\n')
+        archive = make_release_archive()
+        checksum = f"{hashlib.sha256(archive).hexdigest()}  demex-source.tar.gz\n".encode()
+        old_cwd = Path.cwd()
+        try:
+            with patch.multiple(
+                updater,
+                MANAGER=manager, VERSIONS=versions, CURRENT=current, SHARED=shared,
+                PROJECT_LINK=project, LOG=Path(temp) / "updater.log",
+            ), patch.object(updater, "robot_is_running", return_value=robot), \
+                 patch.object(updater, "legacy_sync_is_running", return_value=False), \
+                 patch.object(updater, "latest_release", return_value=("v2", {"demex-source.tar.gz":"archive", "SHA256SUMS":"sums"})), \
+                 patch.object(updater, "request_bytes", side_effect=network_error or [archive, checksum]), \
+                 patch.object(updater.shutil, "disk_usage", return_value=SimpleNamespace(free=0 if no_space else 2 * 1024**3)):
+                def install(version_dir):
+                    if install_error:
+                        raise install_error
+                    vpy = version_dir / ".venv" / "bin" / "python"
+                    vpy.parent.mkdir(parents=True)
+                    vpy.write_text("#!/bin/sh\n")
+                    return vpy
+                with patch.object(updater, "install_dependencies", side_effect=install), \
+                     patch.object(updater, "validate_version", side_effect=test_error), \
+                     patch.object(updater, "prune_versions"):
+                    result = updater.update()
+            return result, current, project, shared, manager
+        finally:
+            os.chdir(old_cwd)
+
+    def test_no_internet_keeps_previous_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result, current, *_ = self._run_update(
+                temp, network_error=urllib.error.URLError("offline")
+            )
+            self.assertEqual(result, 1)
+            self.assertEqual(os.readlink(current), "versions/v1")
+
+    def test_low_storage_keeps_previous_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result, current, *_ = self._run_update(temp, no_space=True)
+            self.assertEqual(result, 1)
+            self.assertEqual(os.readlink(current), "versions/v1")
+
+    def test_dependency_failure_keeps_previous_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            failure = subprocess.CalledProcessError(1, ["pip", "install"])
+            result, current, *_ = self._run_update(temp, install_error=failure)
+            self.assertEqual(result, 1)
+            self.assertEqual(os.readlink(current), "versions/v1")
+
+    def test_test_failure_keeps_previous_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            failure = subprocess.CalledProcessError(1, ["unittest"])
+            result, current, *_ = self._run_update(temp, test_error=failure)
+            self.assertEqual(result, 1)
+            self.assertEqual(os.readlink(current), "versions/v1")
+
+    def test_running_robot_blocks_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result, current, *_ = self._run_update(temp, robot=True)
+            self.assertEqual(result, 2)
+            self.assertEqual(os.readlink(current), "versions/v1")
+
+    def test_successful_migration_preserves_configuration_and_switches_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result, current, project, shared, manager = self._run_update(temp, legacy=True)
+            self.assertEqual(result, 0)
+            self.assertEqual(os.readlink(current), "versions/v2")
+            self.assertTrue(project.is_symlink())
+            self.assertEqual((shared / ".env").read_text(), "TOKEN=local-secret\n")
+            self.assertTrue((shared / "settings.json").is_file())
+            self.assertTrue((manager / "legacy").is_dir())
 
 
 if __name__ == "__main__":
