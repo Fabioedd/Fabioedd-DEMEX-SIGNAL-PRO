@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -53,7 +54,6 @@ class TelegramNotifier:
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }, ensure_ascii=False)
-        # IPv4 + HTTP/1.1 reproduzem o transporte validado no Termux.
         # URL/token ficam no stdin do curl, nunca nos argumentos do processo.
         config = "\n".join((
             "url = {}".format(json.dumps(url)),
@@ -65,26 +65,30 @@ class TelegramNotifier:
             "max-time = {}".format(self.timeout),
             "",
         ))
-        try:
-            response = subprocess.run(
-                ["curl", "-4", "--http1.1", "--config", "-"],
-                input=config,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout + 2,
-                check=False,
-            )
-            if response.returncode != 0:
-                raise RuntimeError("Falha de comunicação com o Telegram.")
-            result = json.loads(response.stdout)
-            if not result.get("ok"):
-                log.warning("Telegram recusou uma notificação do DEMEX.")
-                return False
-            return True
-        except (subprocess.SubprocessError, OSError, ValueError, RuntimeError):
-            # Nunca registrar stderr/config: podem conter a URL com o token.
-            log.warning("Não foi possível enviar notificação ao Telegram.")
-            return False
+        # Pequenas tentativas adicionais recuperam quedas breves de rede sem
+        # alterar o fluxo de ordens nem registrar credenciais.
+        for attempt in range(3):
+            try:
+                response = subprocess.run(
+                    ["curl", "-4", "--http1.1", "--config", "-"],
+                    input=config,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout + 2,
+                    check=False,
+                )
+                if response.returncode != 0:
+                    raise RuntimeError("Falha de comunicação com o Telegram.")
+                result = json.loads(response.stdout)
+                if not result.get("ok"):
+                    log.warning("Telegram recusou uma notificação do DEMEX.")
+                    return False
+                return True
+            except (subprocess.SubprocessError, OSError, ValueError, RuntimeError):
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+        log.warning("Não foi possível enviar notificação ao Telegram após 3 tentativas.")
+        return False
 
     def send_session_start(self, account, market, timeframe, expiry_minutes,
                             assets_count, initial_entry, stop_loss, take_profit,
