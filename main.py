@@ -208,6 +208,10 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                 "SINAL EM VELA FECHADA | %s %s | entrada na próxima M1, fechamento %.0f",
                 candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
             )
+            logging.info(
+                "VARREDURA %d | %d ativos examinados até o primeiro sinal; %d sinal encontrado.",
+                _scan_pass_number, analyzed_count, len(candidates)
+            )
             return candidates
         except ConnectionError:
             raise
