@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Gerencia o listener remoto do DEMEX pelo Telegram.
 set -u
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$ROOT" || exit 1
 
 PYTHON="$ROOT/.venv/bin/python"
