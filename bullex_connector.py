@@ -83,6 +83,7 @@ class BullexReadOnlyConnector:
         # Mantém a referência ao cliente e ao request_id originais até resolver
         # uma ordem cujo envio teve confirmação desconhecida.
         self.pending_order_request=None
+        self.pending_order_requests={}
     def connect(self):
         """Conecta sem deixar falhas transitórias de DNS/HTTP derrubarem o processo."""
         try:
@@ -128,13 +129,14 @@ class BullexReadOnlyConnector:
                 self._wait_for_retry(delay, stop_check)
                 with self.api_lock:
                     previous_client = self.client
-                    pending_client = (
-                        self.pending_order_request.get("client")
-                        if isinstance(self.pending_order_request, dict) else None
-                    )
-                    # Não encerra o socket original enquanto uma ordem ainda
-                    # aguarda confirmação: ele pode receber o ACK tardio.
-                    if previous_client is not pending_client:
+                    pending_clients = {
+                        item.get("client") for item in self.pending_order_requests.values()
+                        if isinstance(item, dict) and item.get("client") is not None
+                    }
+                    if isinstance(self.pending_order_request, dict):
+                        pending_clients.add(self.pending_order_request.get("client"))
+                    # Não encerra sockets que ainda podem receber ACKs de ordens pendentes.
+                    if previous_client not in pending_clients:
                         try:
                             previous_client.logout()
                         except Exception:
@@ -282,7 +284,8 @@ class BullexReadOnlyConnector:
             client=self.client
             # Cria mapa de respostas próprio desta sessão e evita confundir
             # mensagens antigas ou de outro cliente da biblioteca.
-            client.api.buy_multi_option={}
+            if not isinstance(getattr(client.api, "buy_multi_option", None), dict):
+                client.api.buy_multi_option = {}
             request_ref={
                 "client":client,
                 "request_id":request_id,
@@ -292,6 +295,7 @@ class BullexReadOnlyConnector:
                 "submitted_at":time.time(),
             }
             self.pending_order_request=request_ref
+            self.pending_order_requests[request_id]=request_ref
             try:
                 client.api.buyv3_by_raw_expired(
                     float(amount),int(active_map[symbol]),direction.lower(),
@@ -320,11 +324,15 @@ class BullexReadOnlyConnector:
                         except (TypeError,ValueError):
                             resolved_id=None
                         if resolved_id is not None:
-                            self.pending_order_request=None
+                            self.pending_order_requests.pop(request_id, None)
+                            if self.pending_order_request is request_ref:
+                                self.pending_order_request=None
                             return resolved_id
                     message=payload.get("message")
                     if message:
-                        self.pending_order_request=None
+                        self.pending_order_requests.pop(request_id, None)
+                        if self.pending_order_request is request_ref:
+                            self.pending_order_request=None
                         raise OrderRejectedError(
                             "A BullX recusou explicitamente o contrato: {}".format(message)
                         )
@@ -362,60 +370,99 @@ class BullexReadOnlyConnector:
 
     def clear_pending_order_request(self,request_ref=None):
         """Libera a referência ao cliente antigo depois de resolver a ordem."""
-        current=self.pending_order_request
-        if current is not None and (
-            request_ref is None or current.get("request_id")==request_ref.get("request_id")
-        ):
-            self.pending_order_request=None
-            old_client=current.get("client")
-            if old_client is not None and old_client is not self.client:
+        if request_ref is None:
+            # Ordens já confirmadas não possuem request_ref. Não limpar outras
+            # solicitações desconhecidas por causa da liquidação de uma ordem.
+            return
+        request_id = request_ref.get("request_id") if isinstance(request_ref, dict) else None
+        removed = [self.pending_order_requests.pop(request_id, request_ref)] if request_id else []
+        if self.pending_order_request is not None and self.pending_order_request.get("request_id") == request_id:
+            self.pending_order_request = next(iter(self.pending_order_requests.values()), None)
+        for item in removed:
+            old_client = item.get("client") if isinstance(item, dict) else None
+            if old_client is not None and old_client is not self.client and not any(
+                pending.get("client") is old_client for pending in self.pending_order_requests.values()
+            ):
                 try:
                     old_client.logout()
                 except Exception as exc:
-                    logger.debug("Não foi possível encerrar o socket antigo da ordem resolvida: %s",exc)
+                    logger.debug("Não foi possível encerrar o socket antigo da ordem resolvida: %s", exc)
 
-    def wait_practice_result(self,order_id):
-        """Consulta o histórico de opções fechadas, inclusive após reconectar."""
-        with self.api_lock:
-            if self.config.account_type!="PRACTICE":
-                raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-            target_id=int(order_id)
-            while True:
+    def wait_practice_result(self, order_id, stop_check=None, timeout_seconds=180.0):
+        """Consulta resultado sem manter api_lock durante a espera da corretora."""
+        if self.config.account_type != "PRACTICE":
+            raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
+        target_id = int(order_id)
+        total_timeout = max(0.1, float(timeout_seconds))
+        deadline = time.monotonic() + total_timeout
+
+        while True:
+            if stop_check and stop_check():
+                raise InterruptedError("Parada solicitada durante a consulta do resultado.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Prazo global de {:.0f} segundos esgotado aguardando o resultado da ordem {}."
+                    .format(total_timeout, target_id)
+                )
+
+            # O lock protege apenas a chamada síncrona de consulta. Durante a
+            # espera pela resposta, o scanner pode consultar candles/ativos.
+            with self.api_lock:
                 self._require_connection()
-                if self.client.get_balance_mode()!="PRACTICE":
+                if self.client.get_balance_mode() != "PRACTICE":
                     raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-                client=self.client
-                client.api.get_options_v2_data=None
-                client.api.get_options_v2(20,"binary,turbo")
-                deadline=time.monotonic()+10.0
-                while client.api.get_options_v2_data is None:
-                    if not client.check_connect():
-                        self.connected=False
-                        raise ConnectionError("Conexão BullX caiu ao consultar o resultado da ordem.")
-                    if time.monotonic()>=deadline:
-                        raise TimeoutError("A BullX não respondeu à consulta do histórico de opções em 10 segundos.")
-                    time.sleep(0.05)
+                client = self.client
+                client.api.get_options_v2_data = None
+                client.api.get_options_v2(20, "binary,turbo")
 
-                data=client.api.get_options_v2_data
-                message=data.get("msg",{}) if isinstance(data,dict) else {}
-                closed_list=message.get("closed_options",[]) if isinstance(message,dict) else []
+            query_deadline = min(deadline, time.monotonic() + 10.0)
+            while client.api.get_options_v2_data is None:
+                if stop_check and stop_check():
+                    raise InterruptedError("Parada solicitada durante a consulta do resultado.")
+                if not client.check_connect():
+                    self.connected = False
+                    raise ConnectionError("Conexão BullX caiu ao consultar o resultado da ordem.")
+                remaining = min(deadline, query_deadline) - time.monotonic()
+                if remaining <= 0:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            "Prazo global de {:.0f} segundos esgotado aguardando o resultado da ordem {}."
+                            .format(total_timeout, target_id)
+                        )
+                    break
+                time.sleep(min(0.05, remaining))
+
+            data = client.api.get_options_v2_data
+            if data is not None:
+                message = data.get("msg", {}) if isinstance(data, dict) else {}
+                closed_list = message.get("closed_options", []) if isinstance(message, dict) else []
                 for option in closed_list:
-                    if not isinstance(option,dict):
+                    if not isinstance(option, dict):
                         continue
-                    option_id=option.get("id")
-                    option_ids=option_id if isinstance(option_id,list) else [option_id]
-                    matched=any(str(value)==str(target_id) for value in option_ids if value is not None)
+                    option_id = option.get("id")
+                    option_ids = option_id if isinstance(option_id, list) else [option_id]
+                    matched = any(
+                        str(value) == str(target_id)
+                        for value in option_ids if value is not None
+                    )
                     if not matched:
                         continue
-                    state=str(option.get("win","")).lower()
-                    if state=="equal":
-                        return "TIE",0.0
-                    amount=float(option.get("amount",0))
-                    pnl= float(option.get("win_amount",0))-amount
-                    if state=="loose":
-                        pnl=-amount
-                    return ("WIN" if state=="win" else "LOSS"),round(pnl,2)
-                time.sleep(1.0)
+                    state = str(option.get("win", "")).lower()
+                    if state == "equal":
+                        return "TIE", 0.0
+                    amount = float(option.get("amount", 0))
+                    pnl = float(option.get("win_amount", 0)) - amount
+                    if state == "loose":
+                        pnl = -amount
+                    if state not in {"win", "loose"}:
+                        break
+                    return ("WIN" if state == "win" else "LOSS"), round(pnl, 2)
+
+            if stop_check and stop_check():
+                raise InterruptedError("Parada solicitada durante a consulta do resultado.")
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
     def get_server_timestamp(self):
         with self.api_lock:
             self._require_connection()
@@ -428,12 +475,15 @@ class BullexReadOnlyConnector:
         """Encerra os sockets atuais e o cliente antigo preservado para reconciliação."""
         with self.api_lock:
             clients=[self.client]
-            pending_client=(
-                self.pending_order_request.get("client")
-                if isinstance(self.pending_order_request,dict) else None
-            )
-            if pending_client is not None and pending_client is not self.client:
-                clients.append(pending_client)
+            pending_clients = {
+                item.get("client") for item in self.pending_order_requests.values()
+                if isinstance(item, dict) and item.get("client") is not None
+            }
+            if isinstance(self.pending_order_request, dict):
+                pending_clients.add(self.pending_order_request.get("client"))
+            for pending_client in pending_clients:
+                if pending_client is not None and pending_client not in clients:
+                    clients.append(pending_client)
             for client in clients:
                 try:
                     client.logout()
@@ -441,4 +491,5 @@ class BullexReadOnlyConnector:
                     # Logout é limpeza best-effort; não mascara a causa do encerramento.
                     logger.warning("Falha ao encerrar sessão remota da BullX: %s",exc)
             self.pending_order_request=None
+            self.pending_order_requests.clear()
             self.connected=False

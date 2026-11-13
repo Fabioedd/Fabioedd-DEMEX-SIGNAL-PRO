@@ -208,6 +208,10 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                 "SINAL EM VELA FECHADA | %s %s | entrada na próxima M1, fechamento %.0f",
                 candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
             )
+            logging.info(
+                "VARREDURA %d | %d ativos examinados até o primeiro sinal; %d sinal encontrado.",
+                _scan_pass_number, analyzed_count, len(candidates)
+            )
             return candidates
         except ConnectionError:
             raise
@@ -463,11 +467,17 @@ def main():
         pending = {}
         processed = set()
 
-        while not trader.stopped:
+        while not trader.stopped or trader.has_pending_orders:
             if STOP_FILE.exists():
                 trader.stopped = True
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
+
+            # Ao atingir take/stop, não abrir novas entradas. O monitor continua
+            # conciliando as ordens já enviadas antes de fechar a conexão.
+            if trader.stopped:
+                _wait_for_market_data_retry(0.2, stop_check=STOP_FILE.exists)
+                continue
 
             if not pending and time.monotonic() >= next_asset_refresh:
                 try:
@@ -516,10 +526,14 @@ def main():
                     assets = []
                     next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
 
+            scan_started = None
+            scan_elapsed = None
+            candidates = []
             try:
                 if pending:
                     candidates = []
                 else:
+                    scan_started = time.monotonic()
                     candidates = scan_once(
                         connector, settings, assets,
                         max_candidates=MAX_PENDING_SIGNALS,
@@ -532,6 +546,18 @@ def main():
                 pending.clear()
                 next_asset_refresh = 0.0
                 continue
+            finally:
+                if scan_started is not None:
+                    scan_elapsed = time.monotonic() - scan_started
+                    log_line = (
+                        "DURAÇÃO DA VARREDURA | %.3fs | ativos %d | sinais %d | intervalo configurado %ds."
+                        % (scan_elapsed, len(assets), len(candidates) if "candidates" in locals() else 0,
+                           scan_delay(settings))
+                    )
+                    if scan_elapsed > 5.0:
+                        logging.warning("VARREDURA ACIMA DE 5 SEGUNDOS | %s", log_line)
+                    else:
+                        logging.info(log_line)
 
             if STOP_FILE.exists():
                 trader.stopped = True
@@ -735,12 +761,12 @@ def main():
                         candidate["symbol"], candidate["direction"], exc
                     )
                 except OrderConfirmationUnknownError as exc:
-                    # O gerenciador monitora o request_id original e libera a próxima
-                    # entrada após a expiração M1, sem reenviar a ordem anterior.
+                    # A solicitação original fica na fila de reconciliação; o scanner
+                    # continua normalmente e a ordem nunca é reenviada.
                     logging.critical(
                         "CONFIRMAÇÃO DA ORDEM DESCONHECIDA | %s %s | %s. "
-                        "A resposta será reconciliada em segundo plano; após 1 minuto "
-                        "o DEMEX poderá procurar a próxima entrada.",
+                        "A resposta será reconciliada em segundo plano; o DEMEX "
+                        "continua procurando novas entradas.",
                         candidate["symbol"], candidate["direction"], exc
                     )
                 except PermissionError:
@@ -786,9 +812,13 @@ def main():
                 if pending:
                     time.sleep(0.10)
                 elif assets:
-                    continue
+                    # Mantém 2s entre inícios de varreduras sem somar 2s
+                    # ao tempo gasto pela própria consulta dos ativos.
+                    remaining = scan_delay(settings) - (time.monotonic() - scan_started if scan_started is not None else scan_delay(settings))
+                    if remaining > 0:
+                        _wait_for_market_data_retry(remaining, stop_check=STOP_FILE.exists)
                 else:
-                    time.sleep(scan_delay(settings))
+                    _wait_for_market_data_retry(scan_delay(settings), stop_check=STOP_FILE.exists)
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
