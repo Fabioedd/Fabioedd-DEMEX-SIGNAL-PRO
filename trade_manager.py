@@ -36,7 +36,6 @@ class DemoTrader:
         self.soros_step = 0
         self.last_signal_key = None
         self.busy = False
-        self.paused = False
         self.pending_unknown_order = None
         self.pending_unknown_order_queue = []
         self._unknown_monitor_thread = None
@@ -159,7 +158,7 @@ class DemoTrader:
         return False
 
     def _monitor_unknown_order(self):
-        """Reconcilia a resposta tardia; libera novas entradas após a expiração M1."""
+        """Reconcilia ordens pendentes em série, sem interromper o scanner."""
         while self.pending_unknown_order is not None or self.pending_unknown_order_queue:
             if self.pending_unknown_order is None and self.pending_unknown_order_queue:
                 with self._state_lock:
@@ -250,7 +249,7 @@ class DemoTrader:
                         except TimeoutError:
                             log.warning(
                                 "RESULTADO AINDA NÃO DISPONÍVEL | ID %s | nova consulta em 5 segundos; "
-                                "a entrada permanece bloqueada.", order_id
+                                "a pendência segue em segundo plano e o scanner continua.", order_id
                             )
                             if self.stop_check and self.stop_check():
                                 return
