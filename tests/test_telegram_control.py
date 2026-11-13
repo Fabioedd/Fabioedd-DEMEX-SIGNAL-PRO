@@ -105,7 +105,7 @@ class TelegramCommandTests(unittest.TestCase):
                 result = control.api_call("getMe", {"timeout": 10})
         self.assertEqual(result, {"id": 7})
         args, kwargs = run.call_args
-        self.assertEqual(args[0], ["curl", "--config", "-"])
+        self.assertEqual(args[0], ["curl", "-4", "--http1.1", "--config", "-"])
         self.assertNotIn("secret-token", " ".join(args[0]))
         self.assertIn("secret-token", kwargs["input"])
         self.assertIn('data = "{\\\"timeout\\\": 10}"', kwargs["input"])
