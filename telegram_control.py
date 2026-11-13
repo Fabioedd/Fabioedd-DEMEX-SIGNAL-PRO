@@ -145,7 +145,13 @@ class TelegramControl:
             # Never log curl stderr or its config: they may contain the bot token.
             raise RuntimeError("Falha de comunicação com o Telegram.") from None
         if not result.get("ok"):
-            raise RuntimeError("Telegram retornou uma resposta inválida.")
+            # A descrição da API não contém o token e ajuda a distinguir
+            # conflito de polling, credenciais inválidas e falhas temporárias.
+            code = result.get("error_code")
+            description = str(result.get("description") or "resposta inválida")
+            raise RuntimeError(
+                "Telegram API {}: {}".format(code or "erro", description[:240])
+            )
         return result.get("result")
 
     def reply(self, chat_id, text):
@@ -276,6 +282,15 @@ class TelegramControl:
         if updates:
             self.offset = int(updates[-1]["update_id"]) + 1
 
+    def initialize_connection(self):
+        """Validate the bot and prepare long polling before consuming commands."""
+        self.api_call("getMe")
+        # Long polling and a configured webhook cannot be used simultaneously.
+        # Keep pending updates; discard_old_updates applies the existing safe
+        # startup policy after webhook mode has been disabled.
+        self.api_call("deleteWebhook", {"drop_pending_updates": False})
+        self.discard_old_updates()
+
     def run(self):
         lock_handle = LOCK_FILE.open("w", encoding="utf-8")
         try:
@@ -284,10 +299,16 @@ class TelegramControl:
             lock_handle.close()
             raise RuntimeError("O serviço de controle do Telegram já está ativo.")
         log.info("Serviço de controle do Telegram iniciado.")
-        self.discard_old_updates()
+        initialized = False
         while True:
             self.check_stopped_process()
             try:
+                # A inicialização também fica dentro do ciclo de reconexão.
+                # Uma falha de rede no primeiro contato não mata o listener.
+                if not initialized:
+                    self.initialize_connection()
+                    initialized = True
+                    log.info("Conexão com o bot Telegram validada; aguardando comandos.")
                 payload = {"timeout": POLL_TIMEOUT, "allowed_updates": ["message"]}
                 if self.offset is not None:
                     payload["offset"] = self.offset
