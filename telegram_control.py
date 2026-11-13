@@ -131,7 +131,7 @@ class TelegramControl:
         ))
         try:
             response = subprocess.run(
-                ["curl", "--config", "-"],
+                ["curl", "-4", "--http1.1", "--config", "-"],
                 input=config,
                 capture_output=True,
                 text=True,
