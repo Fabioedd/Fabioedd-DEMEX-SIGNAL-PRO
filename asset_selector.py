@@ -153,7 +153,7 @@ def select_qualified_assets(connector, available_assets, settings, stop_check=No
 
     logger.info(
         "BACKTEST OTC INICIADO | %d ativos disponíveis | 100 candles M1 fechados por ativo | "
-        "aprovação a partir de %.1f%%.",
+        "aprovação estritamente acima de %.1f%%.",
         total, float(settings.get("minimum_backtest_accuracy", 70.0))
     )
 
