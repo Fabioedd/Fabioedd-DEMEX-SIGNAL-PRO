@@ -420,9 +420,16 @@ def main():
             raise PermissionError("Conta ativa não é PRACTICE. Nenhuma ordem será enviada.")
 
         available_assets = get_market_assets(connector, settings, stop_check=STOP_FILE.exists)
-        assets, backtest_report = select_qualified_assets(
-            connector, available_assets, settings, stop_check=STOP_FILE.exists
-        )
+        if settings.get("backtest_enabled", True):
+            assets, backtest_report = select_qualified_assets(
+                connector, available_assets, settings, stop_check=STOP_FILE.exists
+            )
+        else:
+            assets, backtest_report = available_assets, []
+            logging.info(
+                "BACKTEST DESATIVADO | %d ativos OTC disponíveis liberados diretamente para a varredura de sinais.",
+                len(assets)
+            )
         refresh_interval = asset_refresh_interval(settings)
         next_asset_refresh = time.monotonic() + refresh_interval
         trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
@@ -433,12 +440,16 @@ def main():
             "INDICADOR HARAMI + ENGOLFO | padrões originais + filtros EMA 21/45 | sem cruzamento SMA/WMA adicional | confirmação no fechamento e entrada na próxima M1 (até 5s)."
             
         )
+        selection_label = (
+            "Backtest desativado; todos os disponíveis liberados"
+            if not settings.get("backtest_enabled", True)
+            else "Aprovados no backtest: {}".format(len(assets))
+        )
         print(
-            "Ativos OTC disponíveis: {} | Aprovados no backtest: {} | "
-            "Backtest: 100 candles M1 | mínimo acima de 70% | nova seleção a cada {} minutos | "
+            "Ativos OTC disponíveis: {} | {} | atualização da lista a cada {} minutos | "
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
             .format(
-                len(available_assets), len(assets), refresh_interval // 60,
+                len(available_assets), selection_label, refresh_interval // 60,
                 trader.base, trader.stop, trader.take
             )
         )
@@ -463,14 +474,22 @@ def main():
                     available_assets = get_market_assets(
                         connector, settings, stop_check=STOP_FILE.exists
                     )
-                    assets, backtest_report = select_qualified_assets(
-                        connector, available_assets, settings, stop_check=STOP_FILE.exists
-                    )
-                    logging.info(
-                        "LISTA OTC SUBSTITUÍDA APÓS NOVO BACKTEST: %d disponíveis; "
-                        "%d aprovados para sinais e entradas.",
-                        len(available_assets), len(assets)
-                    )
+                    if settings.get("backtest_enabled", True):
+                        assets, backtest_report = select_qualified_assets(
+                            connector, available_assets, settings, stop_check=STOP_FILE.exists
+                        )
+                        logging.info(
+                            "LISTA OTC SUBSTITUÍDA APÓS NOVO BACKTEST: %d disponíveis; "
+                            "%d aprovados para sinais e entradas.",
+                            len(available_assets), len(assets)
+                        )
+                    else:
+                        assets = available_assets
+                        backtest_report = []
+                        logging.info(
+                            "LISTA OTC ATUALIZADA SEM BACKTEST: %d ativos disponíveis liberados para sinais.",
+                            len(assets)
+                        )
                     next_asset_refresh = time.monotonic() + refresh_interval
                 except ConnectionError as exc:
                     logging.warning("Conexão perdida ao atualizar ativos OTC: %s", exc)
