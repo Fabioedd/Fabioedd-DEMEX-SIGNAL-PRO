@@ -184,7 +184,7 @@ import subprocess
 
 tracked = subprocess.check_output(
     ["git", "ls-files", "-z", "--", "*.py"]
-).decode("utf-8").split("\\0")
+).decode("utf-8").split(chr(0))
 
 for path in filter(None, tracked):
     py_compile.compile(path, doraise=True)
