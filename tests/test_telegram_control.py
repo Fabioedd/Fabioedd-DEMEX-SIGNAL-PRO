@@ -110,6 +110,34 @@ class TelegramCommandTests(unittest.TestCase):
         self.assertIn("secret-token", kwargs["input"])
         self.assertIn('data = "{\\\"timeout\\\": 10}"', kwargs["input"])
 
+    def test_initialize_connection_validates_bot_disables_webhook_and_syncs_updates(self):
+        control = TelegramControl("token", "9246590305")
+        with patch.object(control, "api_call") as api_call, \
+             patch.object(control, "discard_old_updates") as discard:
+            control.initialize_connection()
+        self.assertEqual(
+            api_call.call_args_list,
+            [
+                unittest.mock.call("getMe"),
+                unittest.mock.call("deleteWebhook", {"drop_pending_updates": False}),
+            ],
+        )
+        discard.assert_called_once_with()
+
+    def test_run_retries_initial_connection_failure_without_exiting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            control = TelegramControl("token", "9246590305")
+            with patch("telegram_control.LOCK_FILE", Path(directory) / "listener.lock"), \
+                 patch("telegram_control.fcntl.flock"), \
+                 patch.object(control, "check_stopped_process"), \
+                 patch.object(control, "initialize_connection",
+                              side_effect=[RuntimeError("network unavailable"), None]) as initialize, \
+                 patch.object(control, "api_call", side_effect=KeyboardInterrupt), \
+                 patch("telegram_control.time.sleep"):
+                with self.assertRaises(KeyboardInterrupt):
+                    control.run()
+            self.assertEqual(initialize.call_count, 2)
+
     def test_api_call_hides_transport_errors(self):
         control = TelegramControl("secret-token", "9246590305")
         with patch("telegram_control.shutil.which", return_value="/usr/bin/curl"):
