@@ -46,7 +46,7 @@ Inicie com `python main.py`. A execução automática está habilitada em `setti
 
 O Telegram é usado apenas para notificações de início de sessão, resultado de cada operação e relatório final. Configure `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env`; nunca publique o token. O Telegram não envia comandos para abrir ou repetir operações.
 
-Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identificador da solicitação original, não reenvia a ordem e bloqueia novas entradas até identificar se a corretora aceitou ou recusou aquela mesma solicitação. Se a resposta chegar depois, consulta o resultado pelo histórico da corretora, atualiza o placar e tenta enviar a notificação tardia.
+Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identificador da solicitação original, não reenvia a ordem e bloqueia novas entradas até identificar se a corretora aceitou ou recusou aquela mesma solicitação. Se a resposta chegar depois, consulta o resultado pelo histórico da corretora, atualiza o placar e tenta enviar a notificação tardia. Se a BullX não fornecer confirmação e o histórico não permitir identificar a operação com segurança, o DEMEX permanece pausado para novas entradas; nesse caso é necessário conferir o histórico da corretora antes de liberar a sessão.
 
 ## Testes e limitações
 
