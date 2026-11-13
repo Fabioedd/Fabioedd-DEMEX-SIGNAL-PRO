@@ -22,6 +22,8 @@ SIGNAL_PERIOD = 5
 EMA_FILTER_PERIOD = 21
 EMA_TREND_PERIOD = 45
 SOURCE_SELECTION = 5
+ADX_PERIOD = 14
+ADX_MINIMUM = 32.0
 
 
 def _number(candle, key):
@@ -85,6 +87,66 @@ def _wma_series(values, period):
     return result
 
 
+def _adx_series(candles, period=ADX_PERIOD):
+    """ADX de Wilder; retorna None até completar o aquecimento de 2*period."""
+    result = [None] * len(candles)
+    if period < 2 or len(candles) < 2 * period:
+        return result
+
+    highs, lows, closes = [], [], []
+    for candle in candles:
+        high = _number(candle, "high")
+        low = _number(candle, "low")
+        close = _number(candle, "close")
+        if high is None or low is None or close is None or high < low:
+            return result
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+
+    true_ranges, plus_moves, minus_moves = [0.0], [0.0], [0.0]
+    for index in range(1, len(candles)):
+        up_move = highs[index] - highs[index - 1]
+        down_move = lows[index - 1] - lows[index]
+        plus_moves.append(up_move if up_move > down_move and up_move > 0 else 0.0)
+        minus_moves.append(down_move if down_move > up_move and down_move > 0 else 0.0)
+        true_ranges.append(max(
+            highs[index] - lows[index],
+            abs(highs[index] - closes[index - 1]),
+            abs(lows[index] - closes[index - 1]),
+        ))
+
+    smooth_tr = sum(true_ranges[1:period + 1])
+    smooth_plus = sum(plus_moves[1:period + 1])
+    smooth_minus = sum(minus_moves[1:period + 1])
+    dx_values = []
+    previous_adx = None
+
+    for index in range(period, len(candles)):
+        if index > period:
+            smooth_tr += true_ranges[index] - smooth_tr / period
+            smooth_plus += plus_moves[index] - smooth_plus / period
+            smooth_minus += minus_moves[index] - smooth_minus / period
+
+        if smooth_tr <= 0:
+            dx = 0.0
+        else:
+            plus_di = 100.0 * smooth_plus / smooth_tr
+            minus_di = 100.0 * smooth_minus / smooth_tr
+            di_sum = plus_di + minus_di
+            dx = 0.0 if di_sum <= 0 else 100.0 * abs(plus_di - minus_di) / di_sum
+
+        dx_values.append(dx)
+        if len(dx_values) == period:
+            previous_adx = sum(dx_values) / period
+            result[index] = previous_adx
+        elif previous_adx is not None:
+            previous_adx = ((previous_adx * (period - 1)) + dx) / period
+            result[index] = previous_adx
+
+    return result
+
+
 def _calculate(candles):
     if len(candles) < EMA_TREND_PERIOD:
         return None
@@ -101,7 +163,8 @@ def _calculate(candles):
     buffer2 = _wma_series(buffer1, SIGNAL_PERIOD)
     ema_filter = _ema_series(closes, EMA_FILTER_PERIOD)
     ema_trend = _ema_series(closes, EMA_TREND_PERIOD)
-    return buffer1, buffer2, ema_filter, ema_trend, closes
+    adx = _adx_series(candles, ADX_PERIOD)
+    return buffer1, buffer2, ema_filter, ema_trend, closes, adx
 
 
 def _signal_at(candles, index, stage):
@@ -109,10 +172,12 @@ def _signal_at(candles, index, stage):
     if calculated is None or index < 1 or index >= len(candles):
         return None
 
-    buffer1, buffer2, ema_filter, ema_trend, closes = calculated
-    current = (buffer1[index], buffer2[index], ema_filter[index], ema_trend[index])
+    buffer1, buffer2, ema_filter, ema_trend, closes, adx = calculated
+    current = (buffer1[index], buffer2[index], ema_filter[index], ema_trend[index], adx[index])
     previous = (buffer1[index - 1], buffer2[index - 1])
     if any(value is None for value in current + previous):
+        return None
+    if adx[index] < ADX_MINIMUM:
         return None
 
     cross_up = buffer1[index] > buffer2[index] and buffer1[index - 1] < buffer2[index - 1]
@@ -127,6 +192,7 @@ def _signal_at(candles, index, stage):
                 "GO 2024: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
                 "Preço acima da EMA(21)",
                 "EMA(21) acima da EMA(45)",
+                "Filtro ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
             ],
         }
 
@@ -139,6 +205,7 @@ def _signal_at(candles, index, stage):
                 "GO 2024: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
                 "Preço abaixo da EMA(21)",
                 "EMA(21) abaixo da EMA(45)",
+                "Filtro ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
             ],
         }
 
