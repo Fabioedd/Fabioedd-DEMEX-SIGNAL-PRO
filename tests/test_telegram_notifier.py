@@ -119,11 +119,26 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertIn("secret-token", kwargs["input"])
         self.assertIn("Content-Type: application/json", kwargs["input"])
 
+    def test_send_retries_transient_transport_failure(self):
+        notifier = TelegramNotifier("secret-token", "9246590305")
+        response = type("Response", (), {
+            "returncode": 0,
+            "stdout": '{"ok": true, "result": {"message_id": 1}}',
+        })()
+        with patch("telegram_notifier.shutil.which", return_value="/usr/bin/curl"):
+            with patch("telegram_notifier.subprocess.run",
+                       side_effect=[OSError("temporary network error"), response]) as run:
+                with patch("telegram_notifier.time.sleep"):
+                    self.assertTrue(notifier.send("teste"))
+        self.assertEqual(run.call_count, 2)
+
     def test_send_returns_false_on_transport_failure_without_leaking_error(self):
         notifier = TelegramNotifier("secret-token", "9246590305")
         with patch("telegram_notifier.shutil.which", return_value="/usr/bin/curl"):
-            with patch("telegram_notifier.subprocess.run", side_effect=OSError("network error")):
-                self.assertFalse(notifier.send("teste"))
+            with patch("telegram_notifier.subprocess.run", side_effect=OSError("network error")) as run:
+                with patch("telegram_notifier.time.sleep"):
+                    self.assertFalse(notifier.send("teste"))
+        self.assertEqual(run.call_count, 3)
 
 if __name__ == "__main__":
     unittest.main()
