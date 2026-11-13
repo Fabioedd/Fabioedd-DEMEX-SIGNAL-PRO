@@ -682,9 +682,13 @@ def main():
                     if summary:
                         print(
                             "PLACAR | Entradas {} | WIN {} | LOSS {} | TIE {} | "
-                            "Aproveitamento {:.2f}% | P&L R$ {:+.2f}".format(
+                            "Aproveitamento {:.2f}% | Seq. WIN {} | Seq. LOSS {} | "
+                            "Recorde WIN {} | Recorde LOSS {} | P&L R$ {:+.2f}".format(
                                 summary["total_entries"], summary["wins"], summary["losses"],
-                                summary["ties"], summary["win_rate"], summary["session_net"]
+                                summary["ties"], summary["win_rate"],
+                                summary["current_win_streak"], summary["current_loss_streak"],
+                                summary["max_win_streak"], summary["max_loss_streak"],
+                                summary["session_net"]
                             )
                         )
                         print(
