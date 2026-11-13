@@ -174,8 +174,23 @@ update_once() {
         fi
     fi
 
-    if ! (cd "$REPO_DIR" && "$VENV_PYTHON" -m py_compile main.py bullex_connector.py strategies/my_strategy.py strategies/sniper_confluence.py strategies/harami_engolfo_tendencia.py) >> "$LOG_FILE" 2>&1; then
-        log "FALHA na verificação de sintaxe com .venv; revertendo atualização."
+    # Compila somente os módulos Python realmente rastreados pelo Git.
+    # Não fixa nomes de estratégias removidas ou substituídas.
+    if ! (
+        cd "$REPO_DIR" &&
+        "$VENV_PYTHON" -c '
+import py_compile
+import subprocess
+
+tracked = subprocess.check_output(
+    ["git", "ls-files", "-z", "--", "*.py"]
+).decode("utf-8").split("\\0")
+
+for path in filter(None, tracked):
+    py_compile.compile(path, doraise=True)
+'
+    ) >> "$LOG_FILE" 2>&1; then
+        log "FALHA na verificação de sintaxe dos módulos Python rastreados pelo Git; revertendo atualização."
         rollback_update "$old_sha"
         return 1
     fi
