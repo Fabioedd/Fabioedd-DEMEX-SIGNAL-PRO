@@ -281,17 +281,29 @@ class DemoTrader:
                 )
                 time.sleep(5)
 
+        # Fecha a janela de corrida entre a última verificação da fila e a
+        # saída da thread: uma nova ordem pode ter sido enfileirada nesse instante.
+        with self._state_lock:
+            if self._unknown_monitor_thread is threading.current_thread():
+                self._unknown_monitor_thread = None
+            restart_monitor = (
+                self.pending_unknown_order is not None or bool(self.pending_unknown_order_queue)
+            )
+        if restart_monitor:
+            self._start_unknown_order_monitor()
+
     def _start_unknown_order_monitor(self):
-        thread = self._unknown_monitor_thread
-        if thread is not None and thread.is_alive():
-            return
-        thread = threading.Thread(
-            target=self._monitor_unknown_order,
-            name="demex-unknown-order-monitor",
-            daemon=True,
-        )
-        self._unknown_monitor_thread = thread
-        thread.start()
+        with self._state_lock:
+            thread = self._unknown_monitor_thread
+            if thread is not None and thread.is_alive():
+                return
+            thread = threading.Thread(
+                target=self._monitor_unknown_order,
+                name="demex-unknown-order-monitor",
+                daemon=True,
+            )
+            self._unknown_monitor_thread = thread
+            thread.start()
 
     def execute_and_settle(self, signal, pre_order_check=None):
         with self._state_lock:
