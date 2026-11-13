@@ -25,7 +25,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 STOP_FILE = Path(".demex_stop")
 ASSET_REFRESH_INTERVAL_SECONDS = 900
-ENTRY_CONFIRMATION_TOLERANCE_SECONDS = 5.0
 
 
 def asset_refresh_interval(settings):
@@ -174,10 +173,9 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                 continue
             candidates.append(candidate)
             logging.info(
-                "SINAL INTRABAR DETECTADO | %s %s | entrada na MESMA M1 | "
-                "vela fecha em %.0f | tolerância de reconhecimento %.1fs",
-                candidate["symbol"], candidate["direction"], close_ts,
-                ENTRY_CONFIRMATION_TOLERANCE_SECONDS
+                "SINAL INTRABAR DETECTADO | %s %s | entrada imediata na MESMA M1 | "
+                "vela fecha em %.0f",
+                candidate["symbol"], candidate["direction"], close_ts
             )
             logging.info("VARREDURA %d | %d ativos examinados até o primeiro sinal; %d sinal encontrado.",
                          _scan_pass_number, analyzed_count, len(candidates))
@@ -216,8 +214,7 @@ def verify_intrabar_signal(connector, settings, candidate):
     server_now = normalize_timestamp(connector.get_server_timestamp())
     if None in (target_ts, close_ts, detected_at, server_now):
         return None
-    elapsed = server_now - detected_at
-    if elapsed < 0 or elapsed > ENTRY_CONFIRMATION_TOLERANCE_SECONDS or server_now >= close_ts:
+    if server_now >= close_ts:
         return False
     if target_ts != int(server_now // 60) * 60:
         return False
@@ -244,7 +241,7 @@ def validate_intrabar_signal_immediately_before_order(connector, settings, candi
     if verified is None:
         return False, "não foi possível confirmar a vela atual e o relógio da corretora"
     if verified is False:
-        return False, "sinal mudou, vela fechou ou tolerância de reconhecimento de 5 segundos expirou"
+        return False, "sinal mudou ou a vela original fechou"
     return True, "sinal confirmado e ordem autorizada na MESMA vela M1"
 
 
@@ -322,7 +319,7 @@ def main():
         trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | intervalo global de 60s entre entradas | sinal intrabar e entrada na MESMA M1 (tolerância de reconhecimento: 5s)."
+            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | intervalo global de 60s entre entradas | sinal intrabar e entrada imediata na MESMA M1."
             
         )
         selection_label = (
@@ -508,21 +505,8 @@ def main():
                     processed.add(key)
                     continue
 
-                elapsed = server_now - detected_at
-                if elapsed < 0:
-                    continue
-                if elapsed > ENTRY_CONFIRMATION_TOLERANCE_SECONDS:
-                    logging.info(
-                        "SINAL CANCELADO: %s %s | %.2fs desde a detecção; "
-                        "tolerância de reconhecimento de 5 segundos excedida na mesma M1.",
-                        candidate["symbol"], candidate["direction"], elapsed
-                    )
-                    pending.pop(key, None)
-                    processed.add(key)
-                    continue
-
-                # Revalida o padrão enquanto a vela original ainda está em formação.
-                # Os 5s são tolerância de reconhecimento, não espera pela próxima vela.
+                # Revalida imediatamente o padrão enquanto a vela original
+                # continua aberta; não existe janela artificial de tolerância.
                 try:
                     confirmed = verify_intrabar_signal(connector, settings, candidate)
                 except ConnectionError as exc:
@@ -569,8 +553,8 @@ def main():
             if ready:
                 detected_at, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL INTRABAR CONFIRMADO | %s %s | %.2fs desde a detecção; entrada na mesma vela M1.",
-                    candidate["symbol"], candidate["direction"], server_now - detected_at
+                    "SINAL INTRABAR CONFIRMADO | %s %s | entrada imediata na mesma vela M1.",
+                    candidate["symbol"], candidate["direction"]
                 )
                 pending.pop(selected_key, None)
                 processed.add(selected_key)
@@ -611,7 +595,7 @@ def main():
                             candidate["symbol"], candidate["direction"], validation_reason
                         )
                         message = (
-                            "SINAL {} | {} | M1 | entrada na MESMA vela do sinal | tolerância de reconhecimento: até 5 segundos | expiração 1 minuto"
+                            "SINAL {} | {} | M1 | entrada imediata na MESMA vela do sinal | expiração 1 minuto"
                             .format(candidate["symbol"], candidate["direction"])
                         )
                         alert(message, bool(settings.get("sound_alert", True)))

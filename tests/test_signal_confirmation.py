@@ -74,7 +74,7 @@ class IntrabarEntryTests(unittest.TestCase):
         self.assertEqual(result["signal_timestamp"], self.SIGNAL_TIMESTAMP)
         self.assertEqual(result["stage"], "INTRABAR_SAME_CANDLE")
 
-    def test_five_seconds_are_recognition_tolerance_from_detection(self):
+    def test_signal_remains_valid_after_five_seconds_while_same_candle_is_open(self):
         candidate = self.candidate()
         connector = self.connector(self.candles(), 3545.51)
         with patch.object(
@@ -82,7 +82,11 @@ class IntrabarEntryTests(unittest.TestCase):
         ):
             result = main.verify_intrabar_signal(connector, {}, candidate)
 
-        self.assertFalse(result)
+        # Não existe mais tolerância artificial de 5 segundos:
+        # o sinal segue válido enquanto a mesma vela M1 estiver aberta.
+        self.assertIsNotNone(result)
+        self.assertTrue(result["intrabar_signal_verified"])
+        self.assertEqual(result["direction"], "CALL")
 
     def test_rejects_signal_after_original_candle_closes(self):
         candidate = self.candidate()

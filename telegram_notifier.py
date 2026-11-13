@@ -95,12 +95,36 @@ class TelegramNotifier:
         order_id = html.escape(str(entry.get("order_id", "—")))
         amount = float(entry.get("entry", 0))
         cooldown = int(entry.get("cooldown_seconds", 60))
+        def local_time(value):
+            try:
+                return datetime.fromtimestamp(float(value)).astimezone().strftime("%H:%M:%S")
+            except (TypeError, ValueError, OSError, OverflowError):
+                return "—"
+
+        confluences = "SMA 1/34 + WMA 5 | EMA 21/45 | ADX 14"
+        confidence = entry.get("confidence")
+        confidence_line = (
+            "Confiança do sinal: <b>{:.0f}%</b>\n".format(float(confidence))
+            if isinstance(confidence, (int, float)) else ""
+        )
+        signal_time = local_time(entry.get("signal_timestamp"))
+        entry_time = local_time(entry.get("entry_timestamp"))
         return self.send(
-            "🚀 <b>ENTRADA CONFIRMADA PELA CORRETORA</b>\n"
-            "Ativo: <b>{}</b> | Direção: <b>{}</b>\n"
-            "Valor: <b>R$ {:.2f}</b> | Ordem: <b>{}</b>\n"
-            "🔒 Próxima entrada liberada em: <b>{} segundos (1 minuto)</b>."
-            .format(symbol, direction, amount, order_id, cooldown)
+            "🎯 <b>DEMEX SIGNAL PRO</b>\n"
+            "🟢 <b>SINAL CONFIRMADO</b>\n"
+            "Ativo: <b>{}</b>\nDireção: <b>{}</b>\n"
+            "Indicador: <b>GO 2024 FILTRADO</b>\n"
+            "Confluências: <b>{}</b>\n"
+            "{}"
+            "⏱️ <b>HORÁRIOS</b>\n"
+            "Horário do sinal: <b>{}</b>\n"
+            "Horário da entrada: <b>{}</b>\n\n"
+            "💰 <b>INFORMAÇÕES DA OPERAÇÃO</b>\n"
+            "Valor da entrada: <b>R$ {:.2f}</b>\n"
+            "Conta: <b>PRACTICE/DEMO</b>\nOrdem: <b>{}</b>\n"
+            "Próxima entrada liberada em: <b>{} segundos</b>."
+            .format(symbol, direction, confluences, confidence_line,
+                    signal_time, entry_time, amount, order_id, cooldown)
         )
 
     def send_trade_result(self, summary):
