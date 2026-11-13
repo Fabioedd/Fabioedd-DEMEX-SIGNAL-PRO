@@ -270,15 +270,29 @@ class DemoTrader:
                 return None
             self.last_signal_key = key
             self.busy = True
-        try:
-            practice_confirmed = (
-                self.connector.config.account_type == "PRACTICE"
-                and self.connector.client.get_balance_mode() == "PRACTICE"
-            )
-        except Exception:
-            with self._state_lock:
-                self.busy = False
-            raise
+        while True:
+            try:
+                practice_confirmed = (
+                    self.connector.config.account_type == "PRACTICE"
+                    and self.connector.client.get_balance_mode() == "PRACTICE"
+                )
+                break
+            except PermissionError:
+                with self._state_lock:
+                    self.busy = False
+                raise
+            except Exception as exc:
+                self.connector.connected = False
+                log.warning(
+                    "Resposta inesperada ao confirmar a conta PRACTICE (%s). "
+                    "DEMEX vai reconectar e repetir a verificação, sem enviar ordem.",
+                    exc
+                )
+                try:
+                    self.connector.reconnect_forever(stop_check=self.stop_check)
+                except Exception:
+                    log.exception("Falha na reconexão durante a confirmação da conta; nova tentativa.")
+                    time.sleep(5)
         if not practice_confirmed:
             with self._state_lock:
                 self.busy = False
@@ -328,16 +342,26 @@ class DemoTrader:
                 try:
                     result, pnl_raw = self.connector.wait_practice_result(order_id)
                     break
+                except PermissionError:
+                    # Uma mudança/recusa do modo de conta é uma trava de segurança,
+                    # não uma falha transitória que possa ser ignorada.
+                    raise
                 except Exception as exc:
-                    if not is_transport_error(exc):
-                        raise
+                    # O ID já foi confirmado: qualquer resposta inesperada deve
+                    # levar à reconexão e à consulta da MESMA ordem. Nunca reenviar.
                     self.connector.connected = False
                     log.warning(
-                        "Conexão caiu aguardando resultado da ordem %s (%s); "
-                        "reconectando para consultar a mesma ordem, sem duplicá-la.",
+                        "Falha/ resposta inesperada ao consultar resultado da ordem %s (%s). "
+                        "Reconectando para consultar a mesma ordem, sem duplicá-la.",
                         order_id, exc
                     )
-                    self.connector.reconnect_forever(stop_check=self.stop_check)
+                    try:
+                        self.connector.reconnect_forever(stop_check=self.stop_check)
+                    except InterruptedError:
+                        raise
+                    except Exception:
+                        log.exception("Reconexão falhou durante a consulta da ordem; nova tentativa.")
+                        time.sleep(5)
 
             return self._apply_settlement(signal, amount, order_id, result, pnl_raw)
         finally:
