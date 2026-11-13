@@ -21,6 +21,7 @@ def make_release_archive():
         "demex/settings.json": b'{"scan_interval_seconds": 2, "entry_cooldown_seconds": 60}\n',
         "demex/requirements.txt": b"\n",
         "demex/demex.sh": b"#!/bin/bash\n",
+        "demex/telegram_control.py": b"print('Telegram control')\n",
         "demex/strategies/my_strategy.py": b"def get_intrabar_signal(*args): return None\n",
     }
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
