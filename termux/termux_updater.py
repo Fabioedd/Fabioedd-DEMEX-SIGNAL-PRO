@@ -13,11 +13,12 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 REPOSITORY = "Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO"
-API_LATEST = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+LATEST_RELEASE_PAGE = f"https://github.com/{REPOSITORY}/releases/latest"
 HOME = Path.home()
 MANAGER = HOME / ".demex"
 VERSIONS = MANAGER / "versions"
@@ -51,16 +52,25 @@ def request_bytes(url: str, timeout: int = 30) -> bytes:
 
 
 def latest_release() -> tuple[str, dict[str, str]]:
-    payload = json.loads(request_bytes(API_LATEST).decode("utf-8"))
-    tag = str(payload.get("tag_name", "")).strip()
-    if not tag or payload.get("draft") or payload.get("prerelease"):
-        raise RuntimeError("O GitHub não retornou uma release estável válida.")
+    """Resolve a release estável pelo redirecionamento web, sem consumir a API REST."""
+    request = urllib.request.Request(
+        LATEST_RELEASE_PAGE,
+        headers={"User-Agent": "DEMEX-Termux-Updater", "Accept": "text/html"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        final_url = response.geturl()
+    parsed = urllib.parse.urlparse(final_url)
+    expected_prefix = f"/{REPOSITORY}/releases/tag/"
+    if parsed.netloc.lower() not in {"github.com", "www.github.com"} or not parsed.path.startswith(expected_prefix):
+        raise RuntimeError("O GitHub não redirecionou para uma release estável válida.")
+    tag = urllib.parse.unquote(parsed.path[len(expected_prefix):]).strip("/")
+    if not tag or "/" in tag or not tag.replace(".", "").replace("-", "").replace("_", "").isalnum():
+        raise RuntimeError("A tag da release contém caracteres não permitidos.")
+    base = f"https://github.com/{REPOSITORY}/releases/download/{urllib.parse.quote(tag, safe='')}"
     assets = {
-        str(item.get("name")): str(item.get("browser_download_url"))
-        for item in payload.get("assets", []) if item.get("name") and item.get("browser_download_url")
+        "demex-source.tar.gz": f"{base}/demex-source.tar.gz",
+        "SHA256SUMS": f"{base}/SHA256SUMS",
     }
-    if "demex-source.tar.gz" not in assets or "SHA256SUMS" not in assets:
-        raise RuntimeError("A release não contém o pacote e o arquivo SHA256 obrigatórios.")
     return tag, assets
 
 
