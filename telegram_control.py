@@ -119,7 +119,7 @@ class TelegramControl:
         url = "{}/bot{}/{}".format(API_BASE, self.token, method)
         body = json.dumps(payload or {}, ensure_ascii=False)
         # Send credentials and URL through curl's stdin config, not process arguments.
-        config = "\\n".join((
+        config = "\n".join((
             "url = {}".format(json.dumps(url)),
             'request = "POST"',
             'header = "Content-Type: application/json"',
