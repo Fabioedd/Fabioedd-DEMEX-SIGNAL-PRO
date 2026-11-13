@@ -126,7 +126,7 @@ class DemoTrader:
                 "session_net": float(self.net),
                 "next_entry": float(self.next_entry),
                 "stopped": self.stopped,
-                "stop_reason": reason,
+                "stop_reason": self.stop_reason if self.stopped else reason,
                 "total_entries": self.total_entries,
                 "wins": self.wins,
                 "losses": self.losses,
@@ -143,7 +143,7 @@ class DemoTrader:
             result, pnl, self.net, self.next_entry
         )
         if self.stopped:
-            log.warning("ROBÔ PARADO: %s", reason)
+            log.warning("ROBÔ PARADO: %s", self.stop_reason or reason)
         return summary
 
     def _release_unknown_order_if_expired(self):
@@ -187,9 +187,8 @@ class DemoTrader:
 
                 if state == "accepted":
                     order_id = value
-                    log.warning(
-                        "ORDEM RECONCILIADA: a BullX devolveu tardiamente o ID %s. "
-                        "O DEMEX consultará o resultado desta mesma ordem, sem reenviar.",
+                    log.info(
+                        "PENDÊNCIA IDENTIFICADA | ID %s | consultando o resultado da mesma ordem, sem reenviar.",
                         order_id
                     )
                     while self.pending_unknown_order is not None:
