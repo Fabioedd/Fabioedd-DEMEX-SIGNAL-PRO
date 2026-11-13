@@ -31,23 +31,23 @@ def make_candles(count=261):
 
 
 class AssetSelectorTests(unittest.TestCase):
-    def test_backtest_uses_200_closed_candles_and_next_candle_result(self):
+    def test_backtest_uses_100_closed_candles_and_next_candle_result(self):
         candles = make_candles()
         connector = FakeConnector(candles)
         asset = {"symbol": "EURUSD-OTC", "active_id": 76}
-        settings = {"backtest_candles_count": 200, "backtest_warmup_candles": 60}
+        settings = {"backtest_candles_count": 100, "backtest_warmup_candles": 60}
 
         with patch("asset_selector.get_signal_at_index") as signal:
             signal.side_effect = [
                 {"direction": "CALL"},
                 {"direction": "PUT"},
                 None,
-            ] + [None] * 197
+            ] + [None] * 97
             result = backtest_asset(connector, asset, settings)
 
-        self.assertEqual(connector.requested_count, 265)
-        self.assertEqual(signal.call_count, 200)
-        self.assertEqual(result["candles_used"], 200)
+        self.assertEqual(connector.requested_count, 165)
+        self.assertEqual(signal.call_count, 100)
+        self.assertEqual(result["candles_used"], 100)
         self.assertEqual(result["wins"], 1)
         self.assertEqual(result["losses"], 1)
         self.assertEqual(result["operations"], 2)
@@ -61,10 +61,10 @@ class AssetSelectorTests(unittest.TestCase):
         settings = {"minimum_backtest_accuracy": 70}
 
         with patch("asset_selector.get_signal_at_index") as signal:
-            signal.side_effect = [{"direction": "CALL"}] * 10 + [None] * 190
+            signal.side_effect = [{"direction": "CALL"}] * 10 + [None] * 90
             # Use a controlled next-candle path: 7 wins and 3 losses.
             for index in range(10):
-                candle_index = 60 + index
+                candle_index = 160 + index
                 candles[candle_index + 1]["close"] = candles[candle_index + 1]["open"] + (
                     1 if index < 7 else -1
                 )
@@ -82,7 +82,7 @@ class AssetSelectorTests(unittest.TestCase):
         asset = {"symbol": "AUDUSD-OTC", "active_id": 79}
 
         with patch("asset_selector.get_signal_at_index") as signal:
-            signal.side_effect = [{"direction": "CALL"}] + [None] * 199
+            signal.side_effect = [{"direction": "CALL"}] + [None] * 99
             result = backtest_asset(connector, asset, {})
 
         self.assertEqual(result["operations"], 1)
@@ -91,7 +91,7 @@ class AssetSelectorTests(unittest.TestCase):
         self.assertTrue(result["approved"])
 
     def test_insufficient_history_is_not_approved(self):
-        connector = FakeConnector(make_candles(240))
+        connector = FakeConnector(make_candles(160))
         result = backtest_asset(
             connector, {"symbol": "USDJPY-OTC", "active_id": 78}, {}
         )
