@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Atualizador transacional do DEMEX para Android/Termux.
-
-Instala somente assets de GitHub Releases cujo SHA256 confere.
-Nunca inicia, para ou reinicia o robô.
-"""
+"""Atualizador transacional do DEMEX para Android/Termux; nunca inicia o robô."""
 from __future__ import annotations
 
 import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -45,8 +42,7 @@ def log(message: str) -> None:
 
 def request_bytes(url: str, timeout: int = 30) -> bytes:
     request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "DEMEX-Termux-Updater", "Accept": "application/vnd.github+json"},
+        url, headers={"User-Agent": "DEMEX-Termux-Updater", "Accept": "application/vnd.github+json"}
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
@@ -59,8 +55,7 @@ def latest_release() -> tuple[str, dict[str, str]]:
         raise RuntimeError("O GitHub não retornou uma release estável válida.")
     assets = {
         str(item.get("name")): str(item.get("browser_download_url"))
-        for item in payload.get("assets", [])
-        if item.get("name") and item.get("browser_download_url")
+        for item in payload.get("assets", []) if item.get("name") and item.get("browser_download_url")
     }
     if "demex-source.tar.gz" not in assets or "SHA256SUMS" not in assets:
         raise RuntimeError("A release não contém o pacote e o arquivo SHA256 obrigatórios.")
@@ -68,9 +63,7 @@ def latest_release() -> tuple[str, dict[str, str]]:
 
 
 def sha256(data: bytes) -> str:
-    digest = hashlib.sha256()
-    digest.update(data)
-    return digest.hexdigest()
+    return hashlib.sha256(data).hexdigest()
 
 
 def safe_extract(archive_path: Path, destination: Path) -> None:
@@ -96,23 +89,47 @@ def robot_is_running() -> bool:
             state = next((line.split()[1] for line in state_text.splitlines() if line.startswith("State:")), "")
             if state in {"Z", "X"}:
                 continue
-            if "main.py" in command and (cwd.startswith(managed_root) or cwd == str(PROJECT_LINK)):
+            if "main.py" in command and cwd.startswith(managed_root):
                 return True
         except (OSError, PermissionError, IndexError):
             continue
     return False
 
 
+def _pid_is_updater(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
+        return "termux_updater.py" in command
+    except (OSError, PermissionError):
+        return False
+
+
+def acquire_lock(lock: Path) -> None:
+    try:
+        lock.mkdir()
+    except FileExistsError:
+        owner = lock / "owner"
+        try:
+            pid = int(owner.read_text(encoding="ascii").strip())
+            stale = not _pid_is_updater(pid)
+        except (OSError, ValueError):
+            stale = time.time() - lock.stat().st_mtime > 120
+        if not stale:
+            raise RuntimeError("Outra atualização já está em andamento.")
+        shutil.rmtree(lock, ignore_errors=False)
+        lock.mkdir()
+    (lock / "owner").write_text(str(os.getpid()), encoding="ascii")
+
+
 def copy_shared_configuration(legacy: Path) -> None:
     SHARED.mkdir(parents=True, exist_ok=True)
     for name in (".env", "settings.json", "demex.log", "telegram-control.log"):
-        source = legacy / name
-        target = SHARED / name
-        if source.exists() and not target.exists():
-            if source.is_file():
-                shutil.copy2(source, target)
-                if name == ".env":
-                    target.chmod(0o600)
+        source, target = legacy / name, SHARED / name
+        if source.exists() and not target.exists() and source.is_file():
+            shutil.copy2(source, target)
+            if name == ".env":
+                target.chmod(0o600)
 
 
 def link_shared_files(version_dir: Path) -> None:
@@ -142,8 +159,7 @@ def validate_version(version_dir: Path, vpy: Path) -> None:
     for required in REQUIRED:
         if not (version_dir / required).is_file():
             raise RuntimeError(f"Arquivo essencial ausente no pacote: {required}")
-    python_files = sorted(version_dir.rglob("*.py"))
-    for source in python_files:
+    for source in sorted(version_dir.rglob("*.py")):
         if ".venv" in source.parts:
             continue
         subprocess.run([str(vpy), "-m", "py_compile", str(source)], check=True, cwd=version_dir)
@@ -158,18 +174,13 @@ def validate_version(version_dir: Path, vpy: Path) -> None:
 def atomic_current_switch(tag: str) -> str | None:
     previous = os.readlink(CURRENT) if CURRENT.is_symlink() else None
     temporary = MANAGER / "current.new"
-    try:
-        if temporary.is_symlink() or temporary.exists():
-            if temporary.is_dir() and not temporary.is_symlink():
-                shutil.rmtree(temporary)
-            else:
-                temporary.unlink()
-        temporary.symlink_to(Path("versions") / tag)
-        os.replace(temporary, CURRENT)
-    except Exception:
-        if temporary.is_symlink():
+    if temporary.is_symlink() or temporary.exists():
+        if temporary.is_dir() and not temporary.is_symlink():
+            shutil.rmtree(temporary)
+        else:
             temporary.unlink()
-        raise
+    temporary.symlink_to(Path("versions") / tag)
+    os.replace(temporary, CURRENT)
     return previous
 
 
@@ -194,23 +205,22 @@ def migrate_project_link() -> None:
     if not PROJECT_LINK.is_dir():
         raise RuntimeError(f"Caminho do projeto existe e não é diretório: {PROJECT_LINK}")
     copy_shared_configuration(PROJECT_LINK)
-    backup_root = MANAGER / "legacy"
-    backup_root.mkdir(parents=True, exist_ok=True)
-    backup = backup_root / f"checkout-{time.strftime('%Y%m%d-%H%M%S')}"
+    legacy_root = MANAGER / "legacy"
+    legacy_root.mkdir(parents=True, exist_ok=True)
+    backup = legacy_root / f"checkout-{time.strftime('%Y%m%d-%H%M%S')}"
     os.replace(PROJECT_LINK, backup)
     try:
         PROJECT_LINK.symlink_to(CURRENT)
     except Exception:
         os.replace(backup, PROJECT_LINK)
         raise
-    log(f"Projeto antigo preservado em {backup}; caminho original convertido em link para a versão ativa.")
+    log(f"Checkout anterior preservado em {backup}; caminho do projeto convertido em link simbólico.")
 
 
 def prune_versions(active_tag: str) -> None:
     candidates = sorted(
         (p for p in VERSIONS.iterdir() if p.is_dir() and not p.name.endswith(".staging")),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
+        key=lambda p: p.stat().st_mtime, reverse=True
     )
     retained = 0
     for path in candidates:
@@ -225,53 +235,53 @@ def update() -> int:
     VERSIONS.mkdir(parents=True, exist_ok=True)
     SHARED.mkdir(parents=True, exist_ok=True)
     if robot_is_running():
-        log("ATUALIZAÇÃO ADIADA: o DEMEX está em execução. Nenhum arquivo foi alterado.")
+        log("ATUALIZAÇÃO ADIADA: DEMEX está em execução. Nenhum arquivo foi alterado.")
         return 2
 
     lock = MANAGER / "update.lock"
     try:
-        lock.mkdir()
-    except FileExistsError:
-        log("Outra atualização já está em andamento. Esta execução foi bloqueada.")
+        acquire_lock(lock)
+    except (FileExistsError, RuntimeError, OSError) as exc:
+        log(f"ATUALIZAÇÃO BLOQUEADA: {exc}")
         return 2
 
     try:
         tag, assets = latest_release()
+        if not tag.replace(".", "").replace("-", "").replace("_", "").isalnum():
+            raise RuntimeError("A tag da release contém caracteres não permitidos.")
         final_dir = VERSIONS / tag
-        if CURRENT.is_symlink() and CURRENT.resolve() == final_dir.resolve() and final_dir.exists():
+        if CURRENT.is_symlink() and CURRENT.exists() and CURRENT.resolve() == final_dir.resolve():
             log(f"DEMEX já está atualizado na versão {tag}.")
             return 0
-        if final_dir.exists():
-            shutil.rmtree(final_dir)
-        archive_data = request_bytes(assets["demex-source.tar.gz"], timeout=120)
+
+        archive_data = request_bytes(assets["demex-source.tar.gz"], timeout=180)
         checksum_data = request_bytes(assets["SHA256SUMS"])
-        expected = None
-        for line in checksum_data.decode("utf-8").splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[-1].lstrip("*") == "demex-source.tar.gz":
-                expected = parts[0].lower()
-                break
+        expected = next((
+            line.split()[0].lower() for line in checksum_data.decode("utf-8").splitlines()
+            if len(line.split()) >= 2 and line.split()[-1].lstrip("*") == "demex-source.tar.gz"
+        ), None)
         if not expected or sha256(archive_data) != expected:
             raise RuntimeError("SHA256 do pacote não confere. Instalação bloqueada.")
 
         free_bytes = shutil.disk_usage(MANAGER).free
-        required_bytes = max(len(archive_data) * 2, 300 * 1024 * 1024)
+        required_bytes = max(len(archive_data) * 3, 500 * 1024 * 1024)
         if free_bytes < required_bytes:
             raise RuntimeError(
                 f"Espaço insuficiente: disponíveis {free_bytes // (1024 * 1024)} MB; "
                 f"estimativa mínima {required_bytes // (1024 * 1024)} MB."
             )
 
+        if final_dir.exists():
+            shutil.rmtree(final_dir)
         with tempfile.NamedTemporaryFile(prefix="demex-", suffix=".tar.gz", dir=MANAGER, delete=False) as stream:
             stream.write(archive_data)
             archive_path = Path(stream.name)
         try:
-            final_dir.mkdir(parents=True)
+            final_dir.mkdir()
             safe_extract(archive_path, final_dir)
         finally:
             archive_path.unlink(missing_ok=True)
 
-        # O pacote é publicado com prefixo demex/; remove apenas esse nível.
         packaged_root = final_dir / "demex"
         if packaged_root.is_dir():
             for item in list(packaged_root.iterdir()):
@@ -308,6 +318,7 @@ def update() -> int:
         return 1
     finally:
         try:
+            (lock / "owner").unlink(missing_ok=True)
             lock.rmdir()
         except OSError:
             pass
@@ -332,7 +343,7 @@ def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "atualizar"
     if command in {"atualizar", "update", "instalar", "install"}:
         return update()
-    if command in {"status"}:
+    if command == "status":
         return status()
     print("Uso: demex-auto-update.sh {instalar|atualizar|status}")
     return 2
