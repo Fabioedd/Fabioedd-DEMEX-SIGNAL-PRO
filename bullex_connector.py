@@ -163,19 +163,22 @@ class BullexReadOnlyConnector:
         with self.api_lock:
             self._require_connection()
             return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
-    def get_otc_asset_availability(self):
-        """Consulta somente o estado dos ativos OTC da modalidade BINÁRIA, sem enviar ordens."""
+    def get_otc_asset_availability(self,expiry_minutes=1):
+        """Consulta ativos OTC do tipo de opção realmente usado pela expiração."""
         with self.api_lock:
             self._require_connection()
             init_info = self.client.get_all_init_v2(force_refresh=True)
             if not isinstance(init_info, dict):
-                raise MarketDataUnavailableError("A corretora não retornou os dados de disponibilidade dos ativos binários.")
-            binary = init_info.get("binary")
-            if not isinstance(binary, dict) or not isinstance(binary.get("actives"), dict) or not binary["actives"]:
-                raise MarketDataUnavailableError("A resposta da corretora não contém uma lista válida de ativos BINÁRIOS.")
+                raise MarketDataUnavailableError("A corretora não retornou os dados de disponibilidade OTC.")
             now_ts = float(self.client.get_server_timestamp())
-            # O mapa de ativos da própria API é a fonte mais confiável para o símbolo
-            # usado em get_candles/buy. O campo "name" pode conter sufixos de tipo.
+            _, expiry_index = get_expiration_time(now_ts,int(expiry_minutes))
+            option_type = "turbo" if expiry_index < 5 else "binary"
+            market = init_info.get(option_type)
+            if not isinstance(market, dict) or not isinstance(market.get("actives"), dict) or not market["actives"]:
+                raise MarketDataUnavailableError(
+                    "A resposta da corretora não contém uma lista válida de ativos {}.".format(option_type.upper())
+                )
+            # O mapa da própria API é a fonte mais confiável para os símbolos.
             id_to_symbol = {}
             for known_symbol, known_id in self.client.get_all_ACTIVES_OPCODE().items():
                 try:
@@ -184,7 +187,7 @@ class BullexReadOnlyConnector:
                     continue
 
             result = []
-            for active_id, detail in binary["actives"].items():
+            for active_id, detail in market["actives"].items():
                 if not isinstance(detail, dict):
                     continue
                 try:
@@ -195,8 +198,6 @@ class BullexReadOnlyConnector:
                 symbol = id_to_symbol.get(numeric_id)
                 if not symbol:
                     raw_name = str(detail.get("name", ""))
-                    # Aceita nomes como "binary.EURUSD-OTC" e "EURUSD-OTC.op"
-                    # sem cortar o símbolo no ponto errado.
                     parts = [part for part in raw_name.split(".") if part]
                     symbol = next(
                         (part for part in parts if "OTC" in part.upper()),
@@ -209,6 +210,7 @@ class BullexReadOnlyConnector:
                     "symbol": symbol,
                     "active_id": numeric_id,
                     "available": is_binary_active_open(detail, now_ts),
+                    "option_type": option_type,
                 })
             return sorted(result, key=lambda item: item["symbol"])
 
@@ -260,7 +262,7 @@ class BullexReadOnlyConnector:
                     })
             return available
     def place_practice_order(self,symbol,direction,amount,expiry_minutes):
-        """Envia BINÁRIA diretamente e preserva o request_id para reconciliação tardia."""
+        """Envia o tipo compatível com a expiração e preserva o request_id tardio."""
         with self.api_lock:
             self._require_connection()
             if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
@@ -271,11 +273,11 @@ class BullexReadOnlyConnector:
             active_map=self.client.get_all_ACTIVES_OPCODE()
             if symbol not in active_map: raise ValueError(f"Ativo indisponível: {symbol}")
 
-            # A função Bullex.buy() da biblioteca faz fallback para Turbo/Blitz/
-            # Digital em certos erros. Como o DEMEX seleciona ativos BINÁRIOS,
-            # envia explicitamente option_type_id=1 via buyv3_by_raw_expired.
+            # Reproduz a seleção de tipo da API oficial para a expiração escolhida,
+            # mas sem fallback silencioso para Blitz/Digital.
             server_timestamp=float(self.client.get_server_timestamp())
-            expiration_timestamp,_=get_expiration_time(server_timestamp,int(expiry_minutes))
+            expiration_timestamp,expiry_index=get_expiration_time(server_timestamp,int(expiry_minutes))
+            option_type="turbo" if expiry_index < 5 else "binary"
             request_id="demex-"+uuid.uuid4().hex
             client=self.client
             request_ref={
@@ -290,7 +292,7 @@ class BullexReadOnlyConnector:
             try:
                 client.api.buyv3_by_raw_expired(
                     float(amount),int(active_map[symbol]),direction.lower(),
-                    "binary",int(expiration_timestamp),request_id
+                    option_type,int(expiration_timestamp),request_id
                 )
             except Exception as exc:
                 if is_transport_error(exc):
