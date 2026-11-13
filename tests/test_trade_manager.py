@@ -149,6 +149,39 @@ class TradeManagerTests(unittest.TestCase):
         self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
         self.assertEqual(len(c.orders), 2)
 
+    def test_confirmed_order_stays_ahead_of_later_unknown_confirmation(self):
+        c = FakeConnector([("WIN", 4.25), ("LOSS", -5.0)])
+        original_place = c.place_practice_order
+        calls = {"count": 0}
+        request_ref = {"client": c.client, "request_id": "later-request"}
+
+        def place_with_later_unknown(symbol, direction, amount, expiry):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return original_place(symbol, direction, amount, expiry)
+            c.orders.append((symbol, direction, amount, expiry))
+            raise OrderConfirmationUnknownError(
+                "late confirmation", request_ref=request_ref
+            )
+
+        c.place_practice_order = place_with_later_unknown
+        t = self.trader(c)
+        with patch.object(t, "_start_unknown_order_monitor"):
+            self.assertIsNone(t.execute_and_settle(self.signal(1)))
+            with self.assertRaises(OrderConfirmationUnknownError):
+                t.execute_and_settle(self.signal(2, "GBPUSD-OTC"))
+
+        self.assertIsNone(t.pending_unknown_order)
+        self.assertEqual(len(t.pending_unknown_order_queue), 2)
+        c.client.api.buy_multi_option["later-request"] = {"id": 2}
+        t._monitor_unknown_order()
+
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 2)
+        self.assertEqual(t.wins, 1)
+        self.assertEqual(t.losses, 1)
+        self.assertEqual(t.net, -0.75)
+
     def test_late_confirmation_is_reconciled_without_resending(self):
         c = UnknownOrderConnector([("WIN", 4.25)])
         c.client.api.buy_multi_option["original-request"] = {"id": 987654}
