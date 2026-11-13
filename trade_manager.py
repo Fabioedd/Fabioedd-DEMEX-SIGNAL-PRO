@@ -245,7 +245,7 @@ class DemoTrader:
                                 summary["max_win_streak"], summary["max_loss_streak"],
                                 summary["session_net"]
                             )
-                            return
+                            break
                         except Exception as exc:
                             if not is_transport_error(exc):
                                 log.exception(
