@@ -315,6 +315,9 @@ def update() -> int:
                 shutil.move(str(item), str(final_dir / item.name))
             packaged_root.rmdir()
 
+        # Copia configurações locais antes de criar os links compartilhados na versão nova.
+        if PROJECT_LINK.exists() and not PROJECT_LINK.is_symlink():
+            copy_shared_configuration(PROJECT_LINK)
         link_shared_files(final_dir)
         vpy = install_dependencies(final_dir)
         validate_version(final_dir, vpy)
