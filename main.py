@@ -122,6 +122,11 @@ def get_market_assets(connector, settings, stop_check=None):
         for item in availability if item.get("available") is True
     ]
     unavailable_count = len(availability) - len(available)
+    option_types = sorted({str(item.get("option_type", "indefinido")).upper() for item in availability})
+    logging.info(
+        "TIPO DE CONTRATO OTC CONFORME EXPIRAÇÃO: %s.",
+        ", ".join(option_types) if option_types else "não identificado"
+    )
     logging.info(
         "DISPONIBILIDADE OTC: %d disponíveis; %d fechados ou suspensos. "
         "Atualização a cada %d minutos.",
@@ -424,7 +429,7 @@ def main():
         telegram = TelegramNotifier.from_env()
         trader.late_settlement_callback = telegram.send_trade_result
         print(
-            "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
+            "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
             "INDICADOR HARAMI + ENGOLFO | padrões originais + filtros EMA 21/45 | sem cruzamento SMA/WMA adicional | confirmação no fechamento e entrada na próxima M1 (até 5s)."
             
         )
