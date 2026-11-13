@@ -169,6 +169,23 @@ class BullexConnectorTests(unittest.TestCase):
         connector.clear_pending_order_request(request_ref)
         self.assertEqual(original_client.logout_count, 1)
 
+
+    def test_result_wait_obeys_global_deadline(self):
+        api = FakeApi()
+        api.get_options_v2 = lambda count, instruments: setattr(
+            api, "get_options_v2_data",
+            {"msg": {"closed_options": [{"id": 999, "win": "win", "amount": 5.0, "win_amount": 9.2}]}}
+        )
+        connector, _ = self.make_connector(api)
+        with self.assertRaises(TimeoutError):
+            connector.wait_practice_result(456, timeout_seconds=0.05)
+
+    def test_result_wait_can_be_interrupted_by_stop(self):
+        api = FakeApi()
+        connector, _ = self.make_connector(api)
+        with self.assertRaises(InterruptedError):
+            connector.wait_practice_result(456, stop_check=lambda: True)
+
     def test_result_is_retrieved_from_closed_order_history(self):
         api = FakeApi()
         connector, _ = self.make_connector(api)
