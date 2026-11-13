@@ -196,14 +196,22 @@ class DemoTrader:
                             result, pnl = self.connector.wait_practice_result(
                                 order_id, stop_check=self.stop_check, timeout_seconds=30.0
                             )
-                            with self._state_lock:
-                                pending = self.pending_unknown_order
-                                if pending is None:
-                                    return
-                                # Reserva o gerenciador durante a contabilização.
-                                # Assim, o loop principal não pode abrir outra ordem
-                                # entre a confirmação tardia e a atualização do saldo.
-                                self.busy = True
+                            # O resultado pode chegar enquanto o scanner já prepara
+                            # outra ordem. Aguarda a execução atual terminar antes de
+                            # atualizar net/Soros, sem liberar duas operações concorrentes.
+                            while True:
+                                with self._state_lock:
+                                    pending = self.pending_unknown_order
+                                    if pending is None:
+                                        return
+                                    if not self.busy:
+                                        self.busy = True
+                                        break
+                                if self.stop_check and self.stop_check():
+                                    raise InterruptedError(
+                                        "Parada solicitada antes de contabilizar resultado pendente."
+                                    )
+                                time.sleep(0.05)
                             try:
                                 summary = self._apply_settlement(
                                     pending["signal"], pending["amount"], order_id, result, pnl
@@ -364,10 +372,9 @@ class DemoTrader:
                         or getattr(self.connector, "pending_order_request", None),
                 }
                 with self._state_lock:
-                    if self.pending_unknown_order is None:
-                        self.pending_unknown_order = new_pending
-                    else:
-                        self.pending_unknown_order_queue.append(new_pending)
+                    # Todas as ordens entram na mesma fila FIFO, sejam confirmadas
+                    # ou de confirmação desconhecida. Isso preserva a ordem de envio.
+                    self.pending_unknown_order_queue.append(new_pending)
                 log.critical(
                     "CONFIRMAÇÃO DESCONHECIDA | %s %s | %s. "
                     "A solicitação original ficará em segundo plano; o scanner "
