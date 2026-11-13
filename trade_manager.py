@@ -259,8 +259,18 @@ class DemoTrader:
                 return None
             self.last_signal_key = key
             self.busy = True
-        if self.connector.config.account_type != "PRACTICE" or self.connector.client.get_balance_mode() != "PRACTICE":
-            self.busy = False
+        try:
+            practice_confirmed = (
+                self.connector.config.account_type == "PRACTICE"
+                and self.connector.client.get_balance_mode() == "PRACTICE"
+            )
+        except Exception:
+            with self._state_lock:
+                self.busy = False
+            raise
+        if not practice_confirmed:
+            with self._state_lock:
+                self.busy = False
             raise PermissionError("Robô bloqueado: conta PRACTICE/DEMO não confirmada.")
         try:
             amount = min(self.next_entry, money(self.stop + self.net))
