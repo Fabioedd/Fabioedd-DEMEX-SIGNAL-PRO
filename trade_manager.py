@@ -149,6 +149,13 @@ class DemoTrader:
     def _monitor_unknown_order(self):
         """Acompanha a resposta tardia sem reenviar; só libera novas entradas após resolver."""
         while self.paused and not self.stopped:
+            # Aguarda a chamada original de execute_and_settle terminar seu finally
+            # antes de reconciliar; evita corrida sobre a trava busy.
+            with self._state_lock:
+                original_execution_busy = self.busy
+            if original_execution_busy:
+                time.sleep(0.05)
+                continue
             if self.stop_check and self.stop_check():
                 log.warning(
                     "Parada solicitada pelo usuário durante reconciliação; "
@@ -330,4 +337,5 @@ class DemoTrader:
 
             return self._apply_settlement(signal, amount, order_id, result, pnl_raw)
         finally:
-            self.busy = False
+            with self._state_lock:
+                self.busy = False
