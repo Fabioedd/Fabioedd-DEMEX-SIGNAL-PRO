@@ -245,8 +245,7 @@ class TradeManagerTests(unittest.TestCase):
     def test_result_timeout_moves_known_order_to_blocking_monitor(self):
         c = FakeConnector([TimeoutError("result timeout")])
         t = DemoTrader(c, self.settings())
-        with patch("trade_manager.time.monotonic", side_effect=[0.0, 0.0, 181.0]), \\
-             patch.object(t, "_start_unknown_order_monitor") as start_monitor:
+        with patch("trade_manager.time.monotonic", side_effect=[0.0, 0.0, 181.0]) as clock, patch.object(t, "_start_unknown_order_monitor") as start_monitor:
             result = t.execute_and_settle(self.signal())
         self.assertIsNone(result)
         self.assertTrue(t.paused)
