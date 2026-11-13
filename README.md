@@ -4,12 +4,13 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
 
 ## Estratégia e operação
 
-- Estratégia ativa: **HARAMI + ENGOLFO (Tendência EMA 21/45)**, implementada em Python em `strategies/harami_engolfo_tendencia.py`.
+- Estratégia ativa: **GO 2024 SUPER**, implementada em Python em `strategies/my_strategy.py`.
 - Regras preservadas do indicador Lua:
-  - **CALL:** Harami de alta OU Engolfo de alta na vela analisada, com fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
-  - **PUT:** Harami de baixa OU Engolfo de baixa na vela analisada, com fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
-  - Os padrões usam somente os corpos dos dois candles, exatamente pelas comparações de abertura/fechamento do script original.
-  - Não há cruzamento SMA/WMA, RSI, Bollinger ou outro filtro adicional nesta estratégia.
+  - `buffer1 = SMA(1) - SMA(34)` e `buffer2 = WMA(buffer1, 5)`.
+  - A fonte `MaValue=5` é traduzida para HL2 ((high + low) / 2); os filtros EMA usam o fechamento.
+  - **CALL:** cruzamento ascendente de `buffer1` sobre `buffer2`, fechamento acima da EMA(21) e EMA(21) acima da EMA(45).
+  - **PUT:** cruzamento descendente, fechamento abaixo da EMA(21) e EMA(21) abaixo da EMA(45).
+  - Não adiciona RSI, Bollinger, Harami, Engolfo ou filtros que não existem no indicador enviado.
 - O DEMEX recebe candles M1. O sinal é calculado sobre a vela fechada e só libera entrada na vela M1 seguinte, nos primeiros 5 segundos, após confirmar o relógio da corretora e o padrão novamente.
 - Modalidade: opções da família binária. Para expiração M1/M5, a API da BullX classifica o contrato como Turbo; a seleção consulta o grupo de ativos correspondente à expiração. O DEMEX não faz fallback para Blitz ou Digital. Payout não é usado como critério de seleção.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
@@ -73,4 +74,4 @@ Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identi
 O script `demex-auto-update.sh` consulta a branch `main` do GitHub a cada 60 segundos. Ele só aplica atualizações quando o robô está parado, a branch local é `main`, o histórico permite avanço rápido e não há alterações locais em arquivos rastreados. Arquivos locais não rastreados, como `.env`, são preservados. Se dependências mudarem, instala `requirements.txt`; depois valida a sintaxe e executa os testes. Se a validação falhar, reverte o código para o commit anterior. O atualizador nunca inicia, para ou reinicia o robô. Consulte o status com `bash ~/.demex-auto-update.sh status`.
 
 
-A estratégia HARAMI + ENGOLFO ativa fica em `strategies/harami_engolfo_tendencia.py` e é importada pelo motor principal. As estratégias SNIPER e GO 2024 permanecem no repositório como legado/testes, mas não são usadas pelo motor principal.
+A estratégia GO 2024 SUPER ativa fica em `strategies/my_strategy.py` e é importada pelo motor principal. A estratégia SNIPER permanece separada em `strategies/sniper_confluence.py` e não é combinada com o GO 2024.
