@@ -516,10 +516,13 @@ def main():
                     assets = []
                     next_asset_refresh = time.monotonic() + ASSET_REFRESH_INTERVAL_SECONDS
 
+            scan_started = None
+            scan_elapsed = None
             try:
                 if pending:
                     candidates = []
                 else:
+                    scan_started = time.monotonic()
                     candidates = scan_once(
                         connector, settings, assets,
                         max_candidates=MAX_PENDING_SIGNALS,
@@ -532,6 +535,18 @@ def main():
                 pending.clear()
                 next_asset_refresh = 0.0
                 continue
+            finally:
+                if scan_started is not None:
+                    scan_elapsed = time.monotonic() - scan_started
+                    log_line = (
+                        "DURAÇÃO DA VARREDURA | %.3fs | ativos %d | sinais %d | intervalo configurado %ds."
+                        % (scan_elapsed, len(assets), len(candidates) if "candidates" in locals() else 0,
+                           scan_delay(settings))
+                    )
+                    if scan_elapsed > 5.0:
+                        logging.warning("VARREDURA ACIMA DE 5 SEGUNDOS | %s", log_line)
+                    else:
+                        logging.info(log_line)
 
             if STOP_FILE.exists():
                 trader.stopped = True
@@ -786,9 +801,13 @@ def main():
                 if pending:
                     time.sleep(0.10)
                 elif assets:
-                    continue
+                    # Mantém 2s entre inícios de varreduras sem somar 2s
+                    # ao tempo gasto pela própria consulta dos ativos.
+                    remaining = scan_delay(settings) - (scan_elapsed or 0.0)
+                    if remaining > 0:
+                        _wait_for_market_data_retry(remaining, stop_check=STOP_FILE.exists)
                 else:
-                    time.sleep(scan_delay(settings))
+                    _wait_for_market_data_retry(scan_delay(settings), stop_check=STOP_FILE.exists)
 
         if trader.stopped:
             print("Sessão encerrada. Resultado líquido: R$ %.2f" % trader.net)
