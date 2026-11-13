@@ -42,9 +42,22 @@ BULLEX_ACCOUNT_TYPE=PRACTICE
 Inicie com `python main.py`. A execução automática está habilitada em `settings.json`, mas o robô só envia contratos compatíveis com a expiração configurada após conexão e confirmação da conta PRACTICE.
 
 
-## Notificações pelo Telegram
+## Controle remoto e notificações pelo Telegram
 
-O Telegram é usado apenas para notificações de início de sessão, resultado de cada operação e relatório final. Configure `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env`; nunca publique o token. O Telegram não envia comandos para abrir ou repetir operações.
+O projeto oferece comandos privados para ligar/desligar o DEMEX e também envia notificações de início, resultado de operação e relatório final. Configure `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no arquivo local `.env`; nunca publique o token.
+
+Ative o listener no Termux:
+```bash
+bash telegram-control.sh iniciar
+```
+
+Comandos privados no bot:
+- `/start` — inicia o DEMEX se estiver parado.
+- `/stop` — solicita parada segura e aguarda a operação aberta terminar.
+- `/status` — informa se o robô está ligado.
+- `/help` — mostra os comandos.
+
+Ao iniciar com `bash demex.sh iniciar`, o listener também é iniciado automaticamente quando as credenciais estão configuradas. O listener aceita apenas mensagens privadas do Chat ID configurado; ele não envia ordens à corretora. Detalhes em [TELEGRAM_CONTROL.md](TELEGRAM_CONTROL.md).
 
 Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identificador da solicitação original, não reenvia a ordem e bloqueia novas entradas até identificar se a corretora aceitou ou recusou aquela mesma solicitação. Se a resposta chegar depois, consulta o resultado pelo histórico da corretora, atualiza o placar e tenta enviar a notificação tardia. Se a BullX não fornecer confirmação e o histórico não permitir identificar a operação com segurança, o DEMEX permanece pausado para novas entradas; nesse caso é necessário conferir o histórico da corretora antes de liberar a sessão.
 
