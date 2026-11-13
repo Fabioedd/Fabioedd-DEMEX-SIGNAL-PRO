@@ -28,7 +28,7 @@ LOG = HOME / "DEMEX_AUTO_UPDATE.log"
 KEEP_RELEASES = 3
 CHECK_INTERVAL = 60
 AGENT_PID_FILE = HOME / ".demex-auto-update.pid"
-REQUIRED = ("main.py", "settings.json", "requirements.txt", "demex.sh", "strategies/my_strategy.py")
+REQUIRED = ("main.py", "settings.json", "requirements.txt", "demex.sh", "telegram_control.py", "strategies/my_strategy.py")
 
 
 def log(message: str) -> None:
