@@ -170,6 +170,54 @@ class BullexConnectorTests(unittest.TestCase):
         self.assertEqual(original_client.logout_count, 1)
 
 
+    def test_multiple_unknown_requests_keep_their_original_request_ids(self):
+        api = FakeApi()
+        connector, client = self.make_connector(api)
+        with patch("bullex_connector.get_expiration_time", return_value=(1_800_000_060, 0)), \\
+             patch("bullex_connector.time.monotonic", side_effect=[0.0, 6.0, 10.0, 16.0]), \\
+             patch("bullex_connector.time.sleep"):
+            with self.assertRaises(OrderConfirmationUnknownError) as first:
+                connector.place_practice_order("EURUSD-OTC", "CALL", 5.0, 1)
+            with self.assertRaises(OrderConfirmationUnknownError) as second:
+                connector.place_practice_order("EURUSD-OTC", "PUT", 5.0, 1)
+
+        first_ref = first.exception.request_ref
+        second_ref = second.exception.request_ref
+        self.assertNotEqual(first_ref["request_id"], second_ref["request_id"])
+        self.assertEqual(len(connector.pending_order_requests), 2)
+        api.buy_multi_option[first_ref["request_id"]] = {"id": 501}
+        api.buy_multi_option[second_ref["request_id"]] = {"id": 502}
+        self.assertEqual(connector.read_order_confirmation(first_ref), ("accepted", 501))
+        self.assertEqual(connector.read_order_confirmation(second_ref), ("accepted", 502))
+        self.assertIs(first_ref["client"], client)
+
+    def test_result_wait_releases_api_lock_while_waiting_for_history(self):
+        import threading
+        import time
+
+        api = FakeApi()
+        api.get_options_v2 = lambda count, instruments: setattr(api, "get_options_v2_data", None)
+        connector, _ = self.make_connector(api)
+        finished = threading.Event()
+
+        def wait_for_result():
+            try:
+                connector.wait_practice_result(456, timeout_seconds=0.2)
+            except TimeoutError:
+                pass
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=wait_for_result)
+        worker.start()
+        time.sleep(0.03)
+        acquired = connector.api_lock.acquire(blocking=False)
+        if acquired:
+            connector.api_lock.release()
+        worker.join(timeout=1.0)
+        self.assertTrue(acquired, "api_lock deve ficar livre durante a espera da resposta")
+        self.assertTrue(finished.is_set())
+
     def test_result_wait_obeys_global_deadline(self):
         api = FakeApi()
         api.get_options_v2 = lambda count, instruments: setattr(
