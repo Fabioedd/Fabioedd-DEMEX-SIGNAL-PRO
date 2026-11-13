@@ -11,7 +11,7 @@ Projeto Python para leitura de ativos/candles e execução automática de opera�
   - Os padrões usam somente os corpos dos dois candles, exatamente pelas comparações de abertura/fechamento do script original.
   - Não há cruzamento SMA/WMA, RSI, Bollinger ou outro filtro adicional nesta estratégia.
 - O DEMEX recebe candles M1. O sinal é calculado sobre a vela fechada e só libera entrada na vela M1 seguinte, nos primeiros 5 segundos, após confirmar o relógio da corretora e o padrão novamente.
-- Modalidade: somente opções binárias. A disponibilidade é obtida da lista de ativos binários OTC da BullX; payout não é usado como critério de seleção.
+- Modalidade: opções da família binária. Para expiração M1/M5, a API da BullX classifica o contrato como Turbo; a seleção consulta o grupo de ativos correspondente à expiração. O DEMEX não faz fallback para Blitz ou Digital. Payout não é usado como critério de seleção.
 - Timeframe configurado: M1 (candles de 60 segundos); expiração: 1 minuto, na vela imediatamente seguinte ao sinal. A entrada é permitida apenas nos primeiros 5 segundos dessa vela.
 - Entrada inicial: R$ 5,00.
 - Soros nível 1: após o primeiro WIN, a próxima entrada é base + lucro líquido; depois dessa operação o ciclo volta à base. LOSS/TIE reinicia a entrada.
