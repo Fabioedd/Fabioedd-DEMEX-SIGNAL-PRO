@@ -171,6 +171,8 @@ class UpdaterSafetyTests(unittest.TestCase):
             self.assertTrue(project.is_symlink())
             self.assertEqual((shared / ".env").read_text(), "TOKEN=local-secret\n")
             self.assertTrue((shared / "settings.json").is_file())
+            self.assertTrue((current / ".env").is_symlink())
+            self.assertTrue((current / "settings.json").is_symlink())
             self.assertTrue((manager / "legacy").is_dir())
 
 
