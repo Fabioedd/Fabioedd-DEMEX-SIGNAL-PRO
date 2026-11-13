@@ -61,13 +61,12 @@ def _price(candle, key):
 
 
 def backtest_asset(connector, asset, settings, server_timestamp=None):
-    """Testa os últimos 200 candles M1 fechados; entrada na vela seguinte e expiração M1."""
-    window = int(settings.get("backtest_candles_count", 200))
+    """Testa os últimos 100 candles M1 fechados; entrada na vela seguinte e expiração M1."""
+    window = int(settings.get("backtest_candles_count", 100))
     warmup = int(settings.get("backtest_warmup_candles", 60))
-    if window != 200:
-        # A janela pedida pelo projeto é fixa em 200; a configuração só pode
-        # manter esse valor para evitar uma alteração acidental de critério.
-        window = 200
+    if window != 100:
+        # A janela pedida pelo projeto é fixa em 100 candles avaliados.
+        window = 100
     if warmup < 45:
         warmup = 45
 
@@ -95,7 +94,7 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         "operations": 0,
         "accuracy": 0.0,
         "approved": False,
-        "candles_used": min(window, len(closed)),
+        "candles_used": 0,
     }
     if len(closed) < window + warmup + 1:
         base["reason"] = (
@@ -104,6 +103,7 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         ).format(window + warmup + 1, warmup, window, len(closed))
         return base
 
+    base["candles_used"] = window
     first_signal_index = len(closed) - window - 1
     for index in range(first_signal_index, len(closed) - 1):
         signal = get_signal_at_index(closed, index)
@@ -135,7 +135,7 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         base["wins"] / base["operations"] * 100.0 if base["operations"] else 0.0
     )
     threshold = float(settings.get("minimum_backtest_accuracy", 70.0))
-    base["approved"] = base["operations"] > 0 and base["accuracy"] >= threshold
+    base["approved"] = base["operations"] > 0 and base["accuracy"] > threshold
     base["reason"] = (
         "Aprovado" if base["approved"] else
         "Sem operações decisivas" if base["operations"] == 0 else
@@ -153,8 +153,8 @@ def select_qualified_assets(connector, available_assets, settings, stop_check=No
     durations = []
 
     logger.info(
-        "BACKTEST OTC INICIADO | %d ativos disponíveis | 200 candles M1 fechados por ativo | "
-        "aprovação a partir de %.1f%%.",
+        "BACKTEST OTC INICIADO | %d ativos disponíveis | 100 candles M1 fechados por ativo | "
+        "aprovação estritamente acima de %.1f%%.",
         total, float(settings.get("minimum_backtest_accuracy", 70.0))
     )
 

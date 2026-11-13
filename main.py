@@ -83,7 +83,7 @@ def _wait_for_market_data_retry(delay, stop_check=None):
 
 
 def get_market_assets(connector, settings, stop_check=None):
-    """Retorna somente ativos OTC binários; repete respostas vazias/incompletas."""
+    """Retorna ativos OTC do tipo compatível com a expiração configurada."""
     mode = str(settings.get("market_mode", "OTC")).upper()
     if mode != "OTC":
         raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
@@ -93,7 +93,9 @@ def get_market_assets(connector, settings, stop_check=None):
         if stop_check and stop_check():
             raise InterruptedError("Parada solicitada durante a atualização dos ativos OTC.")
         try:
-            availability = connector.get_otc_asset_availability()
+            availability = connector.get_otc_asset_availability(
+                expiry_minutes=int(settings.get("expiry_minutes", 1))
+            )
             if not availability:
                 raise MarketDataUnavailableError(
                     "A BullX retornou zero ativos OTC; a lista não será considerada válida."
@@ -120,6 +122,11 @@ def get_market_assets(connector, settings, stop_check=None):
         for item in availability if item.get("available") is True
     ]
     unavailable_count = len(availability) - len(available)
+    option_types = sorted({str(item.get("option_type", "indefinido")).upper() for item in availability})
+    logging.info(
+        "TIPO DE CONTRATO OTC CONFORME EXPIRAÇÃO: %s.",
+        ", ".join(option_types) if option_types else "não identificado"
+    )
     logging.info(
         "DISPONIBILIDADE OTC: %d disponíveis; %d fechados ou suspensos. "
         "Atualização a cada %d minutos.",
@@ -420,14 +427,15 @@ def main():
         next_asset_refresh = time.monotonic() + refresh_interval
         trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
+        trader.late_settlement_callback = telegram.send_trade_result
         print(
-            "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
+            "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
             "INDICADOR HARAMI + ENGOLFO | padrões originais + filtros EMA 21/45 | sem cruzamento SMA/WMA adicional | confirmação no fechamento e entrada na próxima M1 (até 5s)."
             
         )
         print(
             "Ativos OTC disponíveis: {} | Aprovados no backtest: {} | "
-            "Backtest: 200 candles M1 | mínimo 70% | nova seleção a cada {} minutos | "
+            "Backtest: 100 candles M1 | mínimo acima de 70% | nova seleção a cada {} minutos | "
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
             .format(
                 len(available_assets), len(assets), refresh_interval // 60,
@@ -674,9 +682,13 @@ def main():
                     if summary:
                         print(
                             "PLACAR | Entradas {} | WIN {} | LOSS {} | TIE {} | "
-                            "Aproveitamento {:.2f}% | P&L R$ {:+.2f}".format(
+                            "Aproveitamento {:.2f}% | Seq. WIN {} | Seq. LOSS {} | "
+                            "Recorde WIN {} | Recorde LOSS {} | P&L R$ {:+.2f}".format(
                                 summary["total_entries"], summary["wins"], summary["losses"],
-                                summary["ties"], summary["win_rate"], summary["session_net"]
+                                summary["ties"], summary["win_rate"],
+                                summary["current_win_streak"], summary["current_loss_streak"],
+                                summary["max_win_streak"], summary["max_loss_streak"],
+                                summary["session_net"]
                             )
                         )
                         print(

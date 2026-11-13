@@ -1,10 +1,11 @@
 """Bullex adapter with market-data reads and guarded PRACTICE-only orders."""
 from __future__ import annotations
 import json
-import logging, os, time, threading
+import logging, os, time, threading, uuid
 from dataclasses import dataclass
 from typing import Any
 from bullexapi.stable_api import Bullex
+from bullexapi.expiration import get_expiration_time
 from entry_timing import is_binary_active_open
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,10 @@ class MarketDataUnavailableError(RuntimeError):
 
 class OrderConfirmationUnknownError(RuntimeError):
     """O envio terminou sem confirmação/ID; não é seguro reenviar."""
+
+    def __init__(self, message, request_ref=None):
+        super().__init__(message)
+        self.request_ref = request_ref
 
 
 
@@ -75,6 +80,9 @@ class BullexReadOnlyConnector:
         self.connected=False
         self.account_mode=None
         self.api_lock=threading.RLock()
+        # Mantém a referência ao cliente e ao request_id originais até resolver
+        # uma ordem cujo envio teve confirmação desconhecida.
+        self.pending_order_request=None
     def connect(self):
         """Conecta sem deixar falhas transitórias de DNS/HTTP derrubarem o processo."""
         try:
@@ -119,10 +127,18 @@ class BullexReadOnlyConnector:
                 logger.warning("Conexão perdida. Nova tentativa em %s segundos...",delay)
                 self._wait_for_retry(delay, stop_check)
                 with self.api_lock:
-                    try:
-                        self.client.logout()
-                    except Exception:
-                        pass
+                    previous_client = self.client
+                    pending_client = (
+                        self.pending_order_request.get("client")
+                        if isinstance(self.pending_order_request, dict) else None
+                    )
+                    # Não encerra o socket original enquanto uma ordem ainda
+                    # aguarda confirmação: ele pode receber o ACK tardio.
+                    if previous_client is not pending_client:
+                        try:
+                            previous_client.logout()
+                        except Exception:
+                            pass
                     self.client=Bullex(self.config.email,self.config.password,
                                        active_account_type=self.config.account_type)
                     status,detail=self.client.connect()
@@ -147,19 +163,22 @@ class BullexReadOnlyConnector:
         with self.api_lock:
             self._require_connection()
             return [{"symbol":str(s),"active_id":int(i)} for s,i in self.client.get_all_ACTIVES_OPCODE().items()]
-    def get_otc_asset_availability(self):
-        """Consulta somente o estado dos ativos OTC da modalidade BINÁRIA, sem enviar ordens."""
+    def get_otc_asset_availability(self,expiry_minutes=1):
+        """Consulta ativos OTC do tipo de opção realmente usado pela expiração."""
         with self.api_lock:
             self._require_connection()
             init_info = self.client.get_all_init_v2(force_refresh=True)
             if not isinstance(init_info, dict):
-                raise MarketDataUnavailableError("A corretora não retornou os dados de disponibilidade dos ativos binários.")
-            binary = init_info.get("binary")
-            if not isinstance(binary, dict) or not isinstance(binary.get("actives"), dict) or not binary["actives"]:
-                raise MarketDataUnavailableError("A resposta da corretora não contém uma lista válida de ativos BINÁRIOS.")
+                raise MarketDataUnavailableError("A corretora não retornou os dados de disponibilidade OTC.")
             now_ts = float(self.client.get_server_timestamp())
-            # O mapa de ativos da própria API é a fonte mais confiável para o símbolo
-            # usado em get_candles/buy. O campo "name" pode conter sufixos de tipo.
+            _, expiry_index = get_expiration_time(now_ts,int(expiry_minutes))
+            option_type = "turbo" if expiry_index < 5 else "binary"
+            market = init_info.get(option_type)
+            if not isinstance(market, dict) or not isinstance(market.get("actives"), dict) or not market["actives"]:
+                raise MarketDataUnavailableError(
+                    "A resposta da corretora não contém uma lista válida de ativos {}.".format(option_type.upper())
+                )
+            # O mapa da própria API é a fonte mais confiável para os símbolos.
             id_to_symbol = {}
             for known_symbol, known_id in self.client.get_all_ACTIVES_OPCODE().items():
                 try:
@@ -168,7 +187,7 @@ class BullexReadOnlyConnector:
                     continue
 
             result = []
-            for active_id, detail in binary["actives"].items():
+            for active_id, detail in market["actives"].items():
                 if not isinstance(detail, dict):
                     continue
                 try:
@@ -179,8 +198,6 @@ class BullexReadOnlyConnector:
                 symbol = id_to_symbol.get(numeric_id)
                 if not symbol:
                     raw_name = str(detail.get("name", ""))
-                    # Aceita nomes como "binary.EURUSD-OTC" e "EURUSD-OTC.op"
-                    # sem cortar o símbolo no ponto errado.
                     parts = [part for part in raw_name.split(".") if part]
                     symbol = next(
                         (part for part in parts if "OTC" in part.upper()),
@@ -193,6 +210,7 @@ class BullexReadOnlyConnector:
                     "symbol": symbol,
                     "active_id": numeric_id,
                     "available": is_binary_active_open(detail, now_ts),
+                    "option_type": option_type,
                 })
             return sorted(result, key=lambda item: item["symbol"])
 
@@ -244,6 +262,7 @@ class BullexReadOnlyConnector:
                     })
             return available
     def place_practice_order(self,symbol,direction,amount,expiry_minutes):
+        """Envia o tipo compatível com a expiração e preserva o request_id tardio."""
         with self.api_lock:
             self._require_connection()
             if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
@@ -251,27 +270,151 @@ class BullexReadOnlyConnector:
             if direction not in {"CALL","PUT"}: raise ValueError("Direção inválida.")
             if expiry_minutes not in {1,5}: raise ValueError("Expiração permitida: 1 ou 5 minutos.")
             if float(amount)<=0: raise ValueError("Valor de entrada inválido.")
-            if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo indisponível: {symbol}")
-            ok,order_id=self.client.buy(float(amount),symbol,direction.lower(),int(expiry_minutes))
-            if ok and order_id:
-                return int(order_id)
-            # A biblioteca também retorna (False, None) quando esgota seu timeout
-            # interno. Não sabemos se a corretora recebeu a ordem; nunca reenviar,
-            # pois isso poderia duplicar uma operação.
-            if order_id is None:
-                raise OrderConfirmationUnknownError(
-                    "A BullX não confirmou a ordem nem devolveu ID (timeout/resposta ausente). "
-                    "Estado desconhecido; reenvio automático bloqueado por segurança."
+            active_map=self.client.get_all_ACTIVES_OPCODE()
+            if symbol not in active_map: raise ValueError(f"Ativo indisponível: {symbol}")
+
+            # Reproduz a seleção de tipo da API oficial para a expiração escolhida,
+            # mas sem fallback silencioso para Blitz/Digital.
+            server_timestamp=float(self.client.get_server_timestamp())
+            expiration_timestamp,expiry_index=get_expiration_time(server_timestamp,int(expiry_minutes))
+            option_type="turbo" if expiry_index < 5 else "binary"
+            request_id="demex-"+uuid.uuid4().hex
+            client=self.client
+            # Cria mapa de respostas próprio desta sessão e evita confundir
+            # mensagens antigas ou de outro cliente da biblioteca.
+            client.api.buy_multi_option={}
+            request_ref={
+                "client":client,
+                "request_id":request_id,
+                "symbol":symbol,
+                "direction":direction,
+                "amount":float(amount),
+                "submitted_at":time.time(),
+            }
+            self.pending_order_request=request_ref
+            try:
+                client.api.buyv3_by_raw_expired(
+                    float(amount),int(active_map[symbol]),direction.lower(),
+                    option_type,int(expiration_timestamp),request_id
                 )
-            raise OrderRejectedError(f"A BullX recusou explicitamente a ordem: {order_id}")
+            except Exception as exc:
+                if is_transport_error(exc):
+                    self.connected=False
+                    raise OrderConfirmationUnknownError(
+                        "A conexão caiu durante o envio. A BullX pode ter recebido a ordem; "
+                        "o DEMEX manterá o request_id original e não reenviará.",
+                        request_ref=request_ref
+                    ) from exc
+                self.pending_order_request=None
+                raise
+
+            deadline=time.monotonic()+5.0
+            while time.monotonic()<deadline:
+                payload=client.api.buy_multi_option.get(request_id)
+                if isinstance(payload,dict):
+                    order_id=payload.get("id")
+                    if order_id is not None:
+                        try:
+                            resolved_id=int(order_id)
+                        except (TypeError,ValueError):
+                            resolved_id=None
+                        if resolved_id is not None:
+                            self.pending_order_request=None
+                            return resolved_id
+                    message=payload.get("message")
+                    if message:
+                        self.pending_order_request=None
+                        raise OrderRejectedError(
+                            "A BullX recusou explicitamente o contrato: {}".format(message)
+                        )
+                time.sleep(0.01)
+
+            raise OrderConfirmationUnknownError(
+                "A BullX não confirmou a ordem em 5 segundos. Estado desconhecido; "
+                "request_id original preservado e reenvio automático bloqueado.",
+                request_ref=request_ref
+            )
+
+    def read_order_confirmation(self,request_ref):
+        """Consulta somente o request_id exato no cliente que enviou a ordem."""
+        if not isinstance(request_ref,dict):
+            return "pending",None
+        client=request_ref.get("client")
+        request_id=request_ref.get("request_id")
+        api=getattr(client,"api",None)
+        requests=getattr(api,"buy_multi_option",None)
+        if not isinstance(requests,dict) or not request_id:
+            return "pending",None
+        payload=requests.get(request_id)
+        if not isinstance(payload,dict):
+            return "pending",None
+        order_id=payload.get("id")
+        if order_id is not None:
+            try:
+                return "accepted",int(order_id)
+            except (TypeError,ValueError):
+                return "pending",None
+        message=payload.get("message")
+        if message:
+            return "rejected",str(message)
+        return "pending",None
+
+    def clear_pending_order_request(self,request_ref=None):
+        """Libera a referência ao cliente antigo depois de resolver a ordem."""
+        current=self.pending_order_request
+        if current is not None and (
+            request_ref is None or current.get("request_id")==request_ref.get("request_id")
+        ):
+            self.pending_order_request=None
+            old_client=current.get("client")
+            if old_client is not None and old_client is not self.client:
+                try:
+                    old_client.logout()
+                except Exception as exc:
+                    logger.debug("Não foi possível encerrar o socket antigo da ordem resolvida: %s",exc)
+
     def wait_practice_result(self,order_id):
+        """Consulta o histórico de opções fechadas, inclusive após reconectar."""
         with self.api_lock:
-            self._require_connection()
-            if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
+            if self.config.account_type!="PRACTICE":
                 raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-            state,pnl=self.client.check_win_v4(int(order_id))
-            state=str(state).lower()
-            return ("WIN" if state=="win" else "LOSS" if state=="loose" else "TIE",round(float(pnl),2))
+            target_id=int(order_id)
+            while True:
+                self._require_connection()
+                if self.client.get_balance_mode()!="PRACTICE":
+                    raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
+                client=self.client
+                client.api.get_options_v2_data=None
+                client.api.get_options_v2(20,"binary,turbo")
+                deadline=time.monotonic()+10.0
+                while client.api.get_options_v2_data is None:
+                    if not client.check_connect():
+                        self.connected=False
+                        raise ConnectionError("Conexão BullX caiu ao consultar o resultado da ordem.")
+                    if time.monotonic()>=deadline:
+                        raise TimeoutError("A BullX não respondeu à consulta do histórico de opções em 10 segundos.")
+                    time.sleep(0.05)
+
+                data=client.api.get_options_v2_data
+                message=data.get("msg",{}) if isinstance(data,dict) else {}
+                closed_list=message.get("closed_options",[]) if isinstance(message,dict) else []
+                for option in closed_list:
+                    if not isinstance(option,dict):
+                        continue
+                    option_id=option.get("id")
+                    option_ids=option_id if isinstance(option_id,list) else [option_id]
+                    matched=any(str(value)==str(target_id) for value in option_ids if value is not None)
+                    if not matched:
+                        continue
+                    state=str(option.get("win","")).lower()
+                    if state=="equal":
+                        return "TIE",0.0
+                    amount=float(option.get("amount",0))
+                    pnl= float(option.get("win_amount",0))-amount
+                    if state=="loose":
+                        pnl=-amount
+                    return ("WIN" if state=="win" else "LOSS"),round(pnl,2)
+                time.sleep(1.0)
     def get_server_timestamp(self):
         with self.api_lock:
             self._require_connection()
@@ -281,14 +424,20 @@ class BullexReadOnlyConnector:
             self.connected=False
             raise ConnectionError("Bullex desconectada; processamento de sinais/ordens interrompido.")
     def close(self):
-        """Encerra localmente sem derrubar o robô se a sessão remota já caiu."""
+        """Encerra os sockets atuais e o cliente antigo preservado para reconciliação."""
         with self.api_lock:
-            try:
-                if self.connected:
-                    self.client.logout()
-            except Exception as exc:
-                # Logout é limpeza best-effort: uma queda da rede durante o
-                # encerramento não deve mascarar o motivo real da parada.
-                logger.warning("Falha ao encerrar sessão remota da BullX: %s", exc)
-            finally:
-                self.connected = False
+            clients=[self.client]
+            pending_client=(
+                self.pending_order_request.get("client")
+                if isinstance(self.pending_order_request,dict) else None
+            )
+            if pending_client is not None and pending_client is not self.client:
+                clients.append(pending_client)
+            for client in clients:
+                try:
+                    client.logout()
+                except Exception as exc:
+                    # Logout é limpeza best-effort; não mascara a causa do encerramento.
+                    logger.warning("Falha ao encerrar sessão remota da BullX: %s",exc)
+            self.pending_order_request=None
+            self.connected=False

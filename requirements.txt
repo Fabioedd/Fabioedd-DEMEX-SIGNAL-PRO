@@ -1,2 +1,2 @@
-git+https://github.com/CassDs/bullexapi.git@main
+-e git+https://github.com/CassDs/bullexapi.git@main#egg=bullexapi
 python-dotenv>=1.0.1
