@@ -11,9 +11,11 @@ class FakeConnector:
         self.connected = True
         self.reconnects = 0
         self.calls = 0
+        self.expiries = []
 
-    def get_otc_asset_availability(self):
+    def get_otc_asset_availability(self, expiry_minutes=1):
         self.calls += 1
+        self.expiries.append(expiry_minutes)
         item = self.responses.pop(0)
         if isinstance(item, BaseException):
             raise item
@@ -41,6 +43,7 @@ class MarketAssetRetryTests(unittest.TestCase):
         self.assertEqual(result, [{"symbol": "EURUSD-OTC", "active_id": 76}])
         self.assertEqual(connector.calls, 3)
         self.assertEqual(connector.reconnects, 0)
+        self.assertEqual(connector.expiries, [1, 1, 1])
         self.assertEqual(
             [call.args[0] for call in wait.call_args_list],
             [5, 10],
