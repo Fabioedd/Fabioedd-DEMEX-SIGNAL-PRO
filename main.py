@@ -420,6 +420,7 @@ def main():
         next_asset_refresh = time.monotonic() + refresh_interval
         trader = DemoTrader(connector, settings, stop_check=STOP_FILE.exists)
         telegram = TelegramNotifier.from_env()
+        trader.late_settlement_callback = telegram.send_trade_result
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | BINÁRIAS | M1 | expiração 1 minuto | "
             "INDICADOR HARAMI + ENGOLFO | padrões originais + filtros EMA 21/45 | sem cruzamento SMA/WMA adicional | confirmação no fechamento e entrada na próxima M1 (até 5s)."
@@ -427,7 +428,7 @@ def main():
         )
         print(
             "Ativos OTC disponíveis: {} | Aprovados no backtest: {} | "
-            "Backtest: 200 candles M1 | mínimo 70% | nova seleção a cada {} minutos | "
+            "Backtest: 100 candles M1 | mínimo acima de 70% | nova seleção a cada {} minutos | "
             "Entrada R$ {:.2f} | Soros 1 | Stop R$ {:.2f} | Take R$ {:.2f}"
             .format(
                 len(available_assets), len(assets), refresh_interval // 60,
