@@ -431,8 +431,11 @@ class DemoTrader:
                     # Uma mudança/recusa do modo de conta é uma trava de segurança.
                     raise
                 except TimeoutError:
-                    # O método já consumiu o prazo restante; a próxima volta transfere
-                    # a ordem conhecida para o monitor de reconciliação.
+                    # Timeout de uma consulta isolada pode ocorrer antes do prazo global.
+                    # Aguardar brevemente evita um ciclo de repetição acelerado.
+                    remaining_after_timeout = result_deadline - time.monotonic()
+                    if remaining_after_timeout > 0:
+                        time.sleep(min(0.5, remaining_after_timeout))
                     continue
                 except Exception as exc:
                     if self.stop_check and self.stop_check():
