@@ -303,6 +303,10 @@ class DemoTrader:
                 return None
             self.last_signal_key = key
             self.busy = True
+        if self.stop_check and self.stop_check():
+            with self._state_lock:
+                self.busy = False
+            raise InterruptedError("Parada solicitada antes do envio de uma nova ordem.")
         while True:
             try:
                 practice_confirmed = (
