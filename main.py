@@ -83,7 +83,7 @@ def _wait_for_market_data_retry(delay, stop_check=None):
 
 
 def get_market_assets(connector, settings, stop_check=None):
-    """Retorna somente ativos OTC binários; repete respostas vazias/incompletas."""
+    """Retorna ativos OTC do tipo compatível com a expiração configurada."""
     mode = str(settings.get("market_mode", "OTC")).upper()
     if mode != "OTC":
         raise RuntimeError("Este robô está configurado para analisar exclusivamente ativos OTC.")
@@ -93,7 +93,9 @@ def get_market_assets(connector, settings, stop_check=None):
         if stop_check and stop_check():
             raise InterruptedError("Parada solicitada durante a atualização dos ativos OTC.")
         try:
-            availability = connector.get_otc_asset_availability(\n                expiry_minutes=int(settings.get("expiry_minutes", 1))\n            )
+            availability = connector.get_otc_asset_availability(
+                expiry_minutes=int(settings.get("expiry_minutes", 1))
+            )
             if not availability:
                 raise MarketDataUnavailableError(
                     "A BullX retornou zero ativos OTC; a lista não será considerada válida."
