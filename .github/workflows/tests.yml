@@ -1,29 +1,73 @@
-name: DEMEX tests
+name: DEMEX validation and stable release
+
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - demex-backtest-84-refresh
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
 jobs:
-  unittest:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
       - name: Install project dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Check Termux updater shell syntax
+      - name: Validate Bash scripts
         run: |
           bash -n demex-auto-update.sh
+          bash -n termux/demex-bootstrap.sh
           bash -n demex-agent.sh
           bash -n demex.sh
           bash -n telegram-control.sh
-      - name: Compile Python modules
-        run: python -m compileall -q main.py bullex_connector.py signal_engine.py trade_manager.py telegram_notifier.py strategies tests
-      - name: Run unit tests
+      - name: Compile tracked Python files
+        run: |
+          git ls-files -z -- '*.py' | xargs -0 -r python -m py_compile
+          python -m py_compile termux/termux_updater.py
+      - name: Run project unit tests
         run: python -m unittest discover -s tests -v
+      - name: Validate updater package structure
+        run: |
+          test -f main.py
+          test -f settings.json
+          test -f requirements.txt
+          test -f strategies/my_strategy.py
+          python -m py_compile termux/termux_updater.py
+      - name: Verify protected DEMEX settings
+        run: |
+          python - <<'PY'
+          import json
+          with open("settings.json", encoding="utf-8") as stream:
+              settings = json.load(stream)
+          assert settings["scan_interval_seconds"] == 2
+          assert settings["entry_cooldown_seconds"] == 60
+          assert settings["custom_script_path"] == "strategies/my_strategy.py"
+          PY
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release package
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=demex/ "$GITHUB_SHA" > dist/demex-source.tar.gz
+          cd dist
+          sha256sum demex-source.tar.gz > SHA256SUMS
+      - name: Publish stable GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/demex-source.tar.gz
+            dist/SHA256SUMS
