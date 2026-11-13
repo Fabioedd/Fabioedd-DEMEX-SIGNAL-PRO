@@ -467,16 +467,16 @@ def main():
         pending = {}
         processed = set()
 
-        while not trader.stopped:
+        while not trader.stopped or trader.has_pending_orders:
             if STOP_FILE.exists():
                 trader.stopped = True
                 print("PARADA SOLICITADA: nenhuma nova operação será iniciada.")
                 break
 
-            # Enquanto um ID confirmado aguarda resultado, o monitor de reconciliação
-            # trabalha em segundo plano; não desperdiçar ciclos analisando sinais.
-            if trader.paused:
-                _wait_for_market_data_retry(1.0, stop_check=STOP_FILE.exists)
+            # Ao atingir take/stop, não abrir novas entradas. O monitor continua
+            # conciliando as ordens já enviadas antes de fechar a conexão.
+            if trader.stopped:
+                _wait_for_market_data_retry(0.2, stop_check=STOP_FILE.exists)
                 continue
 
             if not pending and time.monotonic() >= next_asset_refresh:
