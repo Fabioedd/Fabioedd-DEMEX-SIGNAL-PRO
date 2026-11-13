@@ -134,7 +134,7 @@ def backtest_asset(connector, asset, settings, server_timestamp=None):
         base["wins"] / base["operations"] * 100.0 if base["operations"] else 0.0
     )
     threshold = float(settings.get("minimum_backtest_accuracy", 70.0))
-    base["approved"] = base["operations"] > 0 and base["accuracy"] >= threshold
+    base["approved"] = base["operations"] > 0 and base["accuracy"] > threshold
     base["reason"] = (
         "Aprovado" if base["approved"] else
         "Sem operações decisivas" if base["operations"] == 0 else
