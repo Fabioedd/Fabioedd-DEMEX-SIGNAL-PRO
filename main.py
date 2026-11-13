@@ -716,14 +716,14 @@ def main():
                         candidate["symbol"], candidate["direction"], exc
                     )
                 except OrderConfirmationUnknownError as exc:
-                    # Sem ID, o estado é incerto. Parar evita duplicidade e falsa perda.
+                    # O gerenciador monitora o request_id original e libera a próxima
+                    # entrada após a expiração M1, sem reenviar a ordem anterior.
                     logging.critical(
                         "CONFIRMAÇÃO DA ORDEM DESCONHECIDA | %s %s | %s. "
-                        "Sessão pausada por segurança; confira o histórico da BullX.",
+                        "A resposta será reconciliada em segundo plano; após 1 minuto "
+                        "o DEMEX poderá procurar a próxima entrada.",
                         candidate["symbol"], candidate["direction"], exc
                     )
-                    trader.stopped = True
-                    trader.stop_reason = "Confirmação da ordem desconhecida; verificar histórico da BullX"
                 except PermissionError:
                     # Conta diferente de PRACTICE ou outra trava de segurança:
                     # não tentar contornar nem continuar enviando ordens.
