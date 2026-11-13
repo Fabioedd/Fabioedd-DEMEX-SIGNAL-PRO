@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 
-from strategies.harami_engolfo_tendencia import get_signal_at_index
+from strategies.my_strategy import get_signal_at_index  # GO 2024 SUPER, mesma estratégia do motor principal
 
 logger = logging.getLogger(__name__)
 
