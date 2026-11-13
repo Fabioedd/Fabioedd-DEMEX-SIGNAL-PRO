@@ -31,7 +31,9 @@ class FakeConnector:
         self.orders.append((symbol, direction, amount, expiry))
         return len(self.orders)
 
-    def wait_practice_result(self, order_id):
+    def wait_practice_result(self, order_id, stop_check=None, timeout_seconds=None):
+        if stop_check and stop_check():
+            raise InterruptedError("stop")
         item = self.results.pop(0)
         if isinstance(item, BaseException):
             raise item
@@ -229,6 +231,29 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(len(c.orders), 0)
         self.assertEqual(len(late_notifications), 1)
         self.assertEqual(late_notifications[0]["result"], "WIN")
+
+ 
+    def test_stop_interrupts_wait_after_order_was_sent(self):
+        c = FakeConnector([("WIN", 4.25)])
+        t = DemoTrader(c, self.settings(), stop_check=lambda: True)
+        with self.assertRaises(InterruptedError):
+            t.execute_and_settle(self.signal())
+        self.assertEqual(len(c.orders), 1)
+        self.assertEqual(t.total_entries, 0)
+        self.assertFalse(t.busy)
+
+    def test_result_timeout_moves_known_order_to_blocking_monitor(self):
+        c = FakeConnector([TimeoutError("result timeout")])
+        t = DemoTrader(c, self.settings())
+        with patch("trade_manager.time.monotonic", side_effect=[0.0, 0.0, 181.0]), \\
+             patch.object(t, "_start_unknown_order_monitor") as start_monitor:
+            result = t.execute_and_settle(self.signal())
+        self.assertIsNone(result)
+        self.assertTrue(t.paused)
+        self.assertEqual(t.pending_unknown_order["order_id"], 1)
+        self.assertEqual(t.total_entries, 0)
+        self.assertEqual(len(c.orders), 1)
+        start_monitor.assert_called_once()
 
     def test_late_explicit_rejection_resumes_without_counting_entry(self):
         c = FakeConnector([])
