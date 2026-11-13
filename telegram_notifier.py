@@ -3,9 +3,9 @@ import html
 import json
 import logging
 import os
+import shutil
+import subprocess
 from datetime import datetime
-import urllib.error
-import urllib.request
 
 log = logging.getLogger(__name__)
 
@@ -43,26 +43,47 @@ class TelegramNotifier:
     def send(self, message):
         if not self.enabled:
             return False
+        if not shutil.which("curl"):
+            log.warning("Comando curl indisponível; notificação Telegram não enviada.")
+            return False
         url = "{}/bot{}/sendMessage".format(self.API_BASE, self.bot_token)
-        payload = json.dumps({
+        body = json.dumps({
             "chat_id": self.chat_id,
             "text": message,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
-        )
+        }, ensure_ascii=False)
+        # IPv4 + HTTP/1.1 reproduzem o transporte validado no Termux.
+        # URL/token ficam no stdin do curl, nunca nos argumentos do processo.
+        config = "\n".join((
+            "url = {}".format(json.dumps(url)),
+            'request = "POST"',
+            'header = "Content-Type: application/json"',
+            "data = {}".format(json.dumps(body)),
+            "silent",
+            "show-error",
+            "max-time = {}".format(self.timeout),
+            "",
+        ))
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                result = json.loads(response.read().decode("utf-8"))
+            response = subprocess.run(
+                ["curl", "-4", "--http1.1", "--config", "-"],
+                input=config,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout + 2,
+                check=False,
+            )
+            if response.returncode != 0:
+                raise RuntimeError("Falha de comunicação com o Telegram.")
+            result = json.loads(response.stdout)
             if not result.get("ok"):
                 log.warning("Telegram recusou uma notificação do DEMEX.")
                 return False
             return True
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError) as exc:
-            # A falha do Telegram nunca deve interromper nem repetir uma ordem.
-            log.warning("Não foi possível enviar notificação ao Telegram: %s", exc)
+        except (subprocess.SubprocessError, OSError, ValueError, RuntimeError):
+            # Nunca registrar stderr/config: podem conter a URL com o token.
+            log.warning("Não foi possível enviar notificação ao Telegram.")
             return False
 
     def send_session_start(self, account, market, timeframe, expiry_minutes,
