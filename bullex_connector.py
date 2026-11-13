@@ -298,15 +298,16 @@ class BullexReadOnlyConnector:
                     option_type,int(expiration_timestamp),request_id
                 )
             except Exception as exc:
-                if is_transport_error(exc):
-                    self.connected=False
-                    raise OrderConfirmationUnknownError(
-                        "A conexão caiu durante o envio. A BullX pode ter recebido a ordem; "
-                        "o DEMEX manterá o request_id original e não reenviará.",
-                        request_ref=request_ref
-                    ) from exc
-                self.pending_order_request=None
-                raise
+                # A chamada de envio já foi iniciada. Uma exceção inesperada não
+                # prova que a corretora recusou a ordem; preservar o request_id
+                # evita uma segunda entrada caso a BullX tenha aceitado a primeira.
+                self.connected=False
+                raise OrderConfirmationUnknownError(
+                    "A BullX retornou uma falha inesperada durante o envio. "
+                    "O estado da ordem é desconhecido; o DEMEX preservará o request_id "
+                    "original e não reenviará até reconciliar a resposta.",
+                    request_ref=request_ref
+                ) from exc
 
             deadline=time.monotonic()+5.0
             while time.monotonic()<deadline:
