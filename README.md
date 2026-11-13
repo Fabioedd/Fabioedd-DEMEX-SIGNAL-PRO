@@ -59,7 +59,7 @@ Comandos privados no bot:
 
 Ao iniciar com `bash demex.sh iniciar`, o listener também é iniciado automaticamente quando as credenciais estão configuradas. O listener aceita apenas mensagens privadas do Chat ID configurado; ele não envia ordens à corretora. Detalhes em [TELEGRAM_CONTROL.md](TELEGRAM_CONTROL.md).
 
-Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identificador da solicitação original, não reenvia a ordem e bloqueia novas entradas até identificar se a corretora aceitou ou recusou aquela mesma solicitação. Se a resposta chegar depois, consulta o resultado pelo histórico da corretora, atualiza o placar e tenta enviar a notificação tardia. Se a BullX não fornecer confirmação e o histórico não permitir identificar a operação com segurança, o DEMEX permanece pausado para novas entradas; nesse caso é necessário conferir o histórico da corretora antes de liberar a sessão.
+Quando a confirmação de uma ordem fica desconhecida, o DEMEX preserva o identificador da solicitação original, não reenvia a ordem e bloqueia novas entradas até identificar se a corretora aceitou ou recusou aquela mesma solicitação. Se a resposta chegar depois no cliente original, o DEMEX consulta o resultado pelo histórico da corretora, atualiza o placar e tenta enviar a notificação tardia. Se o request_id nunca receber resposta, o robô permanece pausado para novas entradas: não reenvia nem tenta adivinhar se a ordem foi aberta. Nesse caso, é necessária a conferência manual do histórico da BullX antes de liberar a sessão.
 
 ## Testes e limitações
 
