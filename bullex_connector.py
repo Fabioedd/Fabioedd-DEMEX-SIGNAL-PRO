@@ -371,14 +371,13 @@ class BullexReadOnlyConnector:
     def clear_pending_order_request(self,request_ref=None):
         """Libera a referência ao cliente antigo depois de resolver a ordem."""
         if request_ref is None:
-            removed = list(self.pending_order_requests.values())
-            self.pending_order_requests.clear()
-            self.pending_order_request = None
-        else:
-            request_id = request_ref.get("request_id") if isinstance(request_ref, dict) else None
-            removed = [self.pending_order_requests.pop(request_id, request_ref)] if request_id else []
-            if self.pending_order_request is not None and self.pending_order_request.get("request_id") == request_id:
-                self.pending_order_request = next(iter(self.pending_order_requests.values()), None)
+            # Ordens já confirmadas não possuem request_ref. Não limpar outras
+            # solicitações desconhecidas por causa da liquidação de uma ordem.
+            return
+        request_id = request_ref.get("request_id") if isinstance(request_ref, dict) else None
+        removed = [self.pending_order_requests.pop(request_id, request_ref)] if request_id else []
+        if self.pending_order_request is not None and self.pending_order_request.get("request_id") == request_id:
+            self.pending_order_request = next(iter(self.pending_order_requests.values()), None)
         for item in removed:
             old_client = item.get("client") if isinstance(item, dict) else None
             if old_client is not None and old_client is not self.client and not any(
