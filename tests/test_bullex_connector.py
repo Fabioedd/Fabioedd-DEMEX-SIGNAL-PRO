@@ -37,6 +37,13 @@ class FakeApi:
 class FakeClient:
     def __init__(self, api):
         self.api = api
+        self.logout_count = 0
+
+    def connect(self):
+        return True, "ok"
+
+    def logout(self):
+        self.logout_count += 1
 
     def check_connect(self):
         return True
@@ -142,6 +149,25 @@ class BullexConnectorTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["option_type"], "binary")
         self.assertTrue(result[0]["available"])
+
+
+    def test_reconnect_does_not_logout_original_client_with_pending_order(self):
+        original_api = FakeApi()
+        connector, original_client = self.make_connector(original_api)
+        request_ref = {
+            "client": original_client,
+            "request_id": "pending-123",
+        }
+        connector.pending_order_request = request_ref
+        replacement_client = FakeClient(FakeApi())
+        with patch("bullex_connector.Bullex", return_value=replacement_client), \
+             patch.object(connector, "_wait_for_retry"):
+            connector.reconnect_forever()
+
+        self.assertIs(connector.client, replacement_client)
+        self.assertEqual(original_client.logout_count, 0)
+        connector.clear_pending_order_request(request_ref)
+        self.assertEqual(original_client.logout_count, 1)
 
     def test_result_is_retrieved_from_closed_order_history(self):
         api = FakeApi()
