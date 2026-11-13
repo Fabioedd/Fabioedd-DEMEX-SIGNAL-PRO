@@ -345,20 +345,41 @@ def update() -> int:
         log("ATUALIZAÇÃO BLOQUEADA: agente antigo de sincronização ainda está ativo. Encerre-o antes da migração para evitar duas atualizações concorrentes.")
         return 2
 
-    listeners = find_telegram_listeners()
-    if listeners and PROJECT_LINK.exists() and not PROJECT_LINK.is_symlink():
-        legacy_root = str(PROJECT_LINK.resolve())
-        if any(
-            item.get("cwd") == legacy_root
-            or (item.get("script") and str(Path(str(item["script"])).resolve().parent) == legacy_root)
-            for item in listeners
-        ):
-            log(
-                "ATUALIZAÇÃO BLOQUEADA: o controle Telegram ainda está executando "
-                "diretamente do checkout antigo. Encerre somente o listener Telegram "
-                "antes da primeira migração; o robô não precisa ser desligado."
-            )
-            return 2
+    discovered_listeners = find_telegram_listeners()
+    legacy_root = PROJECT_LINK.resolve() if PROJECT_LINK.exists() and not PROJECT_LINK.is_symlink() else None
+    managed_listeners = []
+    for listener in discovered_listeners:
+        script_value = listener.get("script")
+        if not script_value:
+            continue
+        try:
+            script_path = Path(str(script_value)).resolve()
+            script_path.relative_to(MANAGER.resolve())
+            is_managed_version = True
+        except (ValueError, OSError):
+            is_managed_version = False
+        is_legacy_listener = False
+        if legacy_root is not None:
+            try:
+                script_path.relative_to(legacy_root)
+                is_legacy_listener = True
+            except (ValueError, OSError, UnboundLocalError):
+                pass
+        if is_managed_version or is_legacy_listener:
+            managed_listeners.append(listener)
+
+    if legacy_root is not None and any(
+        item.get("script") and Path(str(item["script"])).resolve().is_relative_to(legacy_root)
+        for item in managed_listeners
+    ):
+        log(
+            "ATUALIZAÇÃO BLOQUEADA: o controle Telegram ainda está executando "
+            "diretamente do checkout antigo. Encerre somente o listener Telegram "
+            "antes da primeira migração; o robô não precisa ser desligado."
+        )
+        return 2
+
+    listeners = managed_listeners
 
     lock = MANAGER / "update.lock"
     try:
