@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-import urllib.request
 
 
 BOOTSTRAP = Path(__file__).resolve().parents[1] / "termux" / "demex-bootstrap.sh"
@@ -33,7 +32,7 @@ class FakeResponse:
 
 def recovery_source():
     source = BOOTSTRAP.read_text(encoding="utf-8")
-    match = re.search(r"<<'PY'\\n(.*?)\\nPY\\n", source, re.DOTALL)
+    match = re.search(r"<<'PY'\n(.*?)\nPY\n", source, re.DOTALL)
     if not match:
         raise AssertionError("Bloco Python de recuperação não encontrado.")
     return match.group(1)
@@ -41,7 +40,7 @@ def recovery_source():
 
 def make_archive():
     output = io.BytesIO()
-    payload = b"# updater de teste\\n"
+    payload = b"# updater de teste\n"
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
         info = tarfile.TarInfo("demex/termux/termux_updater.py")
         info.size = len(payload)
@@ -52,7 +51,7 @@ def make_archive():
 class TermuxBootstrapTests(unittest.TestCase):
     def test_recovery_uses_github_release_redirect_and_validates_checksum(self):
         archive = make_archive()
-        checksum = f"{hashlib.sha256(archive).hexdigest()}  demex-source.tar.gz\\n".encode()
+        checksum = f"{hashlib.sha256(archive).hexdigest()}  demex-source.tar.gz\n".encode()
         responses = [
             FakeResponse(url="https://github.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/releases/tag/v1.0.3"),
             FakeResponse(data=archive),
@@ -70,8 +69,8 @@ class TermuxBootstrapTests(unittest.TestCase):
             finally:
                 sys.argv = original_argv
             self.assertEqual(stopped.exception.code, 0)
-            self.assertEqual(updater.read_bytes(), b"# updater de teste\\n")
-            self.assertEqual(version.read_text(encoding="utf-8"), "v1.0.3\\n")
+            self.assertEqual(updater.read_bytes(), b"# updater de teste\n")
+            self.assertEqual(version.read_text(encoding="utf-8"), "v1.0.3\n")
             first_url = open_url.call_args_list[0].args[0].full_url
             self.assertEqual(
                 first_url,
