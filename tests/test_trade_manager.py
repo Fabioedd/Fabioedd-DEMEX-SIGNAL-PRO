@@ -115,15 +115,26 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(t.wins, 1)
         self.assertEqual(t.net, 4.25)
 
-    def test_multiple_orders_continue_and_settle_in_submission_order(self):
+    def test_only_one_order_can_be_open_or_pending_at_a_time(self):
         c = FakeConnector([("WIN", 4.25), ("LOSS", -9.25)])
         t = self.trader(c)
+
         self.queue_order(t, self.signal(1))
+        self.assertTrue(t.has_pending_orders)
         self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
 
+        # A segunda chamada é recusada enquanto a primeira aguarda liquidação.
+        self.assertEqual(len(c.orders), 1)
+        self.assertEqual(len(t.pending_unknown_order_queue), 1)
+
+        t._monitor_unknown_order()
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 1)
+        self.assertEqual(t.wins, 1)
+
+        # Só depois do resultado confirmado a próxima operação é liberada.
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
         self.assertEqual(len(c.orders), 2)
-        self.assertEqual(len(t.pending_unknown_order_queue), 2)
-        self.assertFalse(t.paused)
         t._monitor_unknown_order()
 
         self.assertFalse(t.has_pending_orders)
@@ -131,25 +142,32 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(t.wins, 1)
         self.assertEqual(t.losses, 1)
         self.assertEqual(t.net, -5.0)
-        # A WIN followed by LOSS preserves the original Soros sequence.
         self.assertEqual(t.next_entry, t.base)
 
-    def test_unknown_confirmation_does_not_pause_scanner_or_block_next_order(self):
+    def test_unknown_confirmation_blocks_new_entries_until_reconciled(self):
         c = UnknownOrderConnector([])
         t = self.trader(c)
         with patch.object(t, "_start_unknown_order_monitor"):
             with self.assertRaises(OrderConfirmationUnknownError):
                 t.execute_and_settle(self.signal(1))
-        self.assertFalse(t.paused)
-        self.assertFalse(t.stopped)
-        self.assertTrue(t.has_pending_orders)
 
-        # Another signal can be submitted while the first request is unresolved.
+        self.assertTrue(t.has_pending_orders)
+        self.assertEqual(len(c.orders), 1)
+
+        # Uma recusa explícita encerra a pendência sem contar uma entrada.
+        c.client.api.buy_multi_option["original-request"] = {"message": "order rejected"}
+        t._monitor_unknown_order()
+        self.assertFalse(t.has_pending_orders)
+        self.assertEqual(t.total_entries, 0)
+
+        c.results = [("WIN", 4.25)]
         c.place_practice_order = FakeConnector.place_practice_order.__get__(c, FakeConnector)
         self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
         self.assertEqual(len(c.orders), 2)
+        t._monitor_unknown_order()
+        self.assertEqual(t.total_entries, 1)
 
-    def test_confirmed_order_stays_ahead_of_later_unknown_confirmation(self):
+    def test_confirmed_order_must_settle_before_unknown_order_can_be_sent(self):
         c = FakeConnector([("WIN", 4.25), ("LOSS", -5.0)])
         original_place = c.place_practice_order
         calls = {"count": 0}
@@ -157,25 +175,28 @@ class TradeManagerTests(unittest.TestCase):
 
         def place_with_later_unknown(symbol, direction, amount, expiry):
             calls["count"] += 1
-            if calls["count"] == 1:
-                return original_place(symbol, direction, amount, expiry)
             c.orders.append((symbol, direction, amount, expiry))
             raise OrderConfirmationUnknownError(
                 "late confirmation", request_ref=request_ref
             )
 
-        c.place_practice_order = place_with_later_unknown
         t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
+        self.assertEqual(len(c.orders), 1)
+
+        t._monitor_unknown_order()
+        self.assertEqual(t.total_entries, 1)
+        self.assertEqual(t.wins, 1)
+
+        c.place_practice_order = place_with_later_unknown
         with patch.object(t, "_start_unknown_order_monitor"):
-            self.assertIsNone(t.execute_and_settle(self.signal(1)))
             with self.assertRaises(OrderConfirmationUnknownError):
                 t.execute_and_settle(self.signal(2, "GBPUSD-OTC"))
+        self.assertEqual(len(c.orders), 2)
 
-        self.assertIsNone(t.pending_unknown_order)
-        self.assertEqual(len(t.pending_unknown_order_queue), 2)
         c.client.api.buy_multi_option["later-request"] = {"id": 2}
         t._monitor_unknown_order()
-
         self.assertFalse(t.has_pending_orders)
         self.assertEqual(t.total_entries, 2)
         self.assertEqual(t.wins, 1)
@@ -207,27 +228,32 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(t.total_entries, 0)
         self.assertEqual(t.net, 0)
 
-    def test_take_profit_stops_new_entries_but_monitor_finishes_existing_queue(self):
-        c = FakeConnector([("WIN", 50.0), ("LOSS", -5.0)])
+    def test_take_profit_stops_after_the_single_active_order_settles(self):
+        c = FakeConnector([("WIN", 50.0)])
         t = self.trader(c)
         self.queue_order(t, self.signal(1))
         self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
-        t._monitor_unknown_order()
+        self.assertEqual(len(c.orders), 1)
 
+        t._monitor_unknown_order()
         self.assertTrue(t.stopped)
         self.assertEqual(t.stop_reason, "TAKE PROFIT atingido")
         self.assertFalse(t.has_pending_orders)
-        self.assertEqual(t.total_entries, 2)
+        self.assertEqual(t.total_entries, 1)
         self.assertIsNone(t.execute_and_settle(self.signal(3)))
 
-    def test_stop_loss_stops_new_entries(self):
+    def test_stop_loss_counts_sequential_orders_only_after_each_settlement(self):
         c = FakeConnector([("LOSS", -5.0), ("LOSS", -5.0), ("LOSS", -5.0)])
         t = self.trader(c)
         for n in (1, 2, 3):
             self.queue_order(t, self.signal(n, "ASSET{}".format(n)))
-        t._monitor_unknown_order()
+            self.assertEqual(len(c.orders), n)
+            if n < 3:
+                self.assertFalse(t.stopped)
+            t._monitor_unknown_order()
         self.assertTrue(t.stopped)
         self.assertEqual(t.net, -15.0)
+        self.assertEqual(t.total_entries, 3)
         self.assertIsNone(t.execute_and_settle(self.signal(4)))
 
     def test_soros_one_then_reset_after_background_results(self):

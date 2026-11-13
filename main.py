@@ -410,8 +410,14 @@ def main():
             scan_elapsed = None
             candidates = []
             try:
-                if pending:
+                if pending or trader.has_pending_orders or trader.busy:
                     candidates = []
+                    if trader.has_pending_orders:
+                        logging.info(
+                            "ENTRADA BLOQUEADA: existe uma operação aguardando resultado. "
+                            "O DEMEX só retomará a varredura após WIN, LOSS, TIE ou recusa "
+                            "explícita da ordem atual."
+                        )
                 else:
                     scan_started = time.monotonic()
                     candidates = scan_once(
