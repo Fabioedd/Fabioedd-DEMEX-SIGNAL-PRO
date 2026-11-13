@@ -49,10 +49,9 @@ class DemoTrader:
 
     @stopped.setter
     def stopped(self, value):
-        # main.py still requests a stop when it catches an unknown confirmation.
-        # Convert that legacy stop request into a recoverable pause. An explicit
-        # user stop (/stop) remains authoritative because stop_check is then true.
-        if value and self.paused and not (self.stop_check and self.stop_check()):
+        # Uma confirmação desconhecida não encerra a sessão: após a expiração,
+        # novas entradas podem seguir. A parada explícita do usuário continua valendo.
+        if value and self.pending_unknown_order is not None and not (self.stop_check and self.stop_check()):
             log.warning(
                 "ENCERRAMENTO AUTOMÁTICO ADIADO: existe uma ordem com confirmação "
                 "desconhecida. DEMEX permanece ativo em reconciliação, sem novas entradas."
@@ -147,8 +146,8 @@ class DemoTrader:
         return summary
 
     def _monitor_unknown_order(self):
-        """Acompanha a resposta tardia sem reenviar; só libera novas entradas após resolver."""
-        while self.paused and not self.stopped:
+        """Reconcilia a resposta tardia; libera novas entradas após a expiração M1."""
+        while self.pending_unknown_order is not None and not self.stopped:
             # Aguarda a chamada original de execute_and_settle terminar seu finally
             # antes de reconciliar; evita corrida sobre a trava busy.
             with self._state_lock:
@@ -162,6 +161,18 @@ class DemoTrader:
                     "nenhuma nova ordem será enviada."
                 )
                 return
+            pending = self.pending_unknown_order or {}
+            release_after = max(1, self.expiry) * 60
+            elapsed = time.time() - float(pending.get("submitted_at", time.time()))
+            if self.paused and elapsed >= release_after:
+                with self._state_lock:
+                    self.paused = False
+                log.warning(
+                    "TEMPO DA ORDEM DESCONHECIDA ESGOTADO (%d min). "
+                    "DEMEX liberado para procurar a próxima entrada; "
+                    "a resposta da ordem anterior continuará sendo monitorada.",
+                    self.expiry
+                )
             try:
                 state, value = self._read_late_order_response()
                 if state == "rejected":
@@ -185,7 +196,7 @@ class DemoTrader:
                         "O DEMEX consultará o resultado desta mesma ordem, sem reenviar.",
                         order_id
                     )
-                    while self.paused and not self.stopped:
+                    while self.pending_unknown_order is not None and not self.stopped:
                         try:
                             result, pnl = self.connector.wait_practice_result(order_id)
                             with self._state_lock:
@@ -229,7 +240,7 @@ class DemoTrader:
                             if not is_transport_error(exc):
                                 log.exception(
                                     "Não foi possível consultar o resultado da ordem %s. "
-                                    "DEMEX continuará pausado e tentará novamente.", order_id
+                                    "DEMEX continuará monitorando a ordem e tentará novamente.", order_id
                                 )
                                 time.sleep(5)
                                 continue
@@ -244,7 +255,7 @@ class DemoTrader:
             except Exception:
                 log.exception(
                     "Falha ao verificar a resposta tardia da ordem. "
-                    "DEMEX permanece ativo, pausado para novas entradas, e tentará novamente."
+                    "DEMEX permanece ativo e continuará monitorando a resposta tardia."
                 )
                 time.sleep(5)
 
