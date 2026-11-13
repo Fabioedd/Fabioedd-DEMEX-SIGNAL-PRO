@@ -59,6 +59,7 @@ class UpdaterSafetyTests(unittest.TestCase):
     def test_latest_release_resolves_redirect_without_rest_api(self):
         response = MagicMock()
         response.geturl.return_value = "https://github.com/Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO/releases/tag/v1.0.2"
+        response.__enter__.return_value = response
         with patch.object(updater.urllib.request, "urlopen", return_value=response) as open_url:
             tag, assets = updater.latest_release()
         self.assertEqual(tag, "v1.0.2")
@@ -72,6 +73,7 @@ class UpdaterSafetyTests(unittest.TestCase):
     def test_latest_release_rejects_unexpected_redirect(self):
         response = MagicMock()
         response.geturl.return_value = "https://github.com/login"
+        response.__enter__.return_value = response
         with patch.object(updater.urllib.request, "urlopen", return_value=response):
             with self.assertRaises(RuntimeError):
                 updater.latest_release()
