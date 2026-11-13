@@ -3,7 +3,7 @@
 # Instala o bootstrapper independente e delega toda atualização a ele.
 set -Eeuo pipefail
 HOME_DIR="${HOME:?HOME não definido}"
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_DIR="$HOME_DIR/Fabioedd-DEMEX-SIGNAL-PRO"
 BOOTSTRAP="$HOME_DIR/.demex-bootstrap.sh"
 MANAGER="$HOME_DIR/.demex"
 mkdir -p "$MANAGER"
