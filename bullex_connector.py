@@ -361,15 +361,53 @@ class BullexReadOnlyConnector:
             request_ref is None or current.get("request_id")==request_ref.get("request_id")
         ):
             self.pending_order_request=None
+            old_client=current.get("client")
+            if old_client is not None and old_client is not self.client:
+                try:
+                    old_client.logout()
+                except Exception as exc:
+                    logger.debug("Não foi possível encerrar o socket antigo da ordem resolvida: %s",exc)
 
     def wait_practice_result(self,order_id):
+        """Consulta o histórico de opções fechadas, inclusive após reconectar."""
         with self.api_lock:
-            self._require_connection()
-            if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
+            if self.config.account_type!="PRACTICE":
                 raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
-            state,pnl=self.client.check_win_v4(int(order_id))
-            state=str(state).lower()
-            return ("WIN" if state=="win" else "LOSS" if state=="loose" else "TIE",round(float(pnl),2))
+            target_id=int(order_id)
+            while True:
+                self._require_connection()
+                if self.client.get_balance_mode()!="PRACTICE":
+                    raise PermissionError("Consulta bloqueada: conta não está em PRACTICE.")
+                client=self.client
+                client.api.get_options_v2_data=None
+                client.api.get_options_v2(20,"binary,turbo")
+                deadline=time.monotonic()+10.0
+                while client.api.get_options_v2_data is None:
+                    if not client.check_connect():
+                        self.connected=False
+                        raise ConnectionError("Conexão BullX caiu ao consultar o resultado da ordem.")
+                    if time.monotonic()>=deadline:
+                        raise TimeoutError("A BullX não respondeu à consulta do histórico de opções em 10 segundos.")
+                    time.sleep(0.05)
+
+                data=client.api.get_options_v2_data
+                closed_list=data.get("msg",{}).get("closed_options",[]) if isinstance(data,dict) else []
+                for option in closed_list:
+                    option_id=option.get("id")
+                    matched=(option_id==target_id) or (
+                        isinstance(option_id,list) and target_id in option_id
+                    )
+                    if not matched:
+                        continue
+                    state=str(option.get("win","")).lower()
+                    if state=="equal":
+                        return "TIE",0.0
+                    amount=float(option.get("amount",0))
+                    pnl= float(option.get("win_amount",0))-amount
+                    if state=="loose":
+                        pnl=-amount
+                    return ("WIN" if state=="win" else "LOSS"),round(pnl,2)
+                time.sleep(1.0)
     def get_server_timestamp(self):
         with self.api_lock:
             self._require_connection()
