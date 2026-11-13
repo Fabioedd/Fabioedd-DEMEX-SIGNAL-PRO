@@ -22,7 +22,7 @@
     "initial_entry_brl": 5,
     "soros_level": 1,
     "stop_loss_brl": 15,
-    "take_profit_brl": 30,
+    "take_profit_brl": 50,
     "automatic_execution_enabled": true,
     "note": "Ordens automáticas permitidas somente com conta PRACTICE confirmada pela corretora."
   }
