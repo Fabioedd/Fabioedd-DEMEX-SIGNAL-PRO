@@ -254,6 +254,23 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(len(c.orders), 1)
         start_monitor.assert_called_once()
 
+
+    def test_confirmed_order_is_not_released_when_result_is_delayed(self):
+        c = FakeConnector([])
+        t = DemoTrader(c, self.settings())
+        t.paused = True
+        t.pending_unknown_order = {
+            "signal": self.signal(1),
+            "amount": t.base,
+            "submitted_at": 1.0,
+            "order_id": 987654,
+            "request_ref": None,
+        }
+        with patch("trade_manager.time.time", return_value=10000.0):
+            self.assertFalse(t._release_unknown_order_if_expired())
+        self.assertTrue(t.paused)
+        self.assertEqual(t.pending_unknown_order["order_id"], 987654)
+
     def test_late_explicit_rejection_resumes_without_counting_entry(self):
         c = FakeConnector([])
         c.client.api.buy_multi_option = {
