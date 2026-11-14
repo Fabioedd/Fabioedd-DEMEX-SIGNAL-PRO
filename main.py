@@ -424,7 +424,7 @@ def main():
                     # Descarta sinais que ficaram antigos durante a operação,
                     # mas mantém a varredura ativa para analisar todos os ativos.
                     pending.clear()
-                if pending and not (trade_worker_active.is_set() or trader.has_pending_orders or trader.busy):
+                if pending and not (trader.has_pending_orders or trader.busy):
                     candidates = []
                 else:
                     scan_started = time.monotonic()
@@ -461,7 +461,7 @@ def main():
             cooldown_remaining = trader._entry_cooldown_remaining()
             for candidate in candidates:
                 key = candidate_key(candidate)
-                if trade_worker_active.is_set() or trader.has_pending_orders or trader.busy:
+                if trader.has_pending_orders or trader.busy:
                     processed.add(key)
                     logging.info(
                         "SINAL ANALISADO, MAS ENTRADA BLOQUEADA | %s %s | "
