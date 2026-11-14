@@ -105,7 +105,7 @@ class TelegramNotifier:
             "Período: <b>{}</b> | Expiração: <b>{} min</b>\n"
             "Estratégia: <b>GO 2024 FILTRADO</b>\n"
             "Indicadores: <b>SMA 1/34 + WMA 5 | EMA 21/45 | ADX 14 >= 35</b>\n"
-            "Controle de entradas: <b>sem espera fixa; aguarda a liquidação da operação atual</b>\n"
+            "Controle de entradas: <b>aguarda liquidação e pausa global aleatória de 2 a 3 minutos</b>\n"
             "Ativos monitorados: <b>{}</b>\nEntrada inicial: <b>R$ {:.2f}</b>\n"
             "Stop Loss: <b>R$ {:.2f}</b> | Take Profit: <b>R$ {:.2f}</b>"
         ).format(html.escape(str(account)), html.escape(str(market)),
@@ -133,7 +133,7 @@ class TelegramNotifier:
         )
         signal_time = local_time(entry.get("signal_timestamp"))
         entry_time = local_time(entry.get("entry_timestamp"))
-        next_entry_line = "Próxima entrada: <b>após a liquidação da operação atual</b>."
+        next_entry_line = "Próxima entrada: <b>após a liquidação + pausa global aleatória de 2 a 3 minutos</b>."
         return self.send(
             "🎯 <b>DEMEX SIGNAL PRO</b>\n"
             "🟢 <b>SINAL CONFIRMADO</b>\n"
