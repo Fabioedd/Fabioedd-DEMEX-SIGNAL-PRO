@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import datetime
 
@@ -47,48 +48,64 @@ class TelegramNotifier:
         if not shutil.which("curl"):
             log.warning("Comando curl indisponível; notificação Telegram não enviada.")
             return False
+
         url = "{}/bot{}/sendMessage".format(self.API_BASE, self.bot_token)
+        # O corpo JSON é gravado em UTF-8 num arquivo temporário. Passá-lo como
+        # "data =" dentro do curl config fazia o parser do curl remover barras
+        # de sequências Unicode (ex.: \\u00e7), quebrando acentos e emojis.
         body = json.dumps({
             "chat_id": self.chat_id,
             "text": message,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }, ensure_ascii=False)
-        # URL/token ficam no stdin do curl, nunca nos argumentos do processo.
-        config = "\n".join((
-            "url = {}".format(json.dumps(url)),
-            'request = "POST"',
-            'header = "Content-Type: application/json"',
-            "data = {}".format(json.dumps(body)),
-            "silent",
-            "show-error",
-            "max-time = {}".format(self.timeout),
-            "",
-        ))
-        # Pequenas tentativas adicionais recuperam quedas breves de rede sem
-        # alterar o fluxo de ordens nem registrar credenciais.
-        for attempt in range(3):
-            try:
-                response = subprocess.run(
-                    ["curl", "-4", "--http1.1", "--config", "-"],
-                    input=config,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout + 2,
-                    check=False,
-                )
-                if response.returncode != 0:
-                    raise RuntimeError("Falha de comunicação com o Telegram.")
-                result = json.loads(response.stdout)
-                if not result.get("ok"):
-                    log.warning("Telegram recusou uma notificação do DEMEX.")
-                    return False
-                return True
-            except (subprocess.SubprocessError, OSError, ValueError, RuntimeError):
-                if attempt < 2:
-                    time.sleep(0.5 * (attempt + 1))
-        log.warning("Não foi possível enviar notificação ao Telegram após 3 tentativas.")
-        return False
+        payload_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", newline="", delete=False
+            ) as payload:
+                payload.write(body)
+                payload_path = payload.name
+
+            # URL/token ficam no stdin do curl, nunca nos argumentos do processo.
+            config = "\\n".join((
+                "url = {}".format(json.dumps(url)),
+                'request = "POST"',
+                'header = "Content-Type: application/json; charset=utf-8"',
+                "silent",
+                "show-error",
+                "max-time = {}".format(self.timeout),
+                "",
+            ))
+            for attempt in range(3):
+                try:
+                    response = subprocess.run(
+                        ["curl", "-4", "--http1.1", "--data-binary",
+                         "@" + payload_path, "--config", "-"],
+                        input=config,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout + 2,
+                        check=False,
+                    )
+                    if response.returncode != 0:
+                        raise RuntimeError("Falha de comunicação com o Telegram.")
+                    result = json.loads(response.stdout)
+                    if not result.get("ok"):
+                        log.warning("Telegram recusou uma notificação do DEMEX.")
+                        return False
+                    return True
+                except (subprocess.SubprocessError, OSError, ValueError, RuntimeError):
+                    if attempt < 2:
+                        time.sleep(0.5 * (attempt + 1))
+            log.warning("Não foi possível enviar notificação ao Telegram após 3 tentativas.")
+            return False
+        finally:
+            if payload_path:
+                try:
+                    os.unlink(payload_path)
+                except OSError:
+                    log.warning("Não foi possível remover o arquivo temporário da notificação.")
 
     def send_session_start(self, account, market, timeframe, expiry_minutes,
                             assets_count, initial_entry, stop_loss, take_profit,
@@ -154,7 +171,9 @@ class TelegramNotifier:
 
     def send_trade_result(self, summary):
         result = str(summary.get("result", "RESULTADO")).upper()
+        labels = {"WIN": "VITÓRIA", "LOSS": "DERROTA", "TIE": "EMPATE"}
         emoji = {"WIN": "🟢", "LOSS": "🔴", "TIE": "🟡"}.get(result, "⚪")
+        result_label = labels.get(result, result)
         symbol = html.escape(str(summary.get("symbol", "—")))
         direction = html.escape(str(summary.get("direction", "—")))
         total = int(summary.get("total_entries", 0))
@@ -189,7 +208,7 @@ class TelegramNotifier:
             "Recorde na sessão: WIN <b>{}</b> seguidos | LOSS <b>{}</b> seguidos\n"
             "Resultado desta sessão: <b>{:+.2f} BRL</b>\n"
             "Próxima entrada: <b>R$ {:.2f}</b>"
-        ).format(symbol, direction, entry, emoji, result, pnl, wins, losses, ties,
+        ).format(symbol, direction, entry, emoji, result_label, pnl, wins, losses, ties,
                  total, win_rate, self.total_invested,
                  self.current_win_streak, self.current_loss_streak,
                  self.max_win_streak, self.max_loss_streak, net, next_entry)
@@ -218,7 +237,7 @@ class TelegramNotifier:
             "Próxima entrada prevista: <b>R$ {:.2f}</b>\n"
             "Limite Stop Loss: <b>R$ {:.2f}</b>\n"
             "Meta Take Profit: <b>R$ {:.2f}</b>\n"
-            "RESULTADO LÍQUIDO: <b>{:+.2f} BRL</b>"
+            "RESULTADO LÍQUIDO: <b>R$ {:+.2f}</b>"
         ).format(
             html.escape(str(reason)),
             datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
