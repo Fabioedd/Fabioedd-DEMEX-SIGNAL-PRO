@@ -132,8 +132,10 @@ class TradeManagerTests(unittest.TestCase):
         self.assertFalse(t.has_pending_orders)
         self.assertEqual(t.total_entries, 1)
         self.assertEqual(t.wins, 1)
+        # Avança o relógio da pausa para testar a próxima ordem sem esperar 2–3 min.
+        t.entry_cooldown_until = 0
 
-        # Só depois do resultado confirmado a próxima operação é liberada.
+        # Só depois do resultado confirmado e da pausa a próxima operação é liberada.
         self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
         self.assertEqual(len(c.orders), 2)
         t._monitor_unknown_order()
@@ -189,6 +191,7 @@ class TradeManagerTests(unittest.TestCase):
         t._monitor_unknown_order()
         self.assertEqual(t.total_entries, 1)
         self.assertEqual(t.wins, 1)
+        t.entry_cooldown_until = 0
 
         c.place_practice_order = place_with_later_unknown
         with patch.object(t, "_start_unknown_order_monitor"):
@@ -266,6 +269,8 @@ class TradeManagerTests(unittest.TestCase):
             if n < 3:
                 self.assertFalse(t.stopped)
             t._monitor_unknown_order()
+            if n < 3:
+                t.entry_cooldown_until = 0
         self.assertTrue(t.stopped)
         self.assertEqual(t.net, -15.0)
         self.assertEqual(t.total_entries, 3)
@@ -277,6 +282,7 @@ class TradeManagerTests(unittest.TestCase):
         self.queue_order(t, self.signal(1))
         t._monitor_unknown_order()
         self.assertEqual(t.next_entry, 9.25)
+        t.entry_cooldown_until = 0
         self.queue_order(t, self.signal(2))
         t._monitor_unknown_order()
         self.assertEqual(t.next_entry, 5.0)
@@ -288,22 +294,24 @@ class TradeManagerTests(unittest.TestCase):
         self.assertIsNone(t.execute_and_settle(self.signal(1)))
         self.assertEqual(len(c.orders), 1)
 
-    def test_global_entry_cooldown_blocks_until_60_seconds_have_elapsed(self):
+    def test_random_global_pause_starts_only_after_settlement(self):
         c = FakeConnector([("WIN", 4.25)])
         settings = self.settings()
         settings["entry_cooldown_seconds"] = 60
+        settings["entry_cooldown_min_seconds"] = 120
+        settings["entry_cooldown_max_seconds"] = 180
         t = DemoTrader(c, settings)
-        t.entry_cooldown_until = 220.0
-
-        with patch("trade_manager.time.monotonic", return_value=100.0):
+        with patch.object(t, "_start_unknown_order_monitor"):
             self.assertIsNone(t.execute_and_settle(self.signal()))
-        self.assertEqual(len(c.orders), 0)
-
-        with patch("trade_manager.time.monotonic", return_value=220.0):
-            with patch.object(t, "_start_unknown_order_monitor"):
-                self.assertIsNone(t.execute_and_settle(self.signal()))
         self.assertEqual(len(c.orders), 1)
-        self.assertEqual(t.entry_cooldown_until, 280.0)
+        self.assertEqual(t.entry_cooldown_until, 0)
+        with patch("trade_manager.random.randint", return_value=150):
+            t._apply_settlement(self.signal(), t.base, "order-1", "WIN", 4.25)
+        self.assertEqual(t.entry_cooldown_seconds, 150)
+        self.assertGreaterEqual(t.entry_cooldown_until - __import__("time").monotonic(), 149)
+        # A trava também existe no gerenciador, não apenas no scanner.
+        self.assertIsNone(t.execute_and_settle(self.signal(2)))
+        self.assertEqual(len(c.orders), 1)
 
     def test_stop_interrupts_before_order_submission(self):
         c = FakeConnector([])

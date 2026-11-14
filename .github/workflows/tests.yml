@@ -49,7 +49,10 @@ jobs:
           with open("settings.json", encoding="utf-8") as stream:
               settings = json.load(stream)
           assert settings["scan_interval_seconds"] == 2
-          assert settings["entry_cooldown_seconds"] == 60
+          assert settings["entry_cooldown_min_seconds"] == 120
+          assert settings["entry_cooldown_max_seconds"] == 180
+          assert settings["entry_cooldown_min_seconds"] <= settings["entry_cooldown_max_seconds"]
+          assert "entry_cooldown_seconds" not in settings
           assert settings["custom_script_path"] == "strategies/my_strategy.py"
           PY
 

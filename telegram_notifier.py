@@ -92,7 +92,7 @@ class TelegramNotifier:
 
     def send_session_start(self, account, market, timeframe, expiry_minutes,
                             assets_count, initial_entry, stop_loss, take_profit,
-                            entry_cooldown_seconds=60):
+                            entry_cooldown_seconds=0):
         self.initial_entry = float(initial_entry)
         self.stop_loss = float(stop_loss)
         self.take_profit = float(take_profit)
@@ -105,13 +105,12 @@ class TelegramNotifier:
             "Período: <b>{}</b> | Expiração: <b>{} min</b>\n"
             "Estratégia: <b>GO 2024 FILTRADO</b>\n"
             "Indicadores: <b>SMA 1/34 + WMA 5 | EMA 21/45 | ADX 14 >= 35</b>\n"
-            "Intervalo entre entradas: <b>{} segundos</b>\n"
+            "Controle de entradas: <b>aguarda liquidação e pausa global aleatória de 2 a 3 minutos</b>\n"
             "Ativos monitorados: <b>{}</b>\nEntrada inicial: <b>R$ {:.2f}</b>\n"
             "Stop Loss: <b>R$ {:.2f}</b> | Take Profit: <b>R$ {:.2f}</b>"
         ).format(html.escape(str(account)), html.escape(str(market)),
                  html.escape(str(timeframe)), int(expiry_minutes),
-                 int(entry_cooldown_seconds), int(assets_count),
-                 self.initial_entry, self.stop_loss, self.take_profit)
+                 int(assets_count), self.initial_entry, self.stop_loss, self.take_profit)
         return self.send(text)
 
     def send_trade_opened(self, entry):
@@ -119,7 +118,7 @@ class TelegramNotifier:
         direction = html.escape(str(entry.get("direction", "—")))
         order_id = html.escape(str(entry.get("order_id", "—")))
         amount = float(entry.get("entry", 0))
-        cooldown = int(entry.get("cooldown_seconds", 60))
+        cooldown = int(entry.get("cooldown_seconds", 0))
         def local_time(value):
             try:
                 return datetime.fromtimestamp(float(value)).astimezone().strftime("%H:%M:%S")
@@ -134,6 +133,7 @@ class TelegramNotifier:
         )
         signal_time = local_time(entry.get("signal_timestamp"))
         entry_time = local_time(entry.get("entry_timestamp"))
+        next_entry_line = "Próxima entrada: <b>após a liquidação + pausa global aleatória de 2 a 3 minutos</b>."
         return self.send(
             "🎯 <b>DEMEX SIGNAL PRO</b>\n"
             "🟢 <b>SINAL CONFIRMADO</b>\n"
@@ -147,9 +147,9 @@ class TelegramNotifier:
             "💰 <b>INFORMAÇÕES DA OPERAÇÃO</b>\n"
             "Valor da entrada: <b>R$ {:.2f}</b>\n"
             "Conta: <b>PRACTICE/DEMO</b>\nOrdem: <b>{}</b>\n"
-            "Próxima entrada liberada em: <b>{} segundos</b>."
+            "{}"
             .format(symbol, direction, confluences, confidence_line,
-                    signal_time, entry_time, amount, order_id, cooldown)
+                    signal_time, entry_time, amount, order_id, next_entry_line)
         )
 
     def send_trade_result(self, summary):

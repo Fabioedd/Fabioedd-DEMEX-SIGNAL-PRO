@@ -319,7 +319,7 @@ def main():
         trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | intervalo global de 60s entre entradas | sinal intrabar e entrada imediata na MESMA M1."
+            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | uma única ordem por vez; após liquidação, pausa global aleatória de 2 a 3 minutos | sinal intrabar e entrada imediata na MESMA M1."
             
         )
         selection_label = (
@@ -420,14 +420,12 @@ def main():
             scan_elapsed = None
             candidates = []
             try:
-                if pending or trader.has_pending_orders or trader.busy:
+                if trader.has_pending_orders or trader.busy:
+                    # Descarta sinais que ficaram antigos durante a operação,
+                    # mas mantém a varredura ativa para analisar todos os ativos.
+                    pending.clear()
+                if pending and not (trader.has_pending_orders or trader.busy):
                     candidates = []
-                    if trader.has_pending_orders:
-                        logging.info(
-                            "ENTRADA BLOQUEADA: existe uma operação aguardando resultado. "
-                            "O DEMEX só retomará a varredura após WIN, LOSS, TIE ou recusa "
-                            "explícita da ordem atual."
-                        )
                 else:
                     scan_started = time.monotonic()
                     candidates = scan_once(
@@ -460,8 +458,25 @@ def main():
                 print("PARADA SOLICITADA: sinais descartados; nenhuma nova operação será iniciada.")
                 break
 
+            cooldown_remaining = trader._entry_cooldown_remaining()
             for candidate in candidates:
                 key = candidate_key(candidate)
+                if trader.has_pending_orders or trader.busy:
+                    processed.add(key)
+                    logging.info(
+                        "SINAL ANALISADO, MAS ENTRADA BLOQUEADA | %s %s | "
+                        "já existe uma operação global em andamento. O DEMEX continua analisando.",
+                        candidate["symbol"], candidate["direction"]
+                    )
+                    continue
+                if cooldown_remaining > 0:
+                    processed.add(key)
+                    logging.info(
+                        "SINAL IGNORADO DURANTE PAUSA GLOBAL | %s %s | faltam %.0f segundos. "
+                        "DEMEX continua analisando e aguardará um novo sinal após a pausa.",
+                        candidate["symbol"], candidate["direction"], cooldown_remaining
+                    )
+                    continue
                 if key in processed or key in pending:
                     continue
                 if len(pending) < MAX_PENDING_SIGNALS:

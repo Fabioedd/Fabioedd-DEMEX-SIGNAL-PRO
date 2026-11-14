@@ -49,7 +49,7 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertIn("Valor da entrada: <b>R$ 5.00</b>", message)
         self.assertIn("Conta: <b>PRACTICE/DEMO</b>", message)
         self.assertIn("Ordem: <b>123456</b>", message)
-        self.assertIn("60 segundos", message)
+        self.assertIn("pausa global aleatória de 2 a 3 minutos", message)
         self.assertNotIn("Tempo entre sinal e entrada", message)
 
     def test_html_escapes_asset_name(self):
