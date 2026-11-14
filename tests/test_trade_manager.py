@@ -288,16 +288,21 @@ class TradeManagerTests(unittest.TestCase):
         self.assertIsNone(t.execute_and_settle(self.signal(1)))
         self.assertEqual(len(c.orders), 1)
 
-    def test_old_local_cooldown_setting_is_ignored(self):
+    def test_random_global_pause_starts_only_after_settlement(self):
         c = FakeConnector([("WIN", 4.25)])
         settings = self.settings()
         settings["entry_cooldown_seconds"] = 60
+        settings["entry_cooldown_min_seconds"] = 120
+        settings["entry_cooldown_max_seconds"] = 180
         t = DemoTrader(c, settings)
         with patch.object(t, "_start_unknown_order_monitor"):
             self.assertIsNone(t.execute_and_settle(self.signal()))
         self.assertEqual(len(c.orders), 1)
-        self.assertEqual(t.entry_cooldown_seconds, 0)
-        self.assertLessEqual(t.entry_cooldown_until, __import__("time").monotonic())
+        self.assertEqual(t.entry_cooldown_until, 0)
+        with patch("trade_manager.random.randint", return_value=150):
+            t._apply_settlement(self.signal(), t.base, "order-1", "WIN", 4.25)
+        self.assertEqual(t.entry_cooldown_seconds, 150)
+        self.assertGreaterEqual(t.entry_cooldown_until - __import__("time").monotonic(), 149)
 
     def test_stop_interrupts_before_order_submission(self):
         c = FakeConnector([])
