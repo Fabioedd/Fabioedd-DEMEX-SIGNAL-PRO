@@ -132,8 +132,10 @@ class TradeManagerTests(unittest.TestCase):
         self.assertFalse(t.has_pending_orders)
         self.assertEqual(t.total_entries, 1)
         self.assertEqual(t.wins, 1)
+        # Avança o relógio da pausa para testar a próxima ordem sem esperar 2–3 min.
+        t.entry_cooldown_until = 0
 
-        # Só depois do resultado confirmado a próxima operação é liberada.
+        # Só depois do resultado confirmado e da pausa a próxima operação é liberada.
         self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
         self.assertEqual(len(c.orders), 2)
         t._monitor_unknown_order()
@@ -189,6 +191,7 @@ class TradeManagerTests(unittest.TestCase):
         t._monitor_unknown_order()
         self.assertEqual(t.total_entries, 1)
         self.assertEqual(t.wins, 1)
+        t.entry_cooldown_until = 0
 
         c.place_practice_order = place_with_later_unknown
         with patch.object(t, "_start_unknown_order_monitor"):
@@ -266,6 +269,8 @@ class TradeManagerTests(unittest.TestCase):
             if n < 3:
                 self.assertFalse(t.stopped)
             t._monitor_unknown_order()
+            if n < 3:
+                t.entry_cooldown_until = 0
         self.assertTrue(t.stopped)
         self.assertEqual(t.net, -15.0)
         self.assertEqual(t.total_entries, 3)
@@ -277,6 +282,7 @@ class TradeManagerTests(unittest.TestCase):
         self.queue_order(t, self.signal(1))
         t._monitor_unknown_order()
         self.assertEqual(t.next_entry, 9.25)
+        t.entry_cooldown_until = 0
         self.queue_order(t, self.signal(2))
         t._monitor_unknown_order()
         self.assertEqual(t.next_entry, 5.0)
