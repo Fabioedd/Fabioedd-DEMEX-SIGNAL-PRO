@@ -16,34 +16,49 @@ command -v python3 >/dev/null 2>&1 || {
 recover_updater() {
   log "Conferindo e atualizando o atualizador principal pela última Release estável..."
   python3 - "$UPDATER" "$MANAGER/updater-release" <<'PY'
-import hashlib, json, os, sys, tarfile, tempfile, urllib.request
+import hashlib, os, sys, tarfile, tempfile, urllib.parse, urllib.request
 from pathlib import Path
 
 repo = "Fabioedd/Fabioedd-DEMEX-SIGNAL-PRO"
-api = f"https://api.github.com/repos/{repo}/releases/latest"
-headers = {"User-Agent": "DEMEX-Termux-Bootstrap", "Accept": "application/vnd.github+json"}
+latest_page = f"https://github.com/{repo}/releases/latest"
+headers = {"User-Agent": "DEMEX-Termux-Bootstrap", "Accept": "text/html"}
+
 def get(url):
-    request = urllib.request.Request(url, headers=headers)
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "DEMEX-Termux-Bootstrap", "Accept": "application/octet-stream"},
+    )
     with urllib.request.urlopen(request, timeout=60) as response:
         return response.read()
-release = json.loads(get(api).decode())
-tag = str(release.get("tag_name", "")).strip()
-if release.get("draft") or release.get("prerelease") or not tag:
-    raise SystemExit("GitHub não retornou uma Release estável.")
+
+request = urllib.request.Request(latest_page, headers=headers)
+with urllib.request.urlopen(request, timeout=60) as response:
+    final_url = response.geturl()
+
+parsed = urllib.parse.urlparse(final_url)
+expected_prefix = f"/{repo}/releases/tag/"
+if parsed.scheme != "https" or parsed.netloc.lower() not in {"github.com", "www.github.com"}:
+    raise SystemExit("O GitHub não redirecionou para uma Release estável válida.")
+if not parsed.path.startswith(expected_prefix):
+    raise SystemExit("O GitHub não redirecionou para uma Release estável válida.")
+tag = urllib.parse.unquote(parsed.path[len(expected_prefix):]).strip("/")
+if not tag or "/" in tag or not tag.replace(".", "").replace("-", "").replace("_", "").isalnum():
+    raise SystemExit("A tag da Release contém caracteres não permitidos.")
+
 destination = Path(sys.argv[1])
 version_file = Path(sys.argv[2])
 if destination.is_file() and version_file.is_file() and version_file.read_text().strip() == tag:
     print(f"Atualizador principal já está na versão {tag}.")
     raise SystemExit(0)
-assets = {a["name"]: a["browser_download_url"] for a in release.get("assets", [])}
-if "demex-source.tar.gz" not in assets or "SHA256SUMS" not in assets:
-    raise SystemExit("Release sem pacote ou SHA256.")
-archive = get(assets["demex-source.tar.gz"])
-sums = get(assets["SHA256SUMS"]).decode()
+
+base = f"https://github.com/{repo}/releases/download/{urllib.parse.quote(tag, safe='')}"
+archive = get(f"{base}/demex-source.tar.gz")
+sums = get(f"{base}/SHA256SUMS").decode()
 expected = next((line.split()[0].lower() for line in sums.splitlines()
                  if len(line.split()) >= 2 and line.split()[-1].lstrip("*") == "demex-source.tar.gz"), None)
 if not expected or hashlib.sha256(archive).hexdigest() != expected:
     raise SystemExit("SHA256 inválido; arquivo recusado.")
+
 with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
     tmp.write(archive)
     tmp.flush()
@@ -55,6 +70,7 @@ with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
         if source is None:
             raise SystemExit("Não foi possível ler o atualizador do pacote.")
         content = source.read()
+
 destination.parent.mkdir(parents=True, exist_ok=True)
 temporary = destination.with_suffix(".py.new")
 temporary.write_bytes(content)
