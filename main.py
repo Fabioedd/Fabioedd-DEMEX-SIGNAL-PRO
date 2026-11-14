@@ -602,8 +602,8 @@ def main():
                     processed.add(key)
                     continue
 
-                # Revalida imediatamente o padrão enquanto a vela original
-                # continua aberta; não existe janela artificial de tolerância.
+                # Revalida o sinal calculado sobre N fechada e exige que
+                # N+1 continue sendo a vela corrente dentro do prazo de 3s.
                 try:
                     confirmed = verify_closed_signal(connector, settings, candidate)
                 except ConnectionError as exc:
