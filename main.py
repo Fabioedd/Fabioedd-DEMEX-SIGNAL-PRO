@@ -2,7 +2,6 @@
 import json
 import logging
 import subprocess
-import threading
 import time
 from pathlib import Path
 
@@ -346,8 +345,6 @@ def main():
         # Apenas o primeiro sinal encontrado é validado e executado na própria vela M1.
         pending = {}
         processed = set()
-        # Reserva global enquanto a operação é executada em segundo plano.
-        trade_worker_active = threading.Event()
         stop_notice_sent = False
 
         while not trader.stopped or trader.has_pending_orders:
@@ -423,7 +420,7 @@ def main():
             scan_elapsed = None
             candidates = []
             try:
-                if trade_worker_active.is_set() or trader.has_pending_orders or trader.busy:
+                if trader.has_pending_orders or trader.busy:
                     # Descarta sinais que ficaram antigos durante a operação,
                     # mas mantém a varredura ativa para analisar todos os ativos.
                     pending.clear()
@@ -620,34 +617,32 @@ def main():
                         print("Confirmações: " + ", ".join(candidate.get("reasons", [])))
                         return True
 
-                    def run_order_in_background():
-                        try:
-                            summary = trader.execute_and_settle(
-                                candidate, pre_order_check=final_order_check
+                    summary = trader.execute_and_settle(
+                        candidate, pre_order_check=final_order_check
+                    )
+                    if summary:
+                        print(
+                            "PLACAR | Entradas {} | WIN {} | LOSS {} | TIE {} | "
+                            "Aproveitamento {:.2f}% | Seq. WIN {} | Seq. LOSS {} | "
+                            "Recorde WIN {} | Recorde LOSS {} | P&L R$ {:+.2f}".format(
+                                summary["total_entries"], summary["wins"], summary["losses"],
+                                summary["ties"], summary["win_rate"],
+                                summary["current_win_streak"], summary["current_loss_streak"],
+                                summary["max_win_streak"], summary["max_loss_streak"],
+                                summary["session_net"]
                             )
-                            if summary:
-                                print(
-                                    "PLACAR | Entradas {} | WIN {} | LOSS {} | TIE {} | "
-                                    "Aproveitamento {:.2f}% | Seq. WIN {} | Seq. LOSS {} | "
-                                    "Recorde WIN {} | Recorde LOSS {} | P&L R$ {:+.2f}".format(
-                                        summary["total_entries"], summary["wins"], summary["losses"],
-                                        summary["ties"], summary["win_rate"],
-                                        summary["current_win_streak"], summary["current_loss_streak"],
-                                        summary["max_win_streak"], summary["max_loss_streak"],
-                                        summary["session_net"]
-                                    )
-                                )
-                                print(
-                                    "OPERAÇÃO {} | {} {} | Entrada R$ {:.2f} | "
-                                    "Próxima entrada R$ {:.2f}".format(
-                                        summary["result"], summary["symbol"], summary["direction"],
-                                        summary["entry"], summary["next_entry"]
-                                    )
-                                )
-                                telegram.send_trade_result(summary)
-                                if summary["stopped"]:
-                                    print("ROBÔ ENCERRADO: " + str(summary["stop_reason"]))
-                        except ConnectionError as exc:
+                        )
+                        print(
+                            "OPERAÇÃO {} | {} {} | Entrada R$ {:.2f} | "
+                            "Próxima entrada R$ {:.2f}".format(
+                                summary["result"], summary["symbol"], summary["direction"],
+                                summary["entry"], summary["next_entry"]
+                            )
+                        )
+                        telegram.send_trade_result(summary)
+                        if summary["stopped"]:
+                            print("ROBÔ ENCERRADO: " + str(summary["stop_reason"]))
+                except ConnectionError as exc:
                             connector.connected = False
                             logging.warning("Conexão perdida durante a operação: %s", exc)
                         except Exception:
