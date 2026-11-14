@@ -288,9 +288,11 @@ class TradeManagerTests(unittest.TestCase):
         self.assertIsNone(t.execute_and_settle(self.signal(1)))
         self.assertEqual(len(c.orders), 1)
 
-    def test_no_fixed_cooldown_after_entry_confirmation(self):
+    def test_old_local_cooldown_setting_is_ignored(self):
         c = FakeConnector([("WIN", 4.25)])
-        t = self.trader(c)
+        settings = self.settings()
+        settings["entry_cooldown_seconds"] = 60
+        t = DemoTrader(c, settings)
         with patch.object(t, "_start_unknown_order_monitor"):
             self.assertIsNone(t.execute_and_settle(self.signal()))
         self.assertEqual(len(c.orders), 1)
