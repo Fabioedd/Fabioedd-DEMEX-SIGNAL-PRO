@@ -290,8 +290,8 @@ def verify_closed_signal(connector, settings, candidate):
     }
 
 
-def verify_closed_signal(connector, settings, candidate):
-    """Compatibilidade de nome: agora revalida exclusivamente vela fechada."""
+def verify_intrabar_signal(connector, settings, candidate):
+    """Compatibilidade de nome: revalida exclusivamente velas fechadas."""
     return verify_closed_signal(connector, settings, candidate)
 
 
@@ -328,10 +328,9 @@ def _wait_for_next_close_or_retry(connector, stop_check=None):
         _wait_for_market_data_retry(CANDLE_DATA_RETRY_SECONDS, stop_check=stop_check)
         return
     remaining = 60.0 - elapsed
-    _wait_for_market_data_retry(
-        min(CANDLE_DATA_RETRY_SECONDS, max(0.01, remaining)),
-        stop_check=stop_check
-    )
+    # Fora dos primeiros 3s, aguarda o próximo fechamento; não faz polling
+    # de rede a cada 150ms durante os ~57s restantes do minuto.
+    _wait_for_market_data_retry(remaining, stop_check=stop_check)
 
 
 def candidate_key(candidate):
