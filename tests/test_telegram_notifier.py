@@ -114,10 +114,12 @@ class TelegramNotifierTests(unittest.TestCase):
             with patch("telegram_notifier.subprocess.run", return_value=response) as run:
                 self.assertTrue(notifier.send("teste"))
         args, kwargs = run.call_args
-        self.assertEqual(args[0][0:3], ["curl", "-4", "--http1.1"])\n        self.assertEqual(args[0][3], "--data-binary")\n        self.assertTrue(args[0][4].startswith("@"))
+        self.assertEqual(args[0][0:3], ["curl", "-4", "--http1.1"])
+        self.assertEqual(args[0][3], "--data-binary")
+        self.assertTrue(args[0][4].startswith("@"))
         self.assertNotIn("secret-token", " ".join(args[0]))
         self.assertIn("secret-token", kwargs["input"])
-        self.assertIn("Content-Type: application/json", kwargs["input"])
+        self.assertIn("Content-Type: application/json; charset=utf-8", kwargs["input"])
 
     def test_send_retries_transient_transport_failure(self):
         notifier = TelegramNotifier("secret-token", "9246590305")
