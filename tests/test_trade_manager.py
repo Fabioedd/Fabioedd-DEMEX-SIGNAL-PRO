@@ -322,5 +322,16 @@ class TradeManagerTests(unittest.TestCase):
         self.assertFalse(t.busy)
 
 
+
+    def test_exact_three_minute_cooldown_blocks_new_signals(self):
+        c = FakeConnector([("WIN", 4.25)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        t._monitor_unknown_order()
+        self.assertEqual(t.entry_cooldown_seconds, 180.0)
+        self.assertGreater(t.entry_cooldown_until, 0)
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
+        self.assertEqual(len(c.orders), 1)
+
 if __name__ == "__main__":
     unittest.main()
