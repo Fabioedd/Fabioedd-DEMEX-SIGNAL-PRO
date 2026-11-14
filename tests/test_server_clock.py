@@ -41,5 +41,19 @@ class ServerClockTests(unittest.TestCase):
                 connector.get_server_timestamp()
 
 
+
+    def test_delayed_timesync_message_never_moves_server_clock_backwards(self):
+        connector = self.connector(1_800_000_000.0)
+        with patch("bullex_connector.time.monotonic_ns", side_effect=[1_000_000_000, 2_000_000_000, 3_000_000_000]):
+            first = connector.get_server_timestamp()
+            # Uma atualização do WebSocket pode chegar atrasada em relação ao
+            # horário já extrapolado pelo relógio monotônico.
+            connector.client.get_server_timestamp = lambda: 1_800_000_000.5
+            second = connector.get_server_timestamp()
+            third = connector.get_server_timestamp()
+        self.assertEqual(first, 1_800_000_000.0)
+        self.assertAlmostEqual(second, 1_800_000_001.0)
+        self.assertAlmostEqual(third, 1_800_000_002.0)
+
 if __name__ == "__main__":
     unittest.main()
