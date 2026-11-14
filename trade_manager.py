@@ -105,7 +105,7 @@ class DemoTrader:
 
         log.info(
             "ENTRADA CONFIRMADA | %s %s | ID %s | "
-            "pausa global aleatória de 2 a 3 minutos após a liquidação.",
+            "pausa global fixa de 3 minutos após a liquidação.",
             pending["signal"]["symbol"],
             pending["signal"]["direction"],
             order_id,
