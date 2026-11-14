@@ -1,6 +1,7 @@
 """DEMO order runner with R$5 base, Soros 1, stop and take."""
 from decimal import Decimal, ROUND_HALF_UP
 import logging
+import random
 import threading
 import time
 
@@ -43,7 +44,9 @@ class DemoTrader:
         self._state_lock = threading.RLock()
         self._stopped = False
         self.stop_reason = None
-        # Cooldown global removido: nenhuma configuração local antiga pode reativá-lo.
+        # Pausa global aleatória após liquidação.
+        self.entry_cooldown_min_seconds = max(120, int(settings.get('entry_cooldown_min_seconds', 120)))
+        self.entry_cooldown_max_seconds = max(self.entry_cooldown_min_seconds, min(180, int(settings.get('entry_cooldown_max_seconds', 180))))
         self.entry_cooldown_seconds = 0.0
         self.entry_cooldown_until = 0.0
         self.entry_callback = None
@@ -98,14 +101,11 @@ class DemoTrader:
             if pending.get("entry_confirmed"):
                 return
             pending["entry_confirmed"] = True
-            self.entry_cooldown_until = now
-            self._cooldown_active = False
-            self._last_cooldown_log_at = 0.0
-            remaining = self.entry_cooldown_seconds
+            remaining = 0.0
 
         log.info(
-            "ENTRADA CONFIRMADA | %s %s | ID %s | sem espera fixa; "
-            "nova entrada após a liquidação desta operação.",
+            "ENTRADA CONFIRMADA | %s %s | ID %s | "
+            "pausa global aleatória de 2 a 3 minutos após a liquidação.",
             pending["signal"]["symbol"],
             pending["signal"]["direction"],
             order_id,
@@ -118,7 +118,7 @@ class DemoTrader:
                     "symbol": pending["signal"]["symbol"],
                     "direction": pending["signal"]["direction"],
                     "entry": float(pending["amount"]),
-                    "cooldown_seconds": self.entry_cooldown_seconds,
+                    "cooldown_seconds": 0,
                     "signal_timestamp": pending["signal"].get("detected_at_server_timestamp"),
                     "entry_timestamp": confirmed_at,
                     "reasons": pending["signal"].get("reasons", []),
@@ -186,6 +186,11 @@ class DemoTrader:
 
             if not self.stopped:
                 self.next_entry = min(self.next_entry, money(self.stop + self.net))
+                self.entry_cooldown_seconds = random.randint(self.entry_cooldown_min_seconds, self.entry_cooldown_max_seconds)
+                self.entry_cooldown_until = time.monotonic() + self.entry_cooldown_seconds
+                self._cooldown_active = False
+                self._last_cooldown_log_at = 0.0
+                log.info("PAUSA GLOBAL APÓS LIQUIDAÇÃO | %d segundos | DEMEX continua analisando os ativos.", self.entry_cooldown_seconds)
 
             summary = {
                 "order_id": order_id,
