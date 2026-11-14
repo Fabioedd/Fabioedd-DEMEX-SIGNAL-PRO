@@ -643,22 +643,6 @@ def main():
                         if summary["stopped"]:
                             print("ROBÔ ENCERRADO: " + str(summary["stop_reason"]))
                 except ConnectionError as exc:
-                            connector.connected = False
-                            logging.warning("Conexão perdida durante a operação: %s", exc)
-                        except Exception:
-                            logging.exception("Falha ao acompanhar/liquidar a operação.")
-                        finally:
-                            trade_worker_active.clear()
-
-                    # A reserva é ativada ANTES de iniciar a thread para impedir
-                    # uma segunda entrada durante a pequena janela de inicialização.
-                    trade_worker_active.set()
-                    threading.Thread(
-                        target=run_order_in_background,
-                        name="demex-order-worker",
-                        daemon=True
-                    ).start()
-                except ConnectionError as exc:
                     logging.warning("Conexão perdida antes da ordem: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
