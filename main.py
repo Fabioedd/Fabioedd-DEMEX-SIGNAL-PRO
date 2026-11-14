@@ -319,7 +319,7 @@ def main():
         trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | sem intervalo fixo entre entradas; aguarda liquidação da operação atual | sinal intrabar e entrada imediata na MESMA M1."
+            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | uma única ordem por vez; após liquidação, pausa global aleatória de 2 a 3 minutos | sinal intrabar e entrada imediata na MESMA M1."
             
         )
         selection_label = (
@@ -460,8 +460,17 @@ def main():
                 print("PARADA SOLICITADA: sinais descartados; nenhuma nova operação será iniciada.")
                 break
 
+            cooldown_remaining = trader._entry_cooldown_remaining()
             for candidate in candidates:
                 key = candidate_key(candidate)
+                if cooldown_remaining > 0:
+                    processed.add(key)
+                    logging.info(
+                        "SINAL IGNORADO DURANTE PAUSA GLOBAL | %s %s | faltam %.0f segundos. "
+                        "DEMEX continua analisando e aguardará um novo sinal após a pausa.",
+                        candidate["symbol"], candidate["direction"], cooldown_remaining
+                    )
+                    continue
                 if key in processed or key in pending:
                     continue
                 if len(pending) < MAX_PENDING_SIGNALS:
