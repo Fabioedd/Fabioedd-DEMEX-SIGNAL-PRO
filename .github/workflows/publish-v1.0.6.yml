@@ -1,0 +1,39 @@
+name: Publish DEMEX v1.0.6
+
+on:
+  workflow_run:
+    workflows: ["DEMEX validation and stable release"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      contains(github.event.workflow_run.head_commit.message, '[release v1.0.6]')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the validated main commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Build verified source package
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=demex/ "${{ github.event.workflow_run.head_sha }}" > dist/demex-source.tar.gz
+          cd dist
+          sha256sum demex-source.tar.gz > SHA256SUMS
+
+      - name: Publish stable GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.6
+          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          name: DEMEX v1.0.6 — Sincronização de sinais fechados
+          generate_release_notes: true
+          files: |
+            dist/demex-source.tar.gz
+            dist/SHA256SUMS

@@ -25,6 +25,30 @@ class OrderConfirmationUnknownError(RuntimeError):
         self.request_ref = request_ref
 
 
+def ensure_entry_deadline(server_timestamp, deadline_timestamp):
+    """Bloqueia qualquer envio posterior ao limite absoluto do sinal."""
+    if deadline_timestamp is not None and float(server_timestamp) > float(deadline_timestamp):
+        raise OrderRejectedError(
+            "Sinal descartado: prazo máximo de 3 segundos após o fechamento expirou."
+        )
+
+
+def resolve_order_expiration(server_timestamp, expiry_minutes, expected_expiration_timestamp=None):
+    """Confere o vencimento escolhido pela bullexapi contra o fechamento-alvo."""
+    expiration_timestamp, expiry_index = get_expiration_time(
+        float(server_timestamp), int(expiry_minutes)
+    )
+    expiration_timestamp = int(expiration_timestamp)
+    if expected_expiration_timestamp is not None:
+        expected = int(float(expected_expiration_timestamp))
+        if expiration_timestamp != expected:
+            raise OrderRejectedError(
+                "Expiração bloqueada: bullexapi escolheu {} mas o fechamento N+1 é {}."
+                .format(expiration_timestamp, expected)
+            )
+    return expiration_timestamp, int(expiry_index)
+
+
 
 def is_transport_error(exc):
     """Identifica quedas de socket/WebSocket, inclusive Errno 103."""
@@ -80,6 +104,9 @@ class BullexReadOnlyConnector:
         self.connected=False
         self.account_mode=None
         self.api_lock=threading.RLock()
+        self._server_clock_anchor_timestamp = None
+        self._server_clock_anchor_monotonic_ns = None
+        self._server_clock_last_raw = None
         # Mantém a referência ao cliente e ao request_id originais até resolver
         # uma ordem cujo envio teve confirmação desconhecida.
         self.pending_order_request=None
@@ -104,6 +131,9 @@ class BullexReadOnlyConnector:
         if not status: return {"connected":False,"reason":str(detail or "connection_failed"),"requires_2fa":detail=="2FA"}
         self.connected=bool(self.client.check_connect())
         if self.connected:
+            self._server_clock_anchor_timestamp = None
+            self._server_clock_anchor_monotonic_ns = None
+            self._server_clock_last_raw = None
             try: self.account_mode=self.client.get_balance_mode()
             except Exception as exc: logger.warning("Falha ao confirmar conta: %s",exc)
         return {"connected":self.connected,"account_type":self.account_mode or self.config.account_type}
@@ -222,7 +252,7 @@ class BullexReadOnlyConnector:
             if timeframe_seconds not in (60,300): raise ValueError("Somente M1 e M5.")
             if not 10<=count<=1000: raise ValueError("count deve ficar entre 10 e 1000.")
             if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo não encontrado: {symbol}")
-            raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.client.get_server_timestamp()))
+            raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.get_server_timestamp()))
             return [{"timestamp":c.get("from",c.get("timestamp")),"open":c.get("open"),"high":c.get("max",c.get("high")),"low":c.get("min",c.get("low")),"close":c.get("close"),"volume":c.get("volume"),"raw":c} for c in (raw or []) if isinstance(c,dict)]
     def get_payouts(self):
         with self.api_lock:
@@ -263,8 +293,11 @@ class BullexReadOnlyConnector:
                         "trade_type":"binary"
                     })
             return available
-    def place_practice_order(self,symbol,direction,amount,expiry_minutes):
-        """Envia o tipo compatível com a expiração e preserva o request_id tardio."""
+    def place_practice_order(
+        self, symbol, direction, amount, expiry_minutes,
+        entry_deadline_timestamp=None, expected_expiration_timestamp=None
+    ):
+        """Envia somente se o prazo e o fechamento-alvo de N+1 forem respeitados."""
         with self.api_lock:
             self._require_connection()
             if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
@@ -278,7 +311,10 @@ class BullexReadOnlyConnector:
             # Reproduz a seleção de tipo da API oficial para a expiração escolhida,
             # mas sem fallback silencioso para Blitz/Digital.
             server_timestamp=float(self.client.get_server_timestamp())
-            expiration_timestamp,expiry_index=get_expiration_time(server_timestamp,int(expiry_minutes))
+            ensure_entry_deadline(server_timestamp, entry_deadline_timestamp)
+            expiration_timestamp,expiry_index=resolve_order_expiration(
+                server_timestamp, expiry_minutes, expected_expiration_timestamp
+            )
             option_type="turbo" if expiry_index < 5 else "binary"
             request_id="demex-"+uuid.uuid4().hex
             client=self.client
@@ -296,6 +332,20 @@ class BullexReadOnlyConnector:
             }
             self.pending_order_request=request_ref
             self.pending_order_requests[request_id]=request_ref
+            # Última checagem imediatamente antes da chamada que envia a ordem.
+            final_server_timestamp = float(self.client.get_server_timestamp())
+            ensure_entry_deadline(final_server_timestamp, entry_deadline_timestamp)
+            if expected_expiration_timestamp is not None and int(expiration_timestamp) != int(float(expected_expiration_timestamp)):
+                raise OrderRejectedError(
+                    "Ordem bloqueada: expiração não coincide com o fechamento de N+1."
+                )
+            logger.info(
+                "ORDEM ENVIADA À BULLX | %s %s | envio_local=%.3f | servidor=%.3f | "
+                "expiração=%.3f | prazo=%.3f",
+                symbol, direction, time.time(), final_server_timestamp,
+                float(expiration_timestamp),
+                float(entry_deadline_timestamp) if entry_deadline_timestamp is not None else -1.0
+            )
             try:
                 client.api.buyv3_by_raw_expired(
                     float(amount),int(active_map[symbol]),direction.lower(),
@@ -327,6 +377,10 @@ class BullexReadOnlyConnector:
                             self.pending_order_requests.pop(request_id, None)
                             if self.pending_order_request is request_ref:
                                 self.pending_order_request=None
+                            logger.info(
+                                "ORDEM CONFIRMADA PELA BULLX | %s %s | ID=%s | confirmação_local=%.3f",
+                                symbol, direction, resolved_id, time.time()
+                            )
                             return resolved_id
                     message=payload.get("message")
                     if message:
@@ -464,9 +518,39 @@ class BullexReadOnlyConnector:
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
     def get_server_timestamp(self):
+        """Relógio BullX extrapolado por monotonic_ns entre mensagens timeSync."""
         with self.api_lock:
             self._require_connection()
-            return self.client.get_server_timestamp()
+            raw = self.client.get_server_timestamp()
+            if raw is None:
+                raise RuntimeError("A BullX ainda não forneceu timeSync válido.")
+            raw = float(raw)
+            # TimeSync inicial da bullexapi usa time.time() sem converter ms;
+            # antes da primeira mensagem real, o valor fica fora da época Unix.
+            if raw < 1_000_000_000:
+                raise RuntimeError("Relógio timeSync da BullX ainda não foi sincronizado.")
+            now_ns = time.monotonic_ns()
+            if self._server_clock_anchor_timestamp is None:
+                self._server_clock_anchor_timestamp = raw
+                self._server_clock_anchor_monotonic_ns = now_ns
+                self._server_clock_last_raw = raw
+            else:
+                elapsed_since_anchor = (
+                    now_ns - self._server_clock_anchor_monotonic_ns
+                ) / 1_000_000_000.0
+                predicted_now = self._server_clock_anchor_timestamp + elapsed_since_anchor
+                # Não deixa uma mensagem timeSync atrasada fazer o relógio
+                # retroceder e ampliar indevidamente o prazo de entrada.
+                if raw > predicted_now:
+                    self._server_clock_anchor_timestamp = raw
+                    self._server_clock_anchor_monotonic_ns = now_ns
+                self._server_clock_last_raw = raw
+            elapsed_ns = now_ns - self._server_clock_anchor_monotonic_ns
+            if elapsed_ns > 30_000_000_000:
+                raise RuntimeError(
+                    "Última sincronização timeSync da BullX está desatualizada há mais de 30 segundos."
+                )
+            return self._server_clock_anchor_timestamp + elapsed_ns / 1_000_000_000.0
     def _require_connection(self):
         if not self.connected or not self.client.check_connect():
             self.connected=False

@@ -105,7 +105,7 @@ class DemoTrader:
 
         log.info(
             "ENTRADA CONFIRMADA | %s %s | ID %s | "
-            "pausa global aleatória de 2 a 3 minutos após a liquidação.",
+            "pausa global fixa de 3 minutos após a liquidação.",
             pending["signal"]["symbol"],
             pending["signal"]["direction"],
             order_id,
@@ -186,8 +186,10 @@ class DemoTrader:
 
             if not self.stopped:
                 self.next_entry = min(self.next_entry, money(self.stop + self.net))
-                self.entry_cooldown_seconds = random.randint(self.entry_cooldown_min_seconds, self.entry_cooldown_max_seconds)
-                self.entry_cooldown_until = time.monotonic() + self.entry_cooldown_seconds
+                # Regra protegida: 180 segundos completos após a liquidação.
+                # Os valores originais de settings.json permanecem intocados.
+                self.entry_cooldown_seconds = 180.0
+                self.entry_cooldown_until = time.monotonic() + 180.0
                 self._cooldown_active = False
                 self._last_cooldown_log_at = 0.0
                 log.info("PAUSA GLOBAL APÓS LIQUIDAÇÃO | %d segundos | DEMEX continua analisando os ativos.", self.entry_cooldown_seconds)
@@ -445,9 +447,16 @@ class DemoTrader:
                 return None
 
             try:
-                order_id = self.connector.place_practice_order(
-                    signal["symbol"], signal["direction"], float(amount), self.expiry
-                )
+                if signal.get("entry_deadline_timestamp") is not None:
+                    order_id = self.connector.place_practice_order(
+                        signal["symbol"], signal["direction"], float(amount), self.expiry,
+                        entry_deadline_timestamp=signal.get("entry_deadline_timestamp"),
+                        expected_expiration_timestamp=signal.get("entry_close_timestamp"),
+                    )
+                else:
+                    order_id = self.connector.place_practice_order(
+                        signal["symbol"], signal["direction"], float(amount), self.expiry
+                    )
             except OrderConfirmationUnknownError as exc:
                 new_pending = {
                     "signal": dict(signal),

@@ -11,14 +11,15 @@ from bullex_connector import (
     is_transport_error,
     OrderRejectedError, OrderConfirmationUnknownError,
 )
-from strategies.my_strategy import get_intrabar_signal  # GO 2024 FILTRADO
+from strategies.my_strategy import get_signal  # GO 2024 FILTRADO: somente velas fechadas
 from trade_manager import DemoTrader
 from telegram_notifier import TelegramNotifier
 from robot_lock import acquire_robot_lock
 from asset_selector import select_qualified_assets
 from entry_timing import (
     filter_market_assets,
-    is_candle_still_open,
+    is_close_confirmation_tolerance,
+    is_next_candle_entry_window,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -35,6 +36,7 @@ def asset_refresh_interval(settings):
         configured = ASSET_REFRESH_INTERVAL_SECONDS
     return max(60, configured)
 MAX_PENDING_SIGNALS = 1
+CANDLE_DATA_RETRY_SECONDS = 0.15
 _scan_pass_number = 0
 
 
@@ -132,8 +134,17 @@ def get_market_assets(connector, settings, stop_check=None):
     return filter_market_assets(available, "OTC")
 
 
+def _closed_entry_pair_is_final(candles, closed_timestamp, entry_timestamp):
+    """Exige a vela N fechada e a vela N+1 já aberta, em ordem cronológica."""
+    if not isinstance(candles, list) or len(candles) < 61:
+        return False
+    previous = normalize_timestamp(candles[-2].get("timestamp"))
+    latest = normalize_timestamp(candles[-1].get("timestamp"))
+    return previous == float(closed_timestamp) and latest == float(entry_timestamp)
+
+
 def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None):
-    """Detecta o sinal provisório na vela M1 atual; nunca agenda entrada para a próxima."""
+    """Calcula o sinal somente em N fechado e autoriza entrada em N+1 por até 3s."""
     global _scan_pass_number
     _scan_pass_number += 1
     if settings.get("timeframe", "M1").upper() != "M1":
@@ -142,44 +153,80 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
         raise ValueError("Este robô está bloqueado para operar somente opções BINÁRIAS.")
     candidates, analyzed_count = [], 0
     excluded_keys = excluded_keys or set()
+    initial_server_ts = normalize_timestamp(connector.get_server_timestamp())
+    if initial_server_ts is None:
+        return []
+    close_ts = float(int(initial_server_ts // 60) * 60)
+    if not is_close_confirmation_tolerance(initial_server_ts - close_ts, 3.0):
+        return []
+    closed_ts = close_ts - 60.0
+    entry_close_ts = close_ts + 60.0
+    deadline_ts = close_ts + 3.0
+
     for asset in assets:
         analyzed_count += 1
         try:
-            candles = connector.get_candles(asset["symbol"], 60, int(settings.get("candles_count", 250)))
-            if len(candles) < 60:
+            candles = connector.get_candles(
+                asset["symbol"], 60, int(settings.get("candles_count", 250))
+            )
+            received_local_ts = time.time()
+            received_server_ts = normalize_timestamp(connector.get_server_timestamp())
+            if received_server_ts is None or received_server_ts > deadline_ts:
+                break
+            if not is_next_candle_entry_window(received_server_ts - close_ts, 3.0, 60.0):
+                break
+            if not _closed_entry_pair_is_final(candles, closed_ts, close_ts):
+                logging.info(
+                    "VELA FECHADA AINDA NÃO CONFIRMADA | %s | esperado N=%.3f e N+1=%.3f; "
+                    "nova consulta no próximo ciclo de 150ms.",
+                    asset["symbol"], closed_ts, close_ts
+                )
                 continue
-            server_ts = normalize_timestamp(connector.get_server_timestamp())
-            if server_ts is None:
-                continue
-            current_open = int(server_ts // 60) * 60
-            signal_index = find_candle_index_by_timestamp(candles, current_open)
-            if signal_index is None or signal_index != len(candles) - 1:
-                continue
-            close_ts = current_open + 60.0
-            if not is_candle_still_open(close_ts - server_ts):
-                continue
-            signal = get_intrabar_signal(candles, settings)
+            logging.info(
+                "VELA FECHADA RECEBIDA | %s | fechamento_servidor=%.3f | "
+                "recebimento_servidor=%.3f | recebimento_local=%.3f",
+                asset["symbol"], close_ts, received_server_ts, received_local_ts
+            )
+            signal = get_signal(candles, settings)
+            calculated_local_ts = time.time()
+            logging.info(
+                "CÁLCULO DO SINAL CONCLUÍDO | %s | timestamp_local=%.3f | "
+                "atraso_desde_fechamento=%.3fms",
+                asset["symbol"], calculated_local_ts,
+                max(0.0, received_server_ts - close_ts) * 1000.0
+            )
             if not signal:
                 continue
             candidate = {
-                **asset, **signal, "timeframe": "M1", "expiry_minutes": 1,
-                "signal_timestamp": candles[signal_index].get("timestamp"),
-                "close_timestamp": close_ts, "detected_at_server_timestamp": server_ts,
-                "stage": "INTRABAR_SAME_CANDLE",
+                **asset, **signal,
+                "timeframe": "M1", "expiry_minutes": 1,
+                "signal_timestamp": closed_ts,
+                "close_timestamp": close_ts,
+                "entry_open_timestamp": close_ts,
+                "entry_close_timestamp": entry_close_ts,
+                "entry_deadline_timestamp": deadline_ts,
+                "detected_at_server_timestamp": received_server_ts,
+                "received_at_local_timestamp": received_local_ts,
+                "calculated_at_local_timestamp": calculated_local_ts,
+                "stage": "CLOSED_CANDLE_N_PLUS_1",
             }
-            key = "{}|{}|{}".format(candidate.get("symbol"), candidate.get("direction"),
-                                     candidate.get("signal_timestamp"))
+            key = "{}|{}|{}".format(
+                candidate.get("symbol"), candidate.get("direction"),
+                candidate.get("signal_timestamp")
+            )
             if key in excluded_keys:
                 continue
             candidates.append(candidate)
             logging.info(
-                "SINAL INTRABAR DETECTADO | %s %s | entrada imediata na MESMA M1 | "
-                "vela fecha em %.0f",
-                candidate["symbol"], candidate["direction"], close_ts
+                "SINAL EM VELA FECHADA | %s %s | vela_sinal=%.3f | "
+                "entrada_N+1=%.3f | prazo_final=%.3f",
+                candidate["symbol"], candidate["direction"], closed_ts, close_ts, deadline_ts
             )
-            logging.info("VARREDURA %d | %d ativos examinados até o primeiro sinal; %d sinal encontrado.",
-                         _scan_pass_number, analyzed_count, len(candidates))
-            return candidates
+            logging.info(
+                "VARREDURA %d | %d ativos examinados até o primeiro sinal; %d sinal encontrado.",
+                _scan_pass_number, analyzed_count, len(candidates)
+            )
+            return candidates[:max_candidates]
         except ConnectionError:
             raise
         except Exception as exc:
@@ -187,9 +234,12 @@ def scan_once(connector, settings, assets, max_candidates=1, excluded_keys=None)
                 connector.connected = False
                 raise ConnectionError("Conexão interrompida durante a leitura de candles.") from exc
             logging.warning("Falha ao analisar %s: %s", asset["symbol"], exc)
-    logging.info("VARREDURA %d: %d ativos analisados; %d sinais encontrados (limite %d).",
-                 _scan_pass_number, analyzed_count, len(candidates), max_candidates)
+    logging.info(
+        "VARREDURA %d: %d ativos analisados; %d sinais encontrados (limite %d).",
+        _scan_pass_number, analyzed_count, len(candidates), max_candidates
+    )
     return candidates[:max_candidates]
+
 
 def find_candle_index_by_timestamp(candles, target_timestamp):
     """Localiza a vela pelo timestamp, sem presumir que a API inclua a vela em formação."""
@@ -202,53 +252,85 @@ def find_candle_index_by_timestamp(candles, target_timestamp):
     return None
 
 
-
-def verify_intrabar_signal(connector, settings, candidate):
-    """Revalida o sinal enquanto a mesma vela M1 ainda está aberta."""
-    candles = connector.get_candles(candidate["symbol"], 60, int(settings.get("candles_count", 250)))
-    if len(candles) < 60:
-        return None
+def verify_closed_signal(connector, settings, candidate):
+    """Revalida o mesmo sinal fechado sem aceitar N-1 ou uma entrada em N+2."""
+    candles = connector.get_candles(
+        candidate["symbol"], 60, int(settings.get("candles_count", 250))
+    )
+    received_local_ts = time.time()
+    server_now = normalize_timestamp(connector.get_server_timestamp())
     target_ts = normalize_timestamp(candidate.get("signal_timestamp"))
     close_ts = normalize_timestamp(candidate.get("close_timestamp"))
-    detected_at = normalize_timestamp(candidate.get("detected_at_server_timestamp"))
-    server_now = normalize_timestamp(connector.get_server_timestamp())
-    if None in (target_ts, close_ts, detected_at, server_now):
+    deadline_ts = normalize_timestamp(candidate.get("entry_deadline_timestamp"))
+    entry_close_ts = normalize_timestamp(candidate.get("entry_close_timestamp"))
+    if None in (target_ts, close_ts, deadline_ts, entry_close_ts, server_now):
         return None
-    if server_now >= close_ts:
+    if server_now < close_ts or server_now > deadline_ts:
         return False
-    if target_ts != int(server_now // 60) * 60:
+    if int(server_now // 60) * 60 != int(close_ts):
         return False
-    target_index = find_candle_index_by_timestamp(candles, candidate.get("signal_timestamp"))
-    if target_index is None or target_index != len(candles) - 1:
-        return False
-    current_signal = get_intrabar_signal(candles, settings)
+    if not _closed_entry_pair_is_final(candles, target_ts, close_ts):
+        return None
+    current_signal = get_signal(candles, settings)
     if not current_signal or current_signal.get("direction") != candidate.get("direction"):
         return False
+    logging.info(
+        "SINAL REVALIDADO | %s %s | recebimento_local=%.3f | servidor=%.3f",
+        candidate["symbol"], candidate["direction"], received_local_ts, server_now
+    )
     return {
         **candidate, **current_signal,
         "symbol": candidate["symbol"], "active_id": candidate["active_id"],
-        "signal_timestamp": candidate["signal_timestamp"], "close_timestamp": candidate["close_timestamp"],
-        "detected_at_server_timestamp": detected_at, "timeframe": "M1", "expiry_minutes": 1,
-        "intrabar_signal_verified": True,
+        "signal_timestamp": target_ts, "close_timestamp": close_ts,
+        "entry_open_timestamp": close_ts, "entry_close_timestamp": entry_close_ts,
+        "entry_deadline_timestamp": deadline_ts,
+        "detected_at_server_timestamp": server_now,
+        "stage": "CLOSED_CANDLE_N_PLUS_1",
+        "closed_signal_verified": True,
     }
 
 
-def validate_intrabar_signal_immediately_before_order(connector, settings, candidate):
-    """Autoriza somente se o sinal ainda existir e a vela original continuar aberta."""
-    if not candidate.get("intrabar_signal_verified"):
-        return False, "sinal intrabar ainda não foi revalidado"
-    verified = verify_intrabar_signal(connector, settings, candidate)
-    if verified is None:
-        return False, "não foi possível confirmar a vela atual e o relógio da corretora"
-    if verified is False:
-        return False, "sinal mudou ou a vela original fechou"
-    return True, "sinal confirmado e ordem autorizada na MESMA vela M1"
+def verify_intrabar_signal(connector, settings, candidate):
+    """Compatibilidade de nome: revalida exclusivamente velas fechadas."""
+    return verify_closed_signal(connector, settings, candidate)
 
+
+def validate_closed_signal_immediately_before_order(connector, settings, candidate):
+    """Última validação: sinal fechado, N+1 atual e prazo de 3 segundos vigente."""
+    if not candidate.get("closed_signal_verified"):
+        return False, "sinal de vela fechada ainda não foi revalidado"
+    verified = verify_closed_signal(connector, settings, candidate)
+    if verified is None:
+        return False, "não foi possível confirmar as velas N/N+1 e o relógio BullX"
+    if verified is False:
+        return False, "sinal antigo, alterado ou fora do prazo de 3 segundos"
+    return True, "sinal da vela N confirmado; entrada na vela N+1 dentro do prazo"
+
+
+def validate_intrabar_signal_immediately_before_order(connector, settings, candidate):
+    """Compatibilidade de nome; não autoriza sinal de vela fechada."""
+    return validate_closed_signal_immediately_before_order(connector, settings, candidate)
 
 
 def validate_signal_immediately_before_order(connector, settings, candidate):
-    """Última validação intrabar imediatamente antes do envio da ordem."""
-    return validate_intrabar_signal_immediately_before_order(connector, settings, candidate)
+    """Última validação imediatamente antes do envio da ordem."""
+    return validate_closed_signal_immediately_before_order(connector, settings, candidate)
+
+
+def _wait_for_next_close_or_retry(connector, stop_check=None):
+    """Sincroniza pelo relógio BullX; durante a janela válida, reconsulta em 150ms."""
+    server_now = normalize_timestamp(connector.get_server_timestamp())
+    if server_now is None:
+        _wait_for_market_data_retry(CANDLE_DATA_RETRY_SECONDS, stop_check=stop_check)
+        return
+    elapsed = server_now % 60.0
+    if elapsed <= 3.0:
+        _wait_for_market_data_retry(CANDLE_DATA_RETRY_SECONDS, stop_check=stop_check)
+        return
+    remaining = 60.0 - elapsed
+    # Fora dos primeiros 3s, aguarda o próximo fechamento; não faz polling
+    # de rede a cada 150ms durante os ~57s restantes do minuto.
+    _wait_for_market_data_retry(remaining, stop_check=stop_check)
 
 
 def candidate_key(candidate):
@@ -319,7 +401,7 @@ def main():
         trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | uma única ordem por vez; após liquidação, pausa global aleatória de 2 a 3 minutos | sinal intrabar e entrada imediata na MESMA M1."
+            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(21) + WMA(3) | filtros EMA 21/45 + ADX(14) >= 35 | uma única ordem por vez; após liquidação, pausa global fixa de 3 minutos | sinal em vela fechada e entrada em N+1 em até 3 segundos."
             
         )
         selection_label = (
@@ -342,7 +424,7 @@ def main():
             entry_cooldown_seconds=trader.entry_cooldown_seconds
         )
 
-        # Apenas o primeiro sinal encontrado é validado e executado na própria vela M1.
+        # Apenas o primeiro sinal da vela N é validado para entrada na vela N+1.
         pending = {}
         processed = set()
         stop_notice_sent = False
@@ -482,7 +564,7 @@ def main():
                 if len(pending) < MAX_PENDING_SIGNALS:
                     pending[key] = candidate
                     logging.info(
-                        "SINAL NA VELA ATUAL | %s %s | entrada na mesma M1; fecha em %.0f",
+                        "SINAL DA VELA FECHADA | %s %s | entrada em N+1; expira em %.0f",
                         candidate["symbol"], candidate["direction"], candidate["close_timestamp"]
                     )
 
@@ -520,12 +602,12 @@ def main():
                     processed.add(key)
                     continue
 
-                # Revalida imediatamente o padrão enquanto a vela original
-                # continua aberta; não existe janela artificial de tolerância.
+                # Revalida o sinal calculado sobre N fechada e exige que
+                # N+1 continue sendo a vela corrente dentro do prazo de 3s.
                 try:
-                    confirmed = verify_intrabar_signal(connector, settings, candidate)
+                    confirmed = verify_closed_signal(connector, settings, candidate)
                 except ConnectionError as exc:
-                    logging.warning("Conexão perdida ao revalidar sinal intrabar: %s", exc)
+                    logging.warning("Conexão perdida ao revalidar sinal de vela fechada: %s", exc)
                     connector.reconnect_forever(stop_check=STOP_FILE.exists)
                     assets = []
                     pending.clear()
@@ -535,7 +617,7 @@ def main():
                 except Exception as exc:
                     if is_transport_error(exc):
                         connector.connected = False
-                        logging.warning("Conexão perdida ao revalidar sinal intrabar: %s", exc)
+                        logging.warning("Conexão perdida ao revalidar sinal de vela fechada: %s", exc)
                         connector.reconnect_forever(stop_check=STOP_FILE.exists)
                         assets = []
                         pending.clear()
@@ -568,7 +650,7 @@ def main():
             if ready:
                 detected_at, selected_key, candidate = ready[0]
                 logging.info(
-                    "SINAL INTRABAR CONFIRMADO | %s %s | entrada imediata na mesma vela M1.",
+                    "SINAL DE VELA FECHADA CONFIRMADO | %s %s | entrada na vela imediatamente seguinte (N+1).",
                     candidate["symbol"], candidate["direction"]
                 )
                 pending.pop(selected_key, None)
@@ -610,7 +692,7 @@ def main():
                             candidate["symbol"], candidate["direction"], validation_reason
                         )
                         message = (
-                            "SINAL {} | {} | M1 | entrada imediata na MESMA vela do sinal | expiração 1 minuto"
+                            "SINAL {} | {} | M1 | entrada imediata na vela seguinte (N+1) | expiração 1 minuto"
                             .format(candidate["symbol"], candidate["direction"])
                         )
                         alert(message, bool(settings.get("sound_alert", True)))
@@ -706,13 +788,11 @@ def main():
                 # Mantém a pausa curta somente enquanto aguarda a vela; se não houver
                 # ativos (ex.: reconexão/atualização), respeita o intervalo configurado.
                 if pending:
-                    time.sleep(0.10)
+                    time.sleep(CANDLE_DATA_RETRY_SECONDS)
                 elif assets:
-                    # Mantém 2s entre inícios de varreduras sem somar 2s
-                    # ao tempo gasto pela própria consulta dos ativos.
-                    remaining = scan_delay(settings) - (time.monotonic() - scan_started if scan_started is not None else scan_delay(settings))
-                    if remaining > 0:
-                        _wait_for_market_data_retry(remaining, stop_check=STOP_FILE.exists)
+                    # Dentro dos 3s após o fechamento, consulta a cada 150ms.
+                    # Fora da janela, aguarda o próximo fechamento M1 pelo relógio BullX.
+                    _wait_for_next_close_or_retry(connector, stop_check=STOP_FILE.exists)
                 else:
                     _wait_for_market_data_retry(scan_delay(settings), stop_check=STOP_FILE.exists)
 

@@ -294,21 +294,16 @@ class TradeManagerTests(unittest.TestCase):
         self.assertIsNone(t.execute_and_settle(self.signal(1)))
         self.assertEqual(len(c.orders), 1)
 
-    def test_random_global_pause_starts_only_after_settlement(self):
+    def test_fixed_three_minute_pause_starts_only_after_settlement(self):
         c = FakeConnector([("WIN", 4.25)])
-        settings = self.settings()
-        settings["entry_cooldown_seconds"] = 60
-        settings["entry_cooldown_min_seconds"] = 120
-        settings["entry_cooldown_max_seconds"] = 180
-        t = DemoTrader(c, settings)
+        t = self.trader(c)
         with patch.object(t, "_start_unknown_order_monitor"):
             self.assertIsNone(t.execute_and_settle(self.signal()))
         self.assertEqual(len(c.orders), 1)
         self.assertEqual(t.entry_cooldown_until, 0)
-        with patch("trade_manager.random.randint", return_value=150):
-            t._apply_settlement(self.signal(), t.base, "order-1", "WIN", 4.25)
-        self.assertEqual(t.entry_cooldown_seconds, 150)
-        self.assertGreaterEqual(t.entry_cooldown_until - __import__("time").monotonic(), 149)
+        t._apply_settlement(self.signal(), t.base, "order-1", "WIN", 4.25)
+        self.assertEqual(t.entry_cooldown_seconds, 180.0)
+        self.assertGreaterEqual(t.entry_cooldown_until - __import__("time").monotonic(), 179)
         # A trava também existe no gerenciador, não apenas no scanner.
         self.assertIsNone(t.execute_and_settle(self.signal(2)))
         self.assertEqual(len(c.orders), 1)
@@ -321,6 +316,17 @@ class TradeManagerTests(unittest.TestCase):
         self.assertEqual(len(c.orders), 0)
         self.assertFalse(t.busy)
 
+
+
+    def test_exact_three_minute_cooldown_blocks_new_signals(self):
+        c = FakeConnector([("WIN", 4.25)])
+        t = self.trader(c)
+        self.queue_order(t, self.signal(1))
+        t._monitor_unknown_order()
+        self.assertEqual(t.entry_cooldown_seconds, 180.0)
+        self.assertGreater(t.entry_cooldown_until, 0)
+        self.queue_order(t, self.signal(2, "GBPUSD-OTC"))
+        self.assertEqual(len(c.orders), 1)
 
 if __name__ == "__main__":
     unittest.main()
