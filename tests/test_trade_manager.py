@@ -303,6 +303,9 @@ class TradeManagerTests(unittest.TestCase):
             t._apply_settlement(self.signal(), t.base, "order-1", "WIN", 4.25)
         self.assertEqual(t.entry_cooldown_seconds, 150)
         self.assertGreaterEqual(t.entry_cooldown_until - __import__("time").monotonic(), 149)
+        # A trava também existe no gerenciador, não apenas no scanner.
+        self.assertIsNone(t.execute_and_settle(self.signal(2)))
+        self.assertEqual(len(c.orders), 1)
 
     def test_stop_interrupts_before_order_submission(self):
         c = FakeConnector([])
