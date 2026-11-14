@@ -25,6 +25,14 @@ class OrderConfirmationUnknownError(RuntimeError):
         self.request_ref = request_ref
 
 
+def ensure_entry_deadline(server_timestamp, deadline_timestamp):
+    """Bloqueia qualquer envio posterior ao limite absoluto do sinal."""
+    if deadline_timestamp is not None and float(server_timestamp) > float(deadline_timestamp):
+        raise OrderRejectedError(
+            "Sinal descartado: prazo máximo de 3 segundos após o fechamento expirou."
+        )
+
+
 def resolve_order_expiration(server_timestamp, expiry_minutes, expected_expiration_timestamp=None):
     """Confere o vencimento escolhido pela bullexapi contra o fechamento-alvo."""
     expiration_timestamp, expiry_index = get_expiration_time(
@@ -297,10 +305,7 @@ class BullexReadOnlyConnector:
             # Reproduz a seleção de tipo da API oficial para a expiração escolhida,
             # mas sem fallback silencioso para Blitz/Digital.
             server_timestamp=float(self.client.get_server_timestamp())
-            if entry_deadline_timestamp is not None and server_timestamp > float(entry_deadline_timestamp):
-                raise OrderRejectedError(
-                    "Sinal descartado: prazo máximo de 3 segundos após o fechamento expirou."
-                )
+            ensure_entry_deadline(server_timestamp, entry_deadline_timestamp)
             expiration_timestamp,expiry_index=resolve_order_expiration(
                 server_timestamp, expiry_minutes, expected_expiration_timestamp
             )
@@ -323,10 +328,7 @@ class BullexReadOnlyConnector:
             self.pending_order_requests[request_id]=request_ref
             # Última checagem imediatamente antes da chamada que envia a ordem.
             final_server_timestamp = float(self.client.get_server_timestamp())
-            if entry_deadline_timestamp is not None and final_server_timestamp > float(entry_deadline_timestamp):
-                raise OrderRejectedError(
-                    "Sinal descartado: envio ultrapassaria 3 segundos do fechamento da vela N."
-                )
+            ensure_entry_deadline(final_server_timestamp, entry_deadline_timestamp)
             if expected_expiration_timestamp is not None and int(expiration_timestamp) != int(float(expected_expiration_timestamp)):
                 raise OrderRejectedError(
                     "Ordem bloqueada: expiração não coincide com o fechamento de N+1."
