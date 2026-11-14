@@ -374,6 +374,14 @@ class DemoTrader:
 
     def execute_and_settle(self, signal, pre_order_check=None):
         with self._state_lock:
+            cooldown_remaining = self._entry_cooldown_remaining()
+            if cooldown_remaining > 0:
+                log.warning(
+                    "NOVA ENTRADA BLOQUEADA | pausa global após liquidação; "
+                    "faltam %.0f segundos.",
+                    cooldown_remaining,
+                )
+                return None
             if (
                 self.busy
                 or self.stopped
