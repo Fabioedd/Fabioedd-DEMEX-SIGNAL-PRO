@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -22,9 +23,9 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertTrue(result)
         message = send.call_args.args[0]
         self.assertIn("SUIUSD-OTC", message)
-        self.assertIn("WIN", message)
-        self.assertIn("LOSS: <b>0</b>", message)
-        self.assertIn("+4.20 BRL", message)
+        self.assertIn("VITÓRIA", message)
+        self.assertIn("Derrotas: <b>0</b>", message)
+        self.assertIn("R$ +4.20", message)
         self.assertIn("Total investido: <b>R$ 5.00</b>", message)
 
     def test_opened_trade_message_shows_signal_and_entry_times_without_delay_field(self):
@@ -62,6 +63,7 @@ class TelegramNotifierTests(unittest.TestCase):
                 "losses": 1, "ties": 0, "win_rate": 0, "stopped": False,
             })
         self.assertIn("A&amp;B", send.call_args.args[0])
+        self.assertIn("DERROTA", send.call_args.args[0])
 
     def test_final_report_contains_full_session_financial_summary(self):
         notifier = TelegramNotifier("token", "chat")
@@ -94,17 +96,17 @@ class TelegramNotifierTests(unittest.TestCase):
         message = send.call_args.args[0]
         self.assertIn("STOP LOSS atingido", message)
         self.assertIn("Total de entradas: <b>2</b>", message)
-        self.assertIn("WIN: <b>1</b> | LOSS: <b>1</b> | TIE: <b>0</b>", message)
+        self.assertIn("Vitórias: <b>1</b> | Derrotas: <b>1</b> | Empates: <b>0</b>", message)
         self.assertIn("Assertividade: <b>50.00%</b>", message)
-        self.assertIn("Sequência atual: WIN <b>0</b> | LOSS <b>1</b>", message)
-        self.assertIn("Recorde na sessão: WIN <b>1</b> seguidos | LOSS <b>1</b> seguidos", message)
+        self.assertIn("Sequência atual — Vitórias: <b>0</b> | Derrotas: <b>1</b>", message)
+        self.assertIn("Recorde da sessão — Vitórias consecutivas: <b>1</b> | Derrotas consecutivas: <b>1</b>", message)
         self.assertIn("Entrada inicial: <b>R$ 5.00</b>", message)
         self.assertIn("Total investido nas entradas: <b>R$ 14.20</b>", message)
         self.assertIn("Última entrada realizada: <b>R$ 9.20</b>", message)
         self.assertIn("Próxima entrada prevista: <b>R$ 5.00</b>", message)
         self.assertIn("Limite Stop Loss: <b>R$ 50.00</b>", message)
         self.assertIn("Meta Take Profit: <b>R$ 30.00</b>", message)
-        self.assertIn("-5.00 BRL", message)
+        self.assertIn("R$ -5.00", message)
 
 
     def test_send_uses_ipv4_http11_curl_and_hides_token_from_arguments(self):
@@ -114,10 +116,37 @@ class TelegramNotifierTests(unittest.TestCase):
             with patch("telegram_notifier.subprocess.run", return_value=response) as run:
                 self.assertTrue(notifier.send("teste"))
         args, kwargs = run.call_args
-        self.assertEqual(args[0], ["curl", "-4", "--http1.1", "--config", "-"])
+        self.assertEqual(args[0][0:3], ["curl", "-4", "--http1.1"])
+        self.assertEqual(args[0][3], "--data-binary")
+        self.assertTrue(args[0][4].startswith("@"))
         self.assertNotIn("secret-token", " ".join(args[0]))
         self.assertIn("secret-token", kwargs["input"])
-        self.assertIn("Content-Type: application/json", kwargs["input"])
+        self.assertIn("Content-Type: application/json; charset=utf-8", kwargs["input"])
+
+
+    def test_send_preserves_unicode_accents_and_emoji_in_utf8_payload(self):
+        notifier = TelegramNotifier("secret-token", "chat")
+        response = type("Response", (), {
+            "returncode": 0,
+            "stdout": '{"ok": true, "result": {"message_id": 1}}',
+        })()
+        captured = {}
+
+        def fake_run(args, **kwargs):
+            payload_path = args[4][1:]
+            with open(payload_path, encoding="utf-8") as payload:
+                captured.update(json.load(payload))
+            return response
+
+        with patch("telegram_notifier.shutil.which", return_value="/usr/bin/curl"):
+            with patch("telegram_notifier.subprocess.run", side_effect=fake_run):
+                self.assertTrue(notifier.send("⛔ DEMEX — RELATÓRIO: VITÓRIA, DERROTA e operação"))
+
+        self.assertIn("⛔", captured["text"])
+        self.assertIn("RELATÓRIO", captured["text"])
+        self.assertIn("VITÓRIA", captured["text"])
+        self.assertIn("DERROTA", captured["text"])
+        self.assertIn("operação", captured["text"])
 
     def test_send_retries_transient_transport_failure(self):
         notifier = TelegramNotifier("secret-token", "9246590305")
