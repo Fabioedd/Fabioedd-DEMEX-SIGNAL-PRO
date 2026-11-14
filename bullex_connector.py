@@ -530,9 +530,20 @@ class BullexReadOnlyConnector:
             if raw < 1_000_000_000:
                 raise RuntimeError("Relógio timeSync da BullX ainda não foi sincronizado.")
             now_ns = time.monotonic_ns()
-            if self._server_clock_anchor_timestamp is None or raw != self._server_clock_last_raw:
+            if self._server_clock_anchor_timestamp is None:
                 self._server_clock_anchor_timestamp = raw
                 self._server_clock_anchor_monotonic_ns = now_ns
+                self._server_clock_last_raw = raw
+            else:
+                elapsed_since_anchor = (
+                    now_ns - self._server_clock_anchor_monotonic_ns
+                ) / 1_000_000_000.0
+                predicted_now = self._server_clock_anchor_timestamp + elapsed_since_anchor
+                # Não deixa uma mensagem timeSync atrasada fazer o relógio
+                # retroceder e ampliar indevidamente o prazo de entrada.
+                if raw > predicted_now:
+                    self._server_clock_anchor_timestamp = raw
+                    self._server_clock_anchor_monotonic_ns = now_ns
                 self._server_clock_last_raw = raw
             elapsed_ns = now_ns - self._server_clock_anchor_monotonic_ns
             if elapsed_ns > 30_000_000_000:
