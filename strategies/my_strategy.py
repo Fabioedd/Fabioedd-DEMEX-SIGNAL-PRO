@@ -2,7 +2,7 @@
 
 Regras preservadas:
 - Fonte MaValue=5: HL2 ((high + low) / 2), conforme a seleção usada no projeto.
-- buffer1 = SMA(1) - SMA(34); buffer2 = WMA(buffer1, 5).
+- buffer1 = SMA(1) - SMA(21); buffer2 = WMA(buffer1, 3).
 - EMA(21) e EMA(45) calculadas sobre close.
 - ADX(14) com suavização EMA de Wilder definida no Lua: período 2*n-1 (27)
   aplicado a TR, +DM, -DM, DX e ADX.
@@ -15,8 +15,8 @@ de vela, relógio da corretora e confirmação de ordem do DEMEX.
 from __future__ import annotations
 
 FAST_PERIOD = 1
-SLOW_PERIOD = 34
-SIGNAL_PERIOD = 5
+SLOW_PERIOD = 21
+SIGNAL_PERIOD = 3
 EMA_FILTER_PERIOD = 21
 EMA_TREND_PERIOD = 45
 SOURCE_SELECTION = 5
@@ -217,7 +217,7 @@ def _signal_at(candles, index, stage):
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "GO 2024 FILTRADO: cruzamento ascendente SMA(1)-SMA(34) sobre WMA(5)",
+                "GO 2024 FILTRADO: cruzamento ascendente SMA(1)-SMA(21) sobre WMA(3)",
                 "Preço acima da EMA(21)",
                 "EMA(21) acima da EMA(45)",
                 "ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),
@@ -234,7 +234,7 @@ def _signal_at(candles, index, stage):
             "confidence": 100,
             "stage": stage,
             "reasons": [
-                "GO 2024 FILTRADO: cruzamento descendente SMA(1)-SMA(34) abaixo da WMA(5)",
+                "GO 2024 FILTRADO: cruzamento descendente SMA(1)-SMA(21) abaixo da WMA(3)",
                 "Preço abaixo da EMA(21)",
                 "EMA(21) abaixo da EMA(45)",
                 "ADX(14) aprovado: {:.2f} >= {:.0f}".format(adx[index], ADX_MINIMUM),

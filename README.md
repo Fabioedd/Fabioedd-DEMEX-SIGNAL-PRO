@@ -7,8 +7,8 @@ Projeto Python para leitura de ativos/candles e execução automática em conta 
 O indicador Lua enviado foi traduzido para Python em `strategies/my_strategy.py`, preservando os parâmetros e as condições:
 
 - Fonte `MaValue=5`: HL2 ((high + low) / 2), mantendo as EMAs calculadas sobre `close).
-- `buffer1 = SMA(1) - SMA(34)`.
-- `buffer2 = WMA(buffer1, 5)`.
+- `buffer1 = SMA(1) - SMA(21)`.
+- `buffer2 = WMA(buffer1, 3)`.
 - EMA(21) como filtro de preço e EMA(45) como filtro de tendência.
 - ADX(14): o Lua define a suavização como EMA de `2*n-1`, portanto EMA(27) para TR, +DM, -DM, DX e ADX.
 - **CALL:** cruzamento ascendente de `buffer1` sobre `buffer2`, fechamento acima da EMA(21), EMA(21) acima da EMA(45) e ADX >= 35.

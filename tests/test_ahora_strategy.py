@@ -44,8 +44,8 @@ def calculated(direction="CALL", adx_value=40.0, count=60):
 class GO2024FiltradoTests(unittest.TestCase):
     def test_indicator_parameters_match_lua(self):
         self.assertEqual(strategy.FAST_PERIOD, 1)
-        self.assertEqual(strategy.SLOW_PERIOD, 34)
-        self.assertEqual(strategy.SIGNAL_PERIOD, 5)
+        self.assertEqual(strategy.SLOW_PERIOD, 21)
+        self.assertEqual(strategy.SIGNAL_PERIOD, 3)
         self.assertEqual(strategy.EMA_FILTER_PERIOD, 21)
         self.assertEqual(strategy.EMA_TREND_PERIOD, 45)
         self.assertEqual(strategy.ADX_PERIOD, 14)
