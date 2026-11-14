@@ -22,9 +22,9 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertTrue(result)
         message = send.call_args.args[0]
         self.assertIn("SUIUSD-OTC", message)
-        self.assertIn("WIN", message)
-        self.assertIn("LOSS: <b>0</b>", message)
-        self.assertIn("+4.20 BRL", message)
+        self.assertIn("VITÓRIA", message)
+        self.assertIn("Derrotas: <b>0</b>", message)
+        self.assertIn("R$ +4.20", message)
         self.assertIn("Total investido: <b>R$ 5.00</b>", message)
 
     def test_opened_trade_message_shows_signal_and_entry_times_without_delay_field(self):
@@ -94,17 +94,17 @@ class TelegramNotifierTests(unittest.TestCase):
         message = send.call_args.args[0]
         self.assertIn("STOP LOSS atingido", message)
         self.assertIn("Total de entradas: <b>2</b>", message)
-        self.assertIn("WIN: <b>1</b> | LOSS: <b>1</b> | TIE: <b>0</b>", message)
+        self.assertIn("Vitórias: <b>1</b> | Derrotas: <b>1</b> | Empates: <b>0</b>", message)
         self.assertIn("Assertividade: <b>50.00%</b>", message)
-        self.assertIn("Sequência atual: WIN <b>0</b> | LOSS <b>1</b>", message)
-        self.assertIn("Recorde na sessão: WIN <b>1</b> seguidos | LOSS <b>1</b> seguidos", message)
+        self.assertIn("Sequência atual: <b>0 vitórias</b> | <b>1 derrotas</b>", message)
+        self.assertIn("Recorde da sessão: <b>1 vitórias consecutivas</b> | <b>1 derrotas consecutivas</b>", message)
         self.assertIn("Entrada inicial: <b>R$ 5.00</b>", message)
         self.assertIn("Total investido nas entradas: <b>R$ 14.20</b>", message)
         self.assertIn("Última entrada realizada: <b>R$ 9.20</b>", message)
         self.assertIn("Próxima entrada prevista: <b>R$ 5.00</b>", message)
         self.assertIn("Limite Stop Loss: <b>R$ 50.00</b>", message)
         self.assertIn("Meta Take Profit: <b>R$ 30.00</b>", message)
-        self.assertIn("-5.00 BRL", message)
+        self.assertIn("R$ -5.00", message)
 
 
     def test_send_uses_ipv4_http11_curl_and_hides_token_from_arguments(self):
@@ -114,7 +114,7 @@ class TelegramNotifierTests(unittest.TestCase):
             with patch("telegram_notifier.subprocess.run", return_value=response) as run:
                 self.assertTrue(notifier.send("teste"))
         args, kwargs = run.call_args
-        self.assertEqual(args[0], ["curl", "-4", "--http1.1", "--config", "-"])
+        self.assertEqual(args[0][0:3], ["curl", "-4", "--http1.1"])\n        self.assertEqual(args[0][3], "--data-binary")\n        self.assertTrue(args[0][4].startswith("@"))
         self.assertNotIn("secret-token", " ".join(args[0]))
         self.assertIn("secret-token", kwargs["input"])
         self.assertIn("Content-Type: application/json", kwargs["input"])
