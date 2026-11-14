@@ -84,7 +84,7 @@ PY
 }
 
 COMMAND="${1:-atualizar}"
-if [ "$COMMAND" != "status" ] || [ ! -s "$UPDATER" ] || ! python3 -m py_compile "$UPDATER" >/dev/null 2>&1; then
+if [ ! -s "$UPDATER" ] || ! python3 -m py_compile "$UPDATER" >/dev/null 2>&1; then
   recover_updater || {
     log "ERRO: não foi possível recuperar/atualizar o atualizador. A versão ativa não foi alterada."
     exit 1
