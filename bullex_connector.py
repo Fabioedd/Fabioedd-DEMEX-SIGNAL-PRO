@@ -104,6 +104,9 @@ class BullexReadOnlyConnector:
         self.connected=False
         self.account_mode=None
         self.api_lock=threading.RLock()
+        self._server_clock_anchor_timestamp = None
+        self._server_clock_anchor_monotonic_ns = None
+        self._server_clock_last_raw = None
         # Mantém a referência ao cliente e ao request_id originais até resolver
         # uma ordem cujo envio teve confirmação desconhecida.
         self.pending_order_request=None
@@ -128,6 +131,9 @@ class BullexReadOnlyConnector:
         if not status: return {"connected":False,"reason":str(detail or "connection_failed"),"requires_2fa":detail=="2FA"}
         self.connected=bool(self.client.check_connect())
         if self.connected:
+            self._server_clock_anchor_timestamp = None
+            self._server_clock_anchor_monotonic_ns = None
+            self._server_clock_last_raw = None
             try: self.account_mode=self.client.get_balance_mode()
             except Exception as exc: logger.warning("Falha ao confirmar conta: %s",exc)
         return {"connected":self.connected,"account_type":self.account_mode or self.config.account_type}
@@ -512,9 +518,28 @@ class BullexReadOnlyConnector:
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
     def get_server_timestamp(self):
+        """Relógio BullX extrapolado por monotonic_ns entre mensagens timeSync."""
         with self.api_lock:
             self._require_connection()
-            return self.client.get_server_timestamp()
+            raw = self.client.get_server_timestamp()
+            if raw is None:
+                raise RuntimeError("A BullX ainda não forneceu timeSync válido.")
+            raw = float(raw)
+            # TimeSync inicial da bullexapi usa time.time() sem converter ms;
+            # antes da primeira mensagem real, o valor fica fora da época Unix.
+            if raw < 1_000_000_000:
+                raise RuntimeError("Relógio timeSync da BullX ainda não foi sincronizado.")
+            now_ns = time.monotonic_ns()
+            if self._server_clock_anchor_timestamp is None or raw != self._server_clock_last_raw:
+                self._server_clock_anchor_timestamp = raw
+                self._server_clock_anchor_monotonic_ns = now_ns
+                self._server_clock_last_raw = raw
+            elapsed_ns = now_ns - self._server_clock_anchor_monotonic_ns
+            if elapsed_ns > 30_000_000_000:
+                raise RuntimeError(
+                    "Última sincronização timeSync da BullX está desatualizada há mais de 30 segundos."
+                )
+            return self._server_clock_anchor_timestamp + elapsed_ns / 1_000_000_000.0
     def _require_connection(self):
         if not self.connected or not self.client.check_connect():
             self.connected=False
