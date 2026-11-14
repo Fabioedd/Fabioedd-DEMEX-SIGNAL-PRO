@@ -43,9 +43,8 @@ class DemoTrader:
         self._state_lock = threading.RLock()
         self._stopped = False
         self.stop_reason = None
-        self.entry_cooldown_seconds = max(
-            0.0, float(settings.get("entry_cooldown_seconds", 0))
-        )
+        # Cooldown global removido: nenhuma configuração local antiga pode reativá-lo.
+        self.entry_cooldown_seconds = 0.0
         self.entry_cooldown_until = 0.0
         self.entry_callback = None
         self._cooldown_active = False
@@ -99,7 +98,7 @@ class DemoTrader:
             if pending.get("entry_confirmed"):
                 return
             pending["entry_confirmed"] = True
-            self.entry_cooldown_until = now + self.entry_cooldown_seconds
+            self.entry_cooldown_until = now
             self._cooldown_active = False
             self._last_cooldown_log_at = 0.0
             remaining = self.entry_cooldown_seconds
@@ -369,11 +368,7 @@ class DemoTrader:
             thread.start()
 
     def execute_and_settle(self, signal, pre_order_check=None):
-        if self._entry_cooldown_remaining() > 0:
-            return None
         with self._state_lock:
-            if self.entry_cooldown_until > time.monotonic():
-                return None
             if (
                 self.busy
                 or self.stopped
