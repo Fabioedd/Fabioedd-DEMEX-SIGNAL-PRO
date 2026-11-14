@@ -62,7 +62,8 @@ class TelegramNotifierTests(unittest.TestCase):
                 "next_entry": 5, "total_entries": 1, "wins": 0,
                 "losses": 1, "ties": 0, "win_rate": 0, "stopped": False,
             })
-        self.assertIn("A&amp;B", send.call_args.args[0])\n        self.assertIn("DERROTA", send.call_args.args[0])
+        self.assertIn("A&amp;B", send.call_args.args[0])
+        self.assertIn("DERROTA", send.call_args.args[0])
 
     def test_final_report_contains_full_session_financial_summary(self):
         notifier = TelegramNotifier("token", "chat")
