@@ -44,7 +44,7 @@ class DemoTrader:
         self._stopped = False
         self.stop_reason = None
         self.entry_cooldown_seconds = max(
-            0.0, float(settings.get("entry_cooldown_seconds", 60))
+            0.0, float(settings.get("entry_cooldown_seconds", 0))
         )
         self.entry_cooldown_until = 0.0
         self.entry_callback = None
@@ -92,7 +92,7 @@ class DemoTrader:
             return remaining
 
     def _register_confirmed_entry(self, pending, order_id):
-        """Inicia o intervalo global somente após confirmação da corretora."""
+        """Registra a entrada confirmada; não aplica espera fixa entre operações."""
         now = time.monotonic()
         confirmed_at = time.time()
         with self._state_lock:
@@ -105,12 +105,11 @@ class DemoTrader:
             remaining = self.entry_cooldown_seconds
 
         log.info(
-            "ENTRADA CONFIRMADA | %s %s | ID %s | próxima entrada liberada "
-            "em %.0f segundos.",
+            "ENTRADA CONFIRMADA | %s %s | ID %s | sem espera fixa; "
+            "nova entrada após a liquidação desta operação.",
             pending["signal"]["symbol"],
             pending["signal"]["direction"],
             order_id,
-            remaining,
         )
         callback = self.entry_callback
         if callback is not None:
