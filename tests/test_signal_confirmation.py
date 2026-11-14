@@ -105,5 +105,28 @@ class ClosedCandleEntryTests(unittest.TestCase):
             self.assertFalse(main.verify_closed_signal(connector, self.settings(), candidate))
 
 
+
+    def test_retry_repeats_candle_request_after_150ms_when_api_is_late(self):
+        stale = self.candles(previous_timestamp=3480.0)
+        final = self.candles()
+        class DelayedConnector:
+            def __init__(self):
+                self.calls = 0
+            def get_server_timestamp(self):
+                return 3600.5
+            def get_candles(self, symbol, timeframe_seconds, count):
+                self.calls += 1
+                return stale if self.calls == 1 else final
+        connector = DelayedConnector()
+        asset = [{"symbol": "EURUSD-OTC", "active_id": 1}]
+        with patch.object(main, "get_signal", return_value={"direction": "CALL"}):
+            self.assertEqual(main.scan_once(connector, self.settings(), asset), [])
+            with patch.object(main, "_wait_for_market_data_retry") as wait:
+                main._wait_for_next_close_or_retry(connector)
+                wait.assert_called_once_with(0.15, stop_check=None)
+            result = main.scan_once(connector, self.settings(), asset)
+        self.assertEqual(connector.calls, 2)
+        self.assertEqual(len(result), 1)
+
 if __name__ == "__main__":
     unittest.main()
