@@ -27,5 +27,16 @@ class ExpirationAlignmentTests(unittest.TestCase):
                 resolve_order_expiration(3600.5, 1, 3660)
 
 
+    def test_real_bullex_expiration_function_uses_next_minute_during_first_three_seconds(self):
+        minute_start = 1_800_000_000.0
+        minute_start = (int(minute_start // 60) * 60)
+        for elapsed in (0.0, 0.5, 3.0):
+            with self.subTest(elapsed=elapsed):
+                expiration, expiry_index = bullex_connector.get_expiration_time(
+                    minute_start + elapsed, 1
+                )
+                self.assertEqual(expiration, minute_start + 60)
+                self.assertEqual(expiry_index, 0)
+
 if __name__ == "__main__":
     unittest.main()
