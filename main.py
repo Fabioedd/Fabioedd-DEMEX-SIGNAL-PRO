@@ -319,7 +319,7 @@ def main():
         trader.entry_callback = telegram.send_trade_opened
         print(
             "DEMEX AUTOMÁTICO iniciado em PRACTICE/DEMO | OPÇÕES M1 (TURBO conforme API BullX) | expiração 1 minuto | "
-            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | intervalo global de 60s entre entradas | sinal intrabar e entrada imediata na MESMA M1."
+            "INDICADOR GO 2024 FILTRADO | SMA(1)-SMA(34) + WMA(5) | filtros EMA 21/45 + ADX(14) >= 35 | sem intervalo fixo entre entradas; aguarda liquidação da operação atual | sinal intrabar e entrada imediata na MESMA M1."
             
         )
         selection_label = (
