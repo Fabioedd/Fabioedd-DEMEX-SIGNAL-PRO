@@ -308,7 +308,7 @@ def validate_closed_signal_immediately_before_order(connector, settings, candida
 
 
 def validate_intrabar_signal_immediately_before_order(connector, settings, candidate):
-    """Compatibilidade de nome; não autoriza sinal intrabar."""
+    """Compatibilidade de nome; não autoriza sinal de vela fechada."""
     return validate_closed_signal_immediately_before_order(connector, settings, candidate)
 
 
@@ -425,7 +425,7 @@ def main():
             entry_cooldown_seconds=trader.entry_cooldown_seconds
         )
 
-        # Apenas o primeiro sinal encontrado é validado e executado na própria vela M1.
+        # Apenas o primeiro sinal da vela N é validado para entrada na vela N+1.
         pending = {}
         processed = set()
         stop_notice_sent = False
