@@ -25,6 +25,22 @@ class OrderConfirmationUnknownError(RuntimeError):
         self.request_ref = request_ref
 
 
+def resolve_order_expiration(server_timestamp, expiry_minutes, expected_expiration_timestamp=None):
+    """Confere o vencimento escolhido pela bullexapi contra o fechamento-alvo."""
+    expiration_timestamp, expiry_index = get_expiration_time(
+        float(server_timestamp), int(expiry_minutes)
+    )
+    expiration_timestamp = int(expiration_timestamp)
+    if expected_expiration_timestamp is not None:
+        expected = int(float(expected_expiration_timestamp))
+        if expiration_timestamp != expected:
+            raise OrderRejectedError(
+                "Expiração bloqueada: bullexapi escolheu {} mas o fechamento N+1 é {}."
+                .format(expiration_timestamp, expected)
+            )
+    return expiration_timestamp, int(expiry_index)
+
+
 
 def is_transport_error(exc):
     """Identifica quedas de socket/WebSocket, inclusive Errno 103."""
@@ -263,8 +279,11 @@ class BullexReadOnlyConnector:
                         "trade_type":"binary"
                     })
             return available
-    def place_practice_order(self,symbol,direction,amount,expiry_minutes):
-        """Envia o tipo compatível com a expiração e preserva o request_id tardio."""
+    def place_practice_order(
+        self, symbol, direction, amount, expiry_minutes,
+        entry_deadline_timestamp=None, expected_expiration_timestamp=None
+    ):
+        """Envia somente se o prazo e o fechamento-alvo de N+1 forem respeitados."""
         with self.api_lock:
             self._require_connection()
             if self.config.account_type!="PRACTICE" or self.client.get_balance_mode()!="PRACTICE":
@@ -278,7 +297,13 @@ class BullexReadOnlyConnector:
             # Reproduz a seleção de tipo da API oficial para a expiração escolhida,
             # mas sem fallback silencioso para Blitz/Digital.
             server_timestamp=float(self.client.get_server_timestamp())
-            expiration_timestamp,expiry_index=get_expiration_time(server_timestamp,int(expiry_minutes))
+            if entry_deadline_timestamp is not None and server_timestamp > float(entry_deadline_timestamp):
+                raise OrderRejectedError(
+                    "Sinal descartado: prazo máximo de 3 segundos após o fechamento expirou."
+                )
+            expiration_timestamp,expiry_index=resolve_order_expiration(
+                server_timestamp, expiry_minutes, expected_expiration_timestamp
+            )
             option_type="turbo" if expiry_index < 5 else "binary"
             request_id="demex-"+uuid.uuid4().hex
             client=self.client
@@ -296,6 +321,23 @@ class BullexReadOnlyConnector:
             }
             self.pending_order_request=request_ref
             self.pending_order_requests[request_id]=request_ref
+            # Última checagem imediatamente antes da chamada que envia a ordem.
+            final_server_timestamp = float(self.client.get_server_timestamp())
+            if entry_deadline_timestamp is not None and final_server_timestamp > float(entry_deadline_timestamp):
+                raise OrderRejectedError(
+                    "Sinal descartado: envio ultrapassaria 3 segundos do fechamento da vela N."
+                )
+            if expected_expiration_timestamp is not None and int(expiration_timestamp) != int(float(expected_expiration_timestamp)):
+                raise OrderRejectedError(
+                    "Ordem bloqueada: expiração não coincide com o fechamento de N+1."
+                )
+            logger.info(
+                "ORDEM ENVIADA À BULLX | %s %s | envio_local=%.3f | servidor=%.3f | "
+                "expiração=%.3f | prazo=%.3f",
+                symbol, direction, time.time(), final_server_timestamp,
+                float(expiration_timestamp),
+                float(entry_deadline_timestamp) if entry_deadline_timestamp is not None else -1.0
+            )
             try:
                 client.api.buyv3_by_raw_expired(
                     float(amount),int(active_map[symbol]),direction.lower(),
@@ -327,6 +369,10 @@ class BullexReadOnlyConnector:
                             self.pending_order_requests.pop(request_id, None)
                             if self.pending_order_request is request_ref:
                                 self.pending_order_request=None
+                            logger.info(
+                                "ORDEM CONFIRMADA PELA BULLX | %s %s | ID=%s | confirmação_local=%.3f",
+                                symbol, direction, resolved_id, time.time()
+                            )
                             return resolved_id
                     message=payload.get("message")
                     if message:
