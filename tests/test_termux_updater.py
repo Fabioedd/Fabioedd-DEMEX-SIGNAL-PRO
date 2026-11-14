@@ -23,6 +23,7 @@ def make_release_archive():
         "demex/demex.sh": b"#!/bin/bash\n",
         "demex/telegram_control.py": b"print('Telegram control')\n",
         "demex/strategies/my_strategy.py": b"def get_intrabar_signal(*args): return None\n",
+        "demex/termux/demex-bootstrap.sh": b"#!/bin/bash\\n",
     }
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
         for name, content in files.items():
@@ -154,7 +155,7 @@ class UpdaterSafetyTests(unittest.TestCase):
             with patch.multiple(
                 updater,
                 MANAGER=manager, VERSIONS=versions, CURRENT=current, SHARED=shared,
-                PROJECT_LINK=project, LOG=Path(temp) / "updater.log",
+                PROJECT_LINK=project, BOOTSTRAP=Path(temp) / ".demex-bootstrap.sh", LOG=Path(temp) / "updater.log",
             ), patch.object(updater, "robot_is_running", return_value=robot), \
                  patch.object(updater, "legacy_sync_is_running", return_value=False), \
                  patch.object(updater, "find_telegram_listeners", return_value=listeners or []), \
@@ -177,6 +178,21 @@ class UpdaterSafetyTests(unittest.TestCase):
             return result, current, project, shared, manager, stop_listener.call_count, start_listener.call_count
         finally:
             os.chdir(old_cwd)
+
+    def test_sync_bootstrapper_installs_validated_copy_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            version = root / "versions" / "v1"
+            source = version / "termux" / "demex-bootstrap.sh"
+            source.parent.mkdir(parents=True)
+            source.write_text("#!/bin/bash\n# validated bootstrapper\n", encoding="utf-8")
+            target = root / ".demex-bootstrap.sh"
+            with patch.object(updater, "BOOTSTRAP", target), patch.object(updater, "log") as log:
+                updater.sync_bootstrapper(version)
+            self.assertEqual(target.read_text(encoding="utf-8"), source.read_text(encoding="utf-8"))
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+            self.assertFalse(target.with_name(target.name + ".new").exists())
+            log.assert_called_once()
 
     def test_no_internet_keeps_previous_version(self):
         with tempfile.TemporaryDirectory() as temp:

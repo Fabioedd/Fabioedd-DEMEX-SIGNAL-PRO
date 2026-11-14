@@ -49,6 +49,14 @@ def make_archive():
 
 
 class TermuxBootstrapTests(unittest.TestCase):
+    def test_valid_updater_does_not_recover_bootstrapper_on_every_cycle(self):
+        source = BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn(
+            'if [ ! -s "$UPDATER" ] || ! python3 -m py_compile "$UPDATER" >/dev/null 2>&1; then',
+            source,
+        )
+        self.assertNotIn('if [ "$COMMAND" != "status"', source)
+
     def test_recovery_uses_github_release_redirect_and_validates_checksum(self):
         archive = make_archive()
         checksum = f"{hashlib.sha256(archive).hexdigest()}  demex-source.tar.gz\n".encode()

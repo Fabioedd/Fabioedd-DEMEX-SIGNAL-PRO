@@ -24,12 +24,13 @@ MANAGER = HOME / ".demex"
 VERSIONS = MANAGER / "versions"
 CURRENT = MANAGER / "current"
 PROJECT_LINK = HOME / "Fabioedd-DEMEX-SIGNAL-PRO"
+BOOTSTRAP = HOME / ".demex-bootstrap.sh"
 SHARED = MANAGER / "shared"
 LOG = HOME / "DEMEX_AUTO_UPDATE.log"
 KEEP_RELEASES = 3
 CHECK_INTERVAL = 60
 AGENT_PID_FILE = HOME / ".demex-auto-update.pid"
-REQUIRED = ("main.py", "settings.json", "requirements.txt", "demex.sh", "telegram_control.py", "strategies/my_strategy.py")
+REQUIRED = ("main.py", "settings.json", "requirements.txt", "demex.sh", "telegram_control.py", "strategies/my_strategy.py", "termux/demex-bootstrap.sh")
 
 
 def log(message: str) -> None:
@@ -271,6 +272,21 @@ def link_shared_files(version_dir: Path) -> None:
             target.symlink_to(shared_file)
 
 
+def sync_bootstrapper(version_dir: Path) -> None:
+    """Install the validated bootstrapper beside the persistent Termux updater."""
+    source = version_dir / "termux" / "demex-bootstrap.sh"
+    if not source.is_file():
+        raise RuntimeError("A versão não contém o bootstrapper do atualizador.")
+    content = source.read_bytes()
+    if BOOTSTRAP.is_file() and BOOTSTRAP.read_bytes() == content:
+        return
+    temporary = BOOTSTRAP.with_name(BOOTSTRAP.name + ".new")
+    temporary.write_bytes(content)
+    temporary.chmod(0o700)
+    os.replace(temporary, BOOTSTRAP)
+    log("Bootstrapper automático atualizado a partir da versão validada.")
+
+
 def install_dependencies(version_dir: Path) -> Path:
     python = shutil.which("python3") or shutil.which("python")
     if not python:
@@ -426,6 +442,7 @@ def update() -> int:
         final_dir = VERSIONS / tag
         if CURRENT.is_symlink() and CURRENT.exists() and CURRENT.resolve() == final_dir.resolve():
             if all((CURRENT / item).is_file() for item in REQUIRED) and (CURRENT / ".venv/bin/python").is_file():
+                sync_bootstrapper(CURRENT.resolve())
                 listener_pid = ensure_telegram_listener(CURRENT.resolve(), listeners)
                 if listener_pid:
                     log(f"Controle Telegram ativo na versão {tag} (PID {listener_pid}).")
@@ -492,6 +509,7 @@ def update() -> int:
             if not (CURRENT / ".venv/bin/python").is_file():
                 raise RuntimeError("Ambiente virtual não encontrado após ativação.")
             migrate_project_link()
+            sync_bootstrapper(CURRENT.resolve())
             if stopped_listeners:
                 new_pid = start_telegram_listener(final_dir)
                 listener_restarted = True
