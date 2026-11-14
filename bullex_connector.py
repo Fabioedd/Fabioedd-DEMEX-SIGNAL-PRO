@@ -252,7 +252,7 @@ class BullexReadOnlyConnector:
             if timeframe_seconds not in (60,300): raise ValueError("Somente M1 e M5.")
             if not 10<=count<=1000: raise ValueError("count deve ficar entre 10 e 1000.")
             if symbol not in self.client.get_all_ACTIVES_OPCODE(): raise ValueError(f"Ativo não encontrado: {symbol}")
-            raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.client.get_server_timestamp()))
+            raw=self.client.get_candles(symbol,timeframe_seconds,count,int(self.get_server_timestamp()))
             return [{"timestamp":c.get("from",c.get("timestamp")),"open":c.get("open"),"high":c.get("max",c.get("high")),"low":c.get("min",c.get("low")),"close":c.get("close"),"volume":c.get("volume"),"raw":c} for c in (raw or []) if isinstance(c,dict)]
     def get_payouts(self):
         with self.api_lock:
